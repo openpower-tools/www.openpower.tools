@@ -21,7 +21,7 @@
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
 
-use super::{BASE_CSS, shadow_root};
+use super::{BASE_CSS, iso, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
@@ -35,26 +35,6 @@ struct Callout {
 }
 
 const VARIANTS: &[&str] = &["note", "tip", "warning", "danger"];
-
-/// The icon for a variant, as stroke elements in a 24x24 viewBox.
-fn glyph(variant: &str) -> &'static str {
-    match variant {
-        // Safe condition (ISO 3864 square) carrying a check.
-        "tip" => {
-            r#"<rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M7.5 12.4l3.1 3.1 5.9-5.9"/>"#
-        }
-        // General warning, after ISO 7010 W001: triangle and exclamation.
-        "warning" => {
-            r#"<path d="M12 3.4 21.5 19.9H2.5Z"/><path d="M12 9.8v4.4"/><path d="M12 17.3v.01" stroke-width="2.6"/>"#
-        }
-        // General prohibition, after ISO 7010 P001: circle and diagonal bar.
-        "danger" => r#"<circle cx="12" cy="12" r="9.2"/><path d="M5.5 5.5l13 13"/>"#,
-        // Information: a circled i.
-        _ => {
-            r#"<circle cx="12" cy="12" r="9.2"/><path d="M12 11v5.4"/><path d="M12 7.6v.01" stroke-width="2.6"/>"#
-        }
-    }
-}
 
 /// A solid side block, with or without the icon knocked out of it.
 fn block(side: &str, icon: Option<&str>) -> String {
@@ -109,7 +89,7 @@ impl Callout {
             "danger" => "var(--op-status-danger)",
             _ => "var(--op-status-info)",
         };
-        let icon = glyph(&variant);
+        let icon = iso::glyph(&variant);
         let (variant_css, side_markup) = match variant.as_str() {
             // An empty block of the colour left, the triangle knocked out of
             // a solid block right.
