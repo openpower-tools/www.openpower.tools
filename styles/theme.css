@@ -16,6 +16,8 @@
  *   --op-text, --op-muted, --op-link, --op-link-hover  text: 4.5:1 on bg/surface
  *   --op-accent, --op-focus, --op-border-strong        UI: 3:1 on bg/surface
  *     (dark: orange is the interaction colour, gold the link colour)
+ *   --op-status-{neutral,info,ok,warning,danger}       UI: 3:1 on bg/surface
+ *     (one hue per meaning in both themes: callout stripes, badge dots)
  *   --op-highlight                                     decoration only (title rule)
  *   --op-border                                        decoration only
  *
@@ -42,6 +44,12 @@
   --op-border: #334D70;
   --op-border-strong: #8F9DB0;
   --op-code-bg: #1A2738;
+
+  --op-status-neutral: #8F9DB0;
+  --op-status-info: #7FB0DE;
+  --op-status-ok: #97C264;
+  --op-status-warning: #E0A458;
+  --op-status-danger: #E4756A;
 }
 
 /* No explicit choice: follow the system. */
@@ -61,6 +69,12 @@
     --op-border: #C6B49E;
     --op-border-strong: #8B7E6F;
     --op-code-bg: #DDE4EC;
+
+  --op-status-neutral: #8B7E6F;
+  --op-status-info: #2F6DA8;
+  --op-status-ok: #4A7A18;
+  --op-status-warning: #8A6207;
+  --op-status-danger: #B03A30;
   }
 }
 
@@ -80,6 +94,12 @@
   --op-border: #C6B49E;
   --op-border-strong: #8B7E6F;
   --op-code-bg: #DDE4EC;
+
+  --op-status-neutral: #8B7E6F;
+  --op-status-info: #2F6DA8;
+  --op-status-ok: #4A7A18;
+  --op-status-warning: #8A6207;
+  --op-status-danger: #B03A30;
 }
 
 /* Font tokens: candidates are compared on /specimen/; the site default is

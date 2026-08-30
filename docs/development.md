@@ -19,9 +19,7 @@ builds the wasm, runs wasm-bindgen and wasm-opt, and assembles `dist/`.
 
 ```
 trunk serve            # dev server on http://127.0.0.1:8080 with rebuild on change
-trunk build --release  # production build into dist/
-trunk build --release --config Trunk.specimen.toml   # then the specimen into dist/specimen/
-trunk serve --release --config Trunk.specimen.toml   # specimen dev server on http://127.0.0.1:8081/specimen/
+trunk build --release  # production build into dist/ (hooks emit every page)
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace # native tests, including the palette contrast checks
@@ -32,8 +30,9 @@ Warnings are errors (`.cargo/config.toml`).
 ## Layout
 
 ```
-index.html                     the page: custom elements plus light-DOM content
-specimen/index.html            palette specimen page, published at /specimen/
+index.html                     the home page: custom elements plus light-DOM content
+pages/                         body fragments for every generated page
+crates/op-pages/               page registry and the hook emitting <slug>/index.html
 styles/theme.css               palette tokens (dark and light; no choice follows the system)
 crates/op-webc/                Web Component bridge (CustomElement trait, shim)
 crates/op-site/src/main.rs     registers the elements when the module starts
@@ -41,8 +40,7 @@ crates/op-site/src/components  one file per element (op-theme-toggle, ...)
 crates/op-site/src/theme.rs    dark/light choice, system-following default
 crates/op-site/src/colour.rs   sRGB luminance and WCAG contrast
 crates/op-site/src/palette.rs  WCAG contrast tests over styles/theme.css
-Trunk.toml                     build settings and pinned tool versions
-Trunk.specimen.toml            same, for the specimen page (second Trunk target)
+Trunk.toml                     build settings, pinned tool versions, page hooks
 docs/research/                 research notes with sources
 ```
 

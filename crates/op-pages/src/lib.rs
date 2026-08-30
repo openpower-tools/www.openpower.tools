@@ -1,0 +1,131 @@
+//! The page registry: every generated page of the site.
+//!
+//! Bodies are HTML fragments in `pages/`, composed of the custom elements
+//! defined in `op-site` plus light-DOM content. The `op-pages` binary (a
+//! Trunk `post_build` hook that runs after `op-assets`) wraps each fragment
+//! in the staged `index.html`'s head - which carries the hashed script, style,
+//! font pack and fallback references - so every page loads the same wasm and
+//! assets from clean URLs like `/components/button/`.
+
+/// One generated page.
+pub struct Page {
+    /// URL path segment(s) under the site root, without slashes at the ends.
+    pub slug: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    /// Body fragment; rendered between the shared nav and footer.
+    pub body: &'static str,
+}
+
+macro_rules! page {
+    ($slug:literal, $title:literal, $description:literal, $file:literal) => {
+        Page {
+            slug: $slug,
+            title: $title,
+            description: $description,
+            body: include_str!(concat!("../../../pages/", $file)),
+        }
+    };
+}
+
+/// Every generated page. The home page stays a Trunk source file; these are
+/// emitted beside it.
+pub const PAGES: &[Page] = &[
+    page!(
+        "specimen",
+        "Palette specimen",
+        "Every design token with its value and WCAG contrast, the site's elements in both themes, and the typography tiers.",
+        "specimen.html"
+    ),
+    page!(
+        "components",
+        "Components",
+        "The web components the site is built from, each with its states and variants.",
+        "components/index.html"
+    ),
+    page!(
+        "components/callout",
+        "Callout",
+        "Highlighted blocks for notes, tips and warnings.",
+        "components/callout/index.html"
+    ),
+    page!(
+        "components/badge",
+        "Badge",
+        "Compact status markers with variant-coloured dots.",
+        "components/badge/index.html"
+    ),
+    page!(
+        "components/card",
+        "Card",
+        "Titled content containers with optional link headings and footers.",
+        "components/card/index.html"
+    ),
+    page!(
+        "components/details",
+        "Details",
+        "Collapsible sections built on the native details element.",
+        "components/details/index.html"
+    ),
+];
+
+/// The shared site navigation, used verbatim on generated pages and mirrored
+/// by the home page (a test keeps them identical).
+pub fn nav_markup() -> String {
+    let mut items = String::new();
+    for (href, label) in [
+        ("/", "Home"),
+        ("/components/", "Components"),
+        ("/specimen/", "Specimen"),
+    ] {
+        items.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>"));
+    }
+    format!("<op-site-nav><ul>{items}</ul></op-site-nav>")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugs_are_unique_clean_and_bodies_nonempty() {
+        let mut slugs: Vec<&str> = PAGES.iter().map(|p| p.slug).collect();
+        for page in PAGES {
+            assert!(
+                !page.slug.is_empty()
+                    && !page.slug.starts_with('/')
+                    && !page.slug.ends_with('/')
+                    && !page.slug.contains(".."),
+                "bad slug {}",
+                page.slug
+            );
+            assert!(!page.title.is_empty() && !page.description.is_empty());
+            assert!(page.body.contains('<'), "{}: body looks empty", page.slug);
+        }
+        slugs.sort_unstable();
+        slugs.dedup();
+        assert_eq!(slugs.len(), PAGES.len(), "duplicate slugs");
+    }
+
+    #[test]
+    fn home_page_nav_matches_the_generated_nav() {
+        let home = include_str!("../../../index.html");
+        let nav = nav_markup();
+        let start = home.find("<op-site-nav>").expect("home nav");
+        let end = home.find("</op-site-nav>").expect("home nav end") + "</op-site-nav>".len();
+        assert_eq!(
+            &home[start..end],
+            nav,
+            "home nav drifted from op_pages::nav_markup()"
+        );
+    }
+
+    #[test]
+    fn nav_links_cover_home_and_every_top_level_section() {
+        let nav = nav_markup();
+        assert!(nav.starts_with("<op-site-nav>") && nav.ends_with("</op-site-nav>"));
+        for href in ["\"/\"", "\"/components/\"", "\"/specimen/\""] {
+            assert!(nav.contains(href), "nav lacks {href}");
+        }
+    }
+}

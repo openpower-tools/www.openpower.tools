@@ -1,10 +1,15 @@
 //! The custom elements that make up the site. `index.html` composes the page
 //! from these tags; nothing here is instantiated from Rust.
 
+mod badge;
 mod build_status;
+mod callout;
+mod card;
+mod details;
 mod palette_specimen;
 mod site_footer;
 mod site_header;
+mod site_nav;
 mod starting_points;
 mod theme_toggle;
 
@@ -19,6 +24,11 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     build_status::DEFINITION,
     site_footer::DEFINITION,
     palette_specimen::DEFINITION,
+    site_nav::DEFINITION,
+    callout::DEFINITION,
+    badge::DEFINITION,
+    card::DEFINITION,
+    details::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

@@ -237,8 +237,9 @@ fn main() {
         !html.contains("name=\"op-fonts\""),
         "op-fonts meta already present"
     );
+    // Absolute paths: generated pages live at nested URLs.
     let inject = format!(
-        "<link rel=\"stylesheet\" href=\"{css_name}\" /><meta name=\"op-fonts\" content=\"{pack_name}\" />"
+        "<link rel=\"stylesheet\" href=\"/{css_name}\" /><meta name=\"op-fonts\" content=\"/{pack_name}\" />"
     );
     let html = html.replacen("</head>", &format!("{inject}</head>"), 1);
     assert!(

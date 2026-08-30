@@ -5,7 +5,7 @@ cargo-features = ["trim-paths"]
 
 [workspace]
 resolver = "3"
-members = ["crates/op-webc", "crates/op-site", "crates/op-fontpack", "crates/op-assets"]
+members = ["crates/op-webc", "crates/op-site", "crates/op-fontpack", "crates/op-assets", "crates/op-pages"]
 
 [workspace.package]
 edition = "2024"
@@ -21,6 +21,7 @@ web-sys = "0.3.104"
 console_error_panic_hook = "0.1.7"
 op-webc = { path = "crates/op-webc" }
 op-fontpack = { path = "crates/op-fontpack" }
+op-pages = { path = "crates/op-pages" }
 
 # Size-oriented, reproducible release profile for the wasm binary. Trunk runs
 # a pinned wasm-opt afterwards (see Trunk.toml).

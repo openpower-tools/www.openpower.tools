@@ -1,0 +1,12 @@
+      <p>Highlighted blocks for notes, tips and warnings. The stripe carries the variant colour; text stays on the standard token for contrast. Content is regular light-DOM markup.</p>
+      <h2>Variants</h2>
+      <op-callout variant="note" heading="Note">The default variant, for neutral asides and context.</op-callout>
+      <op-callout variant="tip" heading="Tip">For advice and good practice, striped with the ok green.</op-callout>
+      <op-callout variant="warning" heading="Warning">For things that can bite, striped with the warning amber.</op-callout>
+      <op-callout variant="danger" heading="Data loss ahead">For destructive operations, striped with the danger red; the wording carries the severity.</op-callout>
+      <h2>Without a heading</h2>
+      <op-callout variant="note">A bare callout: just the variant tag and content, for short asides.</op-callout>
+      <h2>Markup</h2>
+      <pre>&lt;op-callout variant="warning" heading="Warning"&gt;
+  Flashing the wrong PNOR image can brick the BMC.
+&lt;/op-callout&gt;</pre>

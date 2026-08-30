@@ -38,3 +38,6 @@ web-sys = { workspace = true, features = [
   "Window",
   "console",
 ] }
+
+[dev-dependencies]
+op-pages.workspace = true

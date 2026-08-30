@@ -16,9 +16,12 @@ wasm_opt = "version_132"
 addresses = ["127.0.0.1"]
 port = 8080
 
-# Packs the webfonts into a content-hashed blob in the staging directory and
-# injects its name as <meta name="op-fonts"> (see crates/op-assets).
+# Trunk runs same-stage hooks concurrently, so the two post-build steps are
+# sequenced in one command: op-assets packs the webfonts into a content-hashed
+# blob and injects <meta name="op-fonts"> plus the fallback stylesheet link,
+# then op-pages emits every registered page as <slug>/index.html reusing the
+# staged head, which by then carries those font links.
 [[hooks]]
 stage = "post_build"
-command = "cargo"
-command_arguments = ["run", "--quiet", "--release", "-p", "op-assets"]
+command = "sh"
+command_arguments = ["-c", "cargo run --quiet --release -p op-assets && cargo run --quiet --release -p op-pages"]

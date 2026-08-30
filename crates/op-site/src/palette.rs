@@ -42,6 +42,17 @@ const REQUIRED_PAIRS: &[(&str, &str, f64)] = &[
     ("--op-focus", "--op-surface", 3.0),
     ("--op-border-strong", "--op-bg", 3.0),
     ("--op-border-strong", "--op-surface", 3.0),
+    // status colours mark callout stripes and badge dots: non-text contrast
+    ("--op-status-neutral", "--op-bg", 3.0),
+    ("--op-status-neutral", "--op-surface", 3.0),
+    ("--op-status-info", "--op-bg", 3.0),
+    ("--op-status-info", "--op-surface", 3.0),
+    ("--op-status-ok", "--op-bg", 3.0),
+    ("--op-status-ok", "--op-surface", 3.0),
+    ("--op-status-warning", "--op-bg", 3.0),
+    ("--op-status-warning", "--op-surface", 3.0),
+    ("--op-status-danger", "--op-bg", 3.0),
+    ("--op-status-danger", "--op-surface", 3.0),
 ];
 
 fn contrast(a: &str, b: &str) -> f64 {

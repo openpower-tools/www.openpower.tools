@@ -169,12 +169,7 @@ mod tests {
     /// The pre-paint script in both pages must read the same key and values.
     #[test]
     fn index_html_prepaint_script_agrees_with_storage_contract() {
-        for index in [
-            include_str!("../../../index.html"),
-            include_str!("../../../specimen/index.html"),
-        ] {
-            check_prepaint_script(index);
-        }
+        check_prepaint_script(include_str!("../../../index.html"));
     }
 
     fn check_prepaint_script(index: &str) {

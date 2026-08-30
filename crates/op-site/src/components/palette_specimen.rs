@@ -55,6 +55,11 @@ const TOKENS: &[(&str, &str, Role)] = &[
     ("--op-accent", "hover borders and rules", Role::Ui),
     ("--op-focus", "focus ring", Role::Ui),
     ("--op-border-strong", "control borders", Role::Ui),
+    ("--op-status-neutral", "neutral status marker", Role::Ui),
+    ("--op-status-info", "note and info markers", Role::Ui),
+    ("--op-status-ok", "success markers", Role::Ui),
+    ("--op-status-warning", "warning markers", Role::Ui),
+    ("--op-status-danger", "danger markers", Role::Ui),
     ("--op-border", "separators", Role::Decoration),
     ("--op-highlight", "title rule", Role::Decoration),
 ];

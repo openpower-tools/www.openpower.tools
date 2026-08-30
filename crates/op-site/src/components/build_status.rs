@@ -77,13 +77,14 @@ mod tests {
 
     #[test]
     fn pages_use_every_defined_element_and_no_undefined_op_tags() {
-        let pages = [
-            ("index.html", include_str!("../../../../index.html")),
-            (
-                "specimen/index.html",
-                include_str!("../../../../specimen/index.html"),
-            ),
-        ];
+        let mut pages: Vec<(String, String)> = vec![(
+            "index.html".to_owned(),
+            include_str!("../../../../index.html").to_owned(),
+        )];
+        for page in op_pages::PAGES {
+            pages.push((page.slug.to_owned(), page.body.to_owned()));
+        }
+        pages.push(("nav".to_owned(), op_pages::nav_markup()));
         for definition in DEFINITIONS {
             assert!(
                 pages
@@ -93,7 +94,7 @@ mod tests {
                 definition.tag
             );
         }
-        for (page, html) in pages {
+        for (page, html) in &pages {
             for tag in html
                 .split('<')
                 .filter_map(|s| s.strip_prefix("op-"))
