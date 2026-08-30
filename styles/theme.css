@@ -156,3 +156,11 @@ pre {
     padding-top: 3.5rem;
   }
 }
+
+/* The font swap runs inside a view transition (see fonts.rs); keep the
+   cross-fade gentle. Reduced-motion users never enter the transition. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+  animation-timing-function: ease;
+}

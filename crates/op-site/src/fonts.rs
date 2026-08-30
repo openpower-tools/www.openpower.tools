@@ -41,32 +41,75 @@ async fn install_inner() -> Result<(), JsValue> {
         .ok_or_else(|| JsValue::from_str("empty op-fonts meta"))?;
     let bytes = fetch_with_cache(&window, &url).await?;
     let faces = op_fontpack::decode(&bytes).map_err(|e| JsValue::from_str(e.0))?;
-    let fonts = document.fonts();
-    for face in faces {
-        let descriptors = FontFaceDescriptors::new();
-        descriptors.set_weight(&face.weight);
-        descriptors.set_style(&face.style);
-        if let Some((size_adjust, ascent, descent)) = &face.metrics {
-            // Metric descriptors are recent additions; set them on the
-            // dictionary object directly so the web-sys version does not
-            // matter.
-            for (key, value) in [
-                ("sizeAdjust", size_adjust.as_str()),
-                ("ascentOverride", ascent.as_str()),
-                ("descentOverride", descent.as_str()),
-                ("lineGapOverride", "0%"),
-            ] {
-                let _ = js_sys::Reflect::set(
-                    descriptors.as_ref(),
-                    &JsValue::from_str(key),
-                    &JsValue::from_str(value),
-                );
+
+    // Where the View Transitions API exists (and motion is welcome), register
+    // inside a transition so the change from the metric-fitted fallbacks
+    // cross-fades instead of popping; the layouts are geometrically identical,
+    // so the fade reads as a soft morph. Everywhere else, register directly.
+    let reduced_motion = window
+        .match_media("(prefers-reduced-motion: reduce)")
+        .ok()
+        .flatten()
+        .is_some_and(|mql| mql.matches());
+    let start_view_transition =
+        js_sys::Reflect::get(document.as_ref(), &JsValue::from_str("startViewTransition"))
+            .ok()
+            .and_then(|v| v.dyn_into::<js_sys::Function>().ok())
+            .filter(|_| !reduced_motion);
+
+    let document_for_register = document.clone();
+    let register = move || -> Result<js_sys::Promise, JsValue> {
+        let fonts = document_for_register.fonts();
+        let loaded = js_sys::Array::new();
+        for face in &faces {
+            let descriptors = FontFaceDescriptors::new();
+            descriptors.set_weight(&face.weight);
+            descriptors.set_style(&face.style);
+            if let Some((size_adjust, ascent, descent)) = &face.metrics {
+                // Metric descriptors are recent additions; set them on the
+                // dictionary object directly so the web-sys version does not
+                // matter.
+                for (key, value) in [
+                    ("sizeAdjust", size_adjust.as_str()),
+                    ("ascentOverride", ascent.as_str()),
+                    ("descentOverride", descent.as_str()),
+                    ("lineGapOverride", "0%"),
+                ] {
+                    let _ = js_sys::Reflect::set(
+                        descriptors.as_ref(),
+                        &JsValue::from_str(key),
+                        &JsValue::from_str(value),
+                    );
+                }
             }
+            let font_face = FontFace::new_with_u8_array_and_descriptors(
+                &face.family,
+                &face.bytes,
+                &descriptors,
+            )?;
+            loaded.push(&font_face.loaded()?.into());
+            let _ = fonts.add(&font_face);
         }
-        let font_face =
-            FontFace::new_with_u8_array_and_descriptors(&face.family, &face.bytes, &descriptors)?;
-        let _ = fonts.add(&font_face);
+        // Let the transition wait until every face is parsed and renderable.
+        Ok(js_sys::Promise::all(&loaded))
+    };
+
+    if let Some(start) = start_view_transition {
+        let callback = wasm_bindgen::closure::Closure::once_into_js(move || -> js_sys::Promise {
+            register().unwrap_or_else(|_| js_sys::Promise::resolve(&JsValue::UNDEFINED))
+        });
+        let transition = start.call1(document.as_ref(), &callback)?;
+        // Wait for the snapshot phase to finish before announcing.
+        if let Ok(finished) = js_sys::Reflect::get(&transition, &JsValue::from_str("finished"))
+            && let Ok(promise) = finished.dyn_into::<js_sys::Promise>()
+        {
+            let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+        }
+    } else {
+        let all = register()?;
+        let _ = wasm_bindgen_futures::JsFuture::from(all).await;
     }
+
     // Late listeners can re-probe availability once the pack is in.
     if let Ok(event) = web_sys::Event::new("op-fonts-installed") {
         let _ = document.dispatch_event(&event);
