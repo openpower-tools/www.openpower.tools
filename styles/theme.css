@@ -176,6 +176,84 @@ pre {
   font-variant-ligatures: contextual;
 }
 
+/* Innards of the light-DOM content components. Shadow CSS reaches only the
+   directly slotted element (::slotted), so what sits inside a slotted list or
+   table is styled here, with the same tokens. */
+
+op-key-value dt {
+  color: var(--op-muted);
+}
+
+op-key-value dd {
+  margin: 0;
+}
+
+op-table th,
+op-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--op-border);
+  text-align: left;
+}
+
+op-table th {
+  color: var(--op-muted);
+  font-weight: 600;
+  border-bottom-color: var(--op-border-strong);
+}
+
+op-table caption {
+  text-align: left;
+  color: var(--op-muted);
+  font-size: 0.85rem;
+  padding-bottom: 0.5rem;
+}
+
+op-table[dense] th,
+op-table[dense] td {
+  padding: 0.15rem 0.5rem;
+}
+
+/* The dots sit on the line drawn by op-timeline's shadow at 1.25rem inset. */
+op-timeline li {
+  position: relative;
+  margin: 0.75rem 0;
+}
+
+op-timeline li::before {
+  content: "";
+  position: absolute;
+  left: -1.25rem;
+  top: 0.45em;
+  transform: translateX(-50%);
+  width: 0.55em;
+  height: 0.55em;
+  border-radius: 50%;
+  background: var(--op-status-neutral);
+}
+
+op-timeline li[data-status="info"]::before {
+  background: var(--op-status-info);
+}
+
+op-timeline li[data-status="ok"]::before {
+  background: var(--op-status-ok);
+}
+
+op-timeline li[data-status="warning"]::before {
+  background: var(--op-status-warning);
+}
+
+op-timeline li[data-status="danger"]::before {
+  background: var(--op-status-danger);
+}
+
+op-timeline time {
+  display: block;
+  font-size: 0.8rem;
+  font-family: var(--op-font-mono);
+  color: var(--op-muted);
+}
+
 /* Leave room for the fixed theme toggle on narrow screens. */
 @media (max-width: 30rem) {
   body {

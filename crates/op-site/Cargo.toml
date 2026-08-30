@@ -17,6 +17,7 @@ console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
   "Cache",
   "CacheStorage",
+  "Clipboard",
   "CssStyleDeclaration",
   "Document",
   "Element",
@@ -28,6 +29,7 @@ web-sys = { workspace = true, features = [
   "HtmlElement",
   "MediaQueryList",
   "Location",
+  "Navigator",
   "Node",
   "NodeList",
   "Response",

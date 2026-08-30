@@ -67,6 +67,36 @@ pub const PAGES: &[Page] = &[
         "Collapsible sections built on the native details element.",
         "components/details/index.html"
     ),
+    page!(
+        "components/key-value",
+        "Key-value",
+        "Label/value pairs for specs and metadata.",
+        "components/key-value/index.html"
+    ),
+    page!(
+        "components/table",
+        "Table",
+        "Tabular data in a scrollable, token-styled frame.",
+        "components/table/index.html"
+    ),
+    page!(
+        "components/source",
+        "Source",
+        "Labelled code blocks with a copy control.",
+        "components/source/index.html"
+    ),
+    page!(
+        "components/timeline",
+        "Timeline",
+        "Dated events on a vertical line with status dots.",
+        "components/timeline/index.html"
+    ),
+    page!(
+        "components/empty-state",
+        "Empty state",
+        "Placeholders for content that does not exist yet.",
+        "components/empty-state/index.html"
+    ),
 ];
 
 /// The shared site navigation, used verbatim on generated pages and mirrored

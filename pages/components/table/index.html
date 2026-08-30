@@ -1,0 +1,30 @@
+      <p>A scroll container and skin for a regular light-DOM table. Cells stay ordinary
+      th/td markup; a dense attribute tightens the padding for long reference tables.</p>
+      <h2>Example</h2>
+      <op-table>
+        <table>
+          <caption>Host firmware stack on a stock Talos II</caption>
+          <thead><tr><th>Component</th><th>Role</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Hostboot</td><td>Brings up the POWER9 cores and memory</td><td><op-badge variant="ok">tracked</op-badge></td></tr>
+            <tr><td>Skiboot</td><td>OPAL runtime services</td><td><op-badge variant="ok">tracked</op-badge></td></tr>
+            <tr><td>Petitboot</td><td>Kernel-based boot loader</td><td><op-badge variant="info">notes</op-badge></td></tr>
+            <tr><td>OpenBMC</td><td>Board management controller stack</td><td><op-badge variant="warning">docs stale</op-badge></td></tr>
+          </tbody>
+        </table>
+      </op-table>
+      <h2>Dense</h2>
+      <op-table dense>
+        <table>
+          <thead><tr><th>Partition</th><th>Size</th></tr></thead>
+          <tbody>
+            <tr><td>HBB</td><td>512 KiB</td></tr>
+            <tr><td>BOOTKERNFW</td><td>16 MiB</td></tr>
+            <tr><td>PAYLOAD</td><td>1 MiB</td></tr>
+          </tbody>
+        </table>
+      </op-table>
+      <h2>Markup</h2>
+      <pre>&lt;op-table dense&gt;
+  &lt;table&gt;...&lt;/table&gt;
+&lt;/op-table&gt;</pre>

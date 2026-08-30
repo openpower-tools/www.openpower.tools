@@ -6,12 +6,17 @@ mod build_status;
 mod callout;
 mod card;
 mod details;
+mod empty_state;
+mod key_value;
 mod palette_specimen;
 mod site_footer;
 mod site_header;
 mod site_nav;
+mod source;
 mod starting_points;
+mod table;
 mod theme_toggle;
+mod timeline;
 
 use op_webc::ElementDefinition;
 use web_sys::{HtmlElement, ShadowRoot, ShadowRootInit, ShadowRootMode};
@@ -29,6 +34,11 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     badge::DEFINITION,
     card::DEFINITION,
     details::DEFINITION,
+    key_value::DEFINITION,
+    table::DEFINITION,
+    source::DEFINITION,
+    timeline::DEFINITION,
+    empty_state::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom
