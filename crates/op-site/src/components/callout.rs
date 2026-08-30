@@ -11,13 +11,12 @@
 //! matching ISO colour families (amber, red, blue, green) but use the
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
-//! Notes and tips share the quiet frame - a thin stripe on the right with
-//! the dimmed watermark of the icon beside it. Warnings and danger anchor
-//! on a solid stripe at the left edge with their icon beside it - danger
-//! posts one on each side - over a dark barberpole mixed from their own
-//! status token (amber, red) behind a translucent scrim: a faint texture
-//! under warning's scrim, a visible wrap over danger's top, right and
-//! bottom.
+//! Every variant anchors on a colour stripe at the left edge. Notes and
+//! tips keep the quiet frame with the dimmed watermark of the icon on the
+//! right; warnings and danger post their icon on each side, over a dark
+//! barberpole mixed from their own status token (amber, red) behind a
+//! translucent scrim: a faint texture under warning's scrim, a visible
+//! wrap over danger's top, right and bottom.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -67,11 +66,10 @@ impl Callout {
                 "<svg class=\"glyph {side}\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
             )
         };
-        // Advisory icons watermark the right; warning posts its icon on the
-        // left beside the stripe; danger posts one on each side.
+        // Advisory icons watermark the right; warning and danger post one
+        // on each side beside the stripe.
         let icons_markup = match variant.as_str() {
-            "warning" => glyph("left"),
-            "danger" => format!("{}{}", glyph("left"), glyph("right")),
+            "warning" | "danger" => format!("{}{}", glyph("left"), glyph("right")),
             _ => glyph("right"),
         };
         let severe = matches!(variant.as_str(), "warning" | "danger");
@@ -79,10 +77,10 @@ impl Callout {
             // Warning's pole hides under the full-bleed scrim (a faint
             // texture); danger's wraps the top, right and bottom. Both
             // anchor on the solid stripe at the left edge.
-            let (frame_padding, scrim_padding) = if variant.as_str() == "danger" {
-                ("0.5rem 0.5rem 0.5rem 0", "0.4rem 3.1rem 0.4rem 3.1rem")
+            let frame_padding = if variant.as_str() == "danger" {
+                "0.5rem 0.5rem 0.5rem 0"
             } else {
-                ("0", "0.4rem 1rem 0.4rem 3.1rem")
+                "0"
             };
             (
                 format!(
@@ -99,7 +97,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: color-mix(in srgb, var(--op-raised) 90%, transparent);
-  padding: {scrim_padding};
+  padding: 0.4rem 3.1rem 0.4rem 3.1rem;
 }}"
                 ),
                 "<div class=\"scrim\">",
@@ -112,7 +110,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: var(--op-raised);
-  border-right: 0.25rem solid {stripe};
+  border-left: 0.25rem solid {stripe};
   padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
                 ),

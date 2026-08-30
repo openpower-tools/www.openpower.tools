@@ -1,15 +1,15 @@
       <p>Highlighted blocks for notes, tips and warnings. Severity is shown three ways at
       once - the variant word set in the severity colour where a heading would sit, an
       ISO-shaped icon, and colour - so none of them has to carry the meaning alone.
-      Notes and tips carry a thin stripe and a dimmed watermark of their icon on the
-      right. Warnings and danger anchor on a solid stripe at the left with their icon
-      beside it - danger posts one on each side - over a dark barberpole in their own
-      colour: a faint texture under warning's scrim, a visible wrap around danger's. Content is regular light-DOM markup on a slightly
+      Every variant anchors on a colour stripe at the left. Notes and tips keep a
+      dimmed watermark of their icon on the right; warnings and danger post their
+      icon on each side, over a dark barberpole in their own colour: a faint texture
+      under warning's scrim, a visible wrap around danger's. Content is regular light-DOM markup on a slightly
       raised background.</p>
       <h2>Variants</h2>
       <op-callout variant="note" heading="Note">The default variant, for neutral asides and context.</op-callout>
       <op-callout variant="tip" heading="Tip">For advice and good practice, striped with the ok green.</op-callout>
-      <op-callout variant="warning" heading="Warning">For things that can bite: a left amber stripe with the triangle beside it, the pole a faint texture behind.</op-callout>
+      <op-callout variant="warning" heading="Warning">For things that can bite: triangles both sides of the scrim, the pole a faint texture behind.</op-callout>
       <op-callout variant="danger" heading="Data loss ahead">For destructive operations: roundels both sides inside the dark-red barberpole wrap; the wording carries the severity.</op-callout>
       <h2>Without a heading</h2>
       <op-callout variant="note">A bare callout: just the variant tag and content, for short asides.</op-callout>
@@ -17,11 +17,11 @@
       <p>The icon shapes follow the ISO 3864 shape grammar as registered in ISO 7010: a
       triangle for hazard warnings (W001), a circle with a diagonal bar for
       prohibition-grade danger (P001), a circled i for information, and the square of the
-      safe-condition series for tips. Notes and tips keep a thin stripe and a dimmed
-      watermark of their icon on the right; warning and danger frames anchor on a
-      left stripe and post their icon beside it - danger on both sides - over a dark
-      barberpole in their own colour behind a translucent scrim: a faint texture for
-      warning, a visible wrap for danger, the wording readable on the scrim. The hues stay in the matching ISO colour families -
+      safe-condition series for tips. Every frame anchors on a left colour stripe. Notes and tips keep a dimmed
+      watermark of their icon on the right; warning and danger post their icon on
+      both sides, over a dark barberpole in their own colour behind a translucent
+      scrim: a faint texture for warning, a visible wrap for danger, the wording
+      readable on the scrim. The hues stay in the matching ISO colour families -
       amber, red, blue, green - but use the theme's contrast-checked status tokens rather
       than raw signal colours, which would fail WCAG AA on these backgrounds.</p>
       <h2>Markup</h2>
