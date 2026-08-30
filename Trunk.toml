@@ -1,0 +1,17 @@
+# Trunk builds crates/op-site for wasm32-unknown-unknown, runs wasm-bindgen and
+# wasm-opt, and assembles dist/ from index.html. Tool versions are pinned here
+# (and wasm-bindgen additionally by Cargo.lock) so builds are reproducible.
+
+[build]
+target = "index.html"
+dist = "dist"
+public_url = "/"
+filehash = true
+
+[tools]
+wasm_bindgen = "0.2.127"
+wasm_opt = "version_132"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8080

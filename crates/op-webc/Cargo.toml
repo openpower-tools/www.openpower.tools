@@ -1,0 +1,13 @@
+[package]
+name = "op-webc"
+version = "0.1.0"
+description = "Define Web Components (custom elements) in Rust with a wasm-bindgen-emitted shim"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["HtmlElement"] }

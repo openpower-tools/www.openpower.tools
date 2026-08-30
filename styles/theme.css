@@ -1,0 +1,114 @@
+/*
+ * Palette for www.openpower.tools, derived from five source colours:
+ * navy #0A1546, deep blue #0B2D6A, blue #1B4C89, crimson #C11E4B and
+ * dusty pink #C99C9F. Where a pair of those fails WCAG AA, a tint or shade of
+ * the same hue is used instead. crates/op-site/src/palette.rs checks every
+ * text/background pair below in `cargo test`; keep the two dark blocks
+ * identical (the same test enforces that).
+ *
+ * Theme selection: light by default; the dark block applies when the system
+ * prefers dark and no explicit choice was made, or when <html data-theme="dark">
+ * is set by <op-theme-toggle> (which stores the choice in localStorage).
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --op-bg: #FBF9F9;
+  --op-surface: #FFFFFF;
+  --op-text: #0A1546;
+  --op-muted: #795E5F;
+  --op-link: #1B4C89;
+  --op-link-hover: #0B2D6A;
+  --op-accent: #C11E4B;
+  --op-focus: #C11E4B;
+  --op-border: #C99C9F;
+  --op-border-strong: #A17D7F;
+  --op-code-bg: #F3EDED;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --op-bg: #0A1546;
+    --op-surface: #0B2D6A;
+    --op-text: #F3F1F4;
+    --op-muted: #C99C9F;
+    --op-link: #8DA6C4;
+    --op-link-hover: #A4B7D0;
+    --op-accent: #E08EA5;
+    --op-focus: #E08EA5;
+    --op-border: #1B4C89;
+    --op-border-strong: #7694B8;
+    --op-code-bg: #0B2D6A;
+  }
+}
+
+:root[data-theme="dark"] {
+  --op-bg: #0A1546;
+  --op-surface: #0B2D6A;
+  --op-text: #F3F1F4;
+  --op-muted: #C99C9F;
+  --op-link: #8DA6C4;
+  --op-link-hover: #A4B7D0;
+  --op-accent: #E08EA5;
+  --op-focus: #E08EA5;
+  --op-border: #1B4C89;
+  --op-border-strong: #7694B8;
+  --op-code-bg: #0B2D6A;
+}
+
+/* Base styles for the light DOM; shadow roots carry their own. */
+
+html {
+  background: var(--op-bg);
+  color: var(--op-text);
+  font-family: system-ui, sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+}
+
+a {
+  color: var(--op-link);
+}
+
+a:hover {
+  color: var(--op-link-hover);
+}
+
+:focus-visible {
+  outline: 2px solid var(--op-focus);
+  outline-offset: 2px;
+}
+
+main p {
+  margin: 0.5rem 0;
+}
+
+main ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+main li {
+  margin: 0.25rem 0;
+}
+
+/* Leave room for the fixed theme toggle on narrow screens. */
+@media (max-width: 30rem) {
+  body {
+    padding-top: 3.5rem;
+  }
+}

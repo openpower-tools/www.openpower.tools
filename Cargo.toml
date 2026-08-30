@@ -5,7 +5,7 @@ cargo-features = ["trim-paths"]
 
 [workspace]
 resolver = "3"
-members = ["wasm"]
+members = ["crates/op-webc", "crates/op-site"]
 
 [workspace.package]
 edition = "2024"
@@ -13,8 +13,15 @@ publish = false
 license = "GPL-3.0-or-later"
 repository = "https://github.com/openpower-tools/www.openpower.tools"
 
-# Size-oriented, reproducible release profile for the wasm module. wasm-opt
-# (pinned binaryen from npm) runs afterwards, see package.json.
+[workspace.dependencies]
+wasm-bindgen = "0.2.127"
+js-sys = "0.3.104"
+web-sys = "0.3.104"
+console_error_panic_hook = "0.1.7"
+op-webc = { path = "crates/op-webc" }
+
+# Size-oriented, reproducible release profile for the wasm binary. Trunk runs
+# a pinned wasm-opt afterwards (see Trunk.toml).
 [profile.release]
 opt-level = "s"
 lto = true

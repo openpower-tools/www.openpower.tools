@@ -1,0 +1,26 @@
+[package]
+name = "op-site"
+version = "0.1.0"
+description = "www.openpower.tools: the site, as custom elements written in Rust"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+op-webc.workspace = true
+wasm-bindgen.workspace = true
+console_error_panic_hook.workspace = true
+web-sys = { workspace = true, features = [
+  "Document",
+  "Element",
+  "Event",
+  "EventTarget",
+  "HtmlElement",
+  "Node",
+  "ShadowRoot",
+  "ShadowRootInit",
+  "ShadowRootMode",
+  "Storage",
+  "Window",
+] }

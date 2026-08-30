@@ -13,6 +13,11 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
+env:
+  TRUNK_VERSION: 0.21.14
+  # sha256 of trunk-x86_64-unknown-linux-gnu.tar.gz for that release
+  TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,12 +34,20 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
+      - name: Install pinned Trunk (prebuilt, checksum verified)
+        run: |
+          curl -fsSL -o trunk.tar.gz "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${TRUNK_SHA256}  trunk.tar.gz" | sha256sum --check
+          tar -xzf trunk.tar.gz
+          install -m 0755 trunk "${HOME}/.cargo/bin/trunk"
+          rm trunk trunk.tar.gz
+          trunk --version
 
-      - run: npm ci
+      - name: Cache Trunk's downloaded tools (wasm-bindgen, wasm-opt)
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trunk
+          key: trunk-tools-${{ hashFiles('Trunk.toml') }}
 
       - name: Rust format check
         run: cargo fmt --all --check
@@ -45,18 +58,18 @@ jobs:
       - name: Rust tests (native)
         run: cargo test --workspace
 
-      - name: Build site (wasm-pack, wasm-opt, tsc, vite)
-        run: npm run build
+      - name: Build site
+        run: trunk build --release
 
-      - name: Record artifact hashes (compare with `npm run hashes` locally)
+      - name: Record artifact hashes (compare with `sha256sum` of a local dist/)
         run: |
           {
             echo '## Artifact hashes'
             echo '```'
-            npm run --silent hashes
+            find dist -type f | sort | xargs sha256sum
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          npm run --silent hashes
+          find dist -type f | sort | xargs sha256sum
 
       - uses: actions/configure-pages@v6
 

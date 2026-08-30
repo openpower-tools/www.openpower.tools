@@ -9,13 +9,37 @@
       content="Community-driven support for OpenPOWER / Talos II firmware and software ports."
     />
     <link rel="canonical" href="https://www.openpower.tools/" />
-    <script type="module" src="/src/main.ts"></script>
+    <!-- Apply a remembered theme before first paint; the contract with crates/op-site/src/theme.rs is tested. -->
+    <script>try{var t=localStorage.getItem("op-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+    <link data-trunk rel="css" href="styles/theme.css" />
+    <link data-trunk rel="rust" href="crates/op-site/Cargo.toml" data-wasm-opt="z" />
   </head>
   <body>
-    <op-home></op-home>
+    <op-theme-toggle></op-theme-toggle>
+    <op-site-header
+      heading="openpower.tools"
+      tagline="Community-driven support for OpenPOWER / Talos II firmware and software ports."
+    ></op-site-header>
+    <main>
+      <p>This site is a skeleton; content is on its way.</p>
+      <op-starting-points heading="Starting points">
+        <ul>
+          <li><a href="https://openpowerfoundation.org/">OpenPOWER Foundation</a>: Power ISA specifications and working groups</li>
+          <li><a href="https://wiki.raptorcs.com/wiki/Main_Page">Raptor Computing Systems wiki</a>: Talos II and Blackbird documentation, firmware, compatibility lists</li>
+          <li><a href="https://forums.raptorcs.com/">Raptor community forums</a>: operating systems, porting and hardware discussion</li>
+          <li><a href="https://www.talospace.com/">Talospace</a>: news on OpenPOWER desktops and ports</li>
+          <li><a href="https://github.com/open-power/skiboot">skiboot (OPAL)</a>: OpenPOWER boot and runtime firmware</li>
+          <li><a href="https://github.com/open-power/op-build">op-build</a>: builds Hostboot, Skiboot, OCC and Petitboot into a PNOR image</li>
+          <li><a href="https://github.com/openbmc/openbmc">OpenBMC</a>: BMC firmware used on Talos II and Blackbird</li>
+          <li><a href="https://wiki.raptorcs.com/wiki/IRC">#talos-workstation</a>: IRC on Libera.Chat, bridged to Matrix</li>
+        </ul>
+      </op-starting-points>
+      <op-build-status></op-build-status>
+    </main>
+    <op-site-footer></op-site-footer>
     <noscript>
       <p>openpower.tools: community-driven support for OpenPOWER / Talos II firmware and software ports.</p>
-      <p>This page uses JavaScript and WebAssembly; the content above is rendered client-side.</p>
+      <p>This page is rendered by WebAssembly; the content above needs JavaScript enabled.</p>
     </noscript>
   </body>
 </html>
