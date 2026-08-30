@@ -12,12 +12,15 @@ op-webc.workspace = true
 wasm-bindgen.workspace = true
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
+  "CssStyleDeclaration",
   "Document",
   "Element",
   "Event",
   "EventTarget",
   "HtmlElement",
+  "Location",
   "Node",
+  "NodeList",
   "ShadowRoot",
   "ShadowRootInit",
   "ShadowRootMode",

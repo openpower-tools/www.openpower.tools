@@ -2,6 +2,7 @@
 //! from these tags; nothing here is instantiated from Rust.
 
 mod build_status;
+mod palette_specimen;
 mod site_footer;
 mod site_header;
 mod starting_points;
@@ -17,6 +18,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     starting_points::DEFINITION,
     build_status::DEFINITION,
     site_footer::DEFINITION,
+    palette_specimen::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

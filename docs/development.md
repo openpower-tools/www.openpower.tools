@@ -20,6 +20,8 @@ builds the wasm, runs wasm-bindgen and wasm-opt, and assembles `dist/`.
 ```
 trunk serve            # dev server on http://127.0.0.1:8080 with rebuild on change
 trunk build --release  # production build into dist/
+trunk build --release --config Trunk.specimen.toml   # then the specimen into dist/specimen/
+trunk serve --release --config Trunk.specimen.toml   # specimen dev server on http://127.0.0.1:8081/specimen/
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
 cargo test --workspace # native tests, including the palette contrast checks
@@ -31,15 +33,26 @@ Warnings are errors (`.cargo/config.toml`).
 
 ```
 index.html                     the page: custom elements plus light-DOM content
+specimen/index.html            palette specimen page, published at /specimen/
 styles/theme.css               palette tokens (dark default, light, auto via data-theme)
 crates/op-webc/                Web Component bridge (CustomElement trait, shim)
 crates/op-site/src/main.rs     registers the elements when the module starts
 crates/op-site/src/components  one file per element (op-theme-toggle, ...)
 crates/op-site/src/theme.rs    Dark/Light/Auto selection and persistence
+crates/op-site/src/colour.rs   sRGB luminance and WCAG contrast
 crates/op-site/src/palette.rs  WCAG contrast tests over styles/theme.css
 Trunk.toml                     build settings and pinned tool versions
+Trunk.specimen.toml            same, for the specimen page (second Trunk target)
 docs/research/                 research notes with sources
 ```
+
+## Palette
+
+Dark (the default) is derived from the Worcester colours and light from the
+Nottingham colours; the derivation, roles and contrast requirements are
+documented at the top of `styles/theme.css` and enforced by `cargo test`.
+`/specimen/` renders every token with its value and contrast ratios, and the
+site's elements, in both themes side by side.
 
 ## Adding an element
 

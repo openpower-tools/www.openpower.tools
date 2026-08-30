@@ -3,9 +3,12 @@
 //! WCAG 2.x contrast ratio: (L1 + 0.05) / (L2 + 0.05) with relative luminance
 //! L from sRGB. Text pairs must reach 4.5:1 (AA); UI boundaries and focus
 //! indicators 3:1 (AA non-text contrast). `--op-highlight` and `--op-border`
-//! are decoration only and are not checked.
+//! are decoration only and are not checked. The colour maths lives in
+//! `crate::colour`, shared with the specimen element.
 
 use std::collections::BTreeMap;
+
+use crate::colour::{self, Rgb};
 
 const CSS: &str = include_str!("../../../styles/theme.css");
 
@@ -41,24 +44,9 @@ const REQUIRED_PAIRS: &[(&str, &str, f64)] = &[
     ("--op-border-strong", "--op-surface", 3.0),
 ];
 
-fn channel(hex: &str) -> f64 {
-    let c = f64::from(u8::from_str_radix(hex, 16).expect("hex channel")) / 255.0;
-    if c <= 0.03928 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn luminance(colour: &str) -> f64 {
-    let hex = colour.strip_prefix('#').expect("colour starts with #");
-    assert_eq!(hex.len(), 6, "expected #RRGGBB, got {colour}");
-    0.2126 * channel(&hex[0..2]) + 0.7152 * channel(&hex[2..4]) + 0.0722 * channel(&hex[4..6])
-}
-
 fn contrast(a: &str, b: &str) -> f64 {
-    let (la, lb) = (luminance(a), luminance(b));
-    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+    let parse = |c: &str| Rgb::from_hex(c).unwrap_or_else(|| panic!("expected #RRGGBB, got {c}"));
+    colour::contrast(parse(a), parse(b))
 }
 
 /// Returns the `--op-*` declarations inside the first `{ ... }` block that
@@ -97,28 +85,17 @@ fn tokens_after(selector: &str) -> BTreeMap<String, String> {
 
 /// Dark is the default: the tokens in the first `:root` block.
 fn dark() -> BTreeMap<String, String> {
-    tokens_after(":root {")
+    tokens_after(":root,\n.op-theme-dark {")
 }
 
 /// Light, when explicitly chosen (`data-theme="light"`).
 fn light() -> BTreeMap<String, String> {
-    tokens_after(":root[data-theme=\"light\"] {\n  --op-bg")
+    tokens_after(":root[data-theme=\"light\"],\n.op-theme-light {")
 }
 
 /// Light, when `data-theme="auto"` and the system prefers light.
 fn light_media() -> BTreeMap<String, String> {
     tokens_after(":root[data-theme=\"auto\"] {\n    --op-bg")
-}
-
-#[test]
-fn luminance_and_contrast_match_reference_values() {
-    assert!((luminance("#FFFFFF") - 1.0).abs() < 1e-9);
-    assert!(luminance("#000000").abs() < 1e-9);
-    assert!((contrast("#000000", "#FFFFFF") - 21.0).abs() < 1e-9);
-    // Published reference points: #767676 is the lightest grey that passes AA
-    // on white at 4.54:1, and #777777 just fails at 4.48:1.
-    assert!((contrast("#767676", "#FFFFFF") - 4.54).abs() < 0.01);
-    assert!((contrast("#777777", "#FFFFFF") - 4.48).abs() < 0.01);
 }
 
 #[test]

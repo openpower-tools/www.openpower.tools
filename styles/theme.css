@@ -15,15 +15,19 @@
  * Token roles:
  *   --op-text, --op-muted, --op-link, --op-link-hover  text: 4.5:1 on bg/surface
  *   --op-accent, --op-focus, --op-border-strong        UI: 3:1 on bg/surface
+ *     (dark: orange is the interaction colour, gold the link colour)
  *   --op-highlight                                     decoration only (title rule)
  *   --op-border                                        decoration only
  *
  * The site is dark by default. <op-theme-toggle> stores a choice in
  * localStorage and mirrors it as <html data-theme="light"> or "auto"; "auto"
- * follows prefers-color-scheme, and no attribute means dark.
+ * follows prefers-color-scheme, and no attribute means dark. The
+ * .op-theme-dark and .op-theme-light classes scope a token set to a subtree,
+ * which the specimen uses to show both themes side by side.
  */
 
-:root {
+:root,
+.op-theme-dark {
   color-scheme: dark;
 
   --op-bg: #020202;
@@ -34,14 +38,10 @@
   --op-link-hover: #E6D27A;
   --op-accent: #EB6424;
   --op-highlight: #EB6424;
-  --op-focus: #D7BD44;
+  --op-focus: #EB6424;
   --op-border: #334D70;
   --op-border-strong: #8F9DB0;
   --op-code-bg: #1A2738;
-}
-
-:root[data-theme="light"] {
-  color-scheme: light;
 }
 
 :root[data-theme="auto"] {
@@ -55,7 +55,7 @@
     --op-text: #30544A;
     --op-muted: #635A4F;
     --op-link: #1A7065;
-    --op-link-hover: #30544A;
+    --op-link-hover: #145A51;
     --op-accent: #E75019;
     --op-highlight: #8CB531;
     --op-focus: #1E8477;
@@ -65,13 +65,16 @@
   }
 }
 
-:root[data-theme="light"] {
+:root[data-theme="light"],
+.op-theme-light {
+  color-scheme: light;
+
   --op-bg: #E9F0F8;
   --op-surface: #FFFFFF;
   --op-text: #30544A;
   --op-muted: #635A4F;
   --op-link: #1A7065;
-  --op-link-hover: #30544A;
+  --op-link-hover: #145A51;
   --op-accent: #E75019;
   --op-highlight: #8CB531;
   --op-focus: #1E8477;

@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/trunk
-          key: trunk-tools-${{ hashFiles('Trunk.toml') }}
+          key: trunk-tools-${{ hashFiles('Trunk.toml', 'Trunk.specimen.toml') }}
 
       - name: Rust format check
         run: cargo fmt --all --check
@@ -58,8 +58,10 @@ jobs:
       - name: Rust tests (native)
         run: cargo test --workspace
 
-      - name: Build site
-        run: trunk build --release
+      - name: Build site (index, then the specimen page into dist/specimen)
+        run: |
+          trunk build --release
+          trunk build --release --config Trunk.specimen.toml
 
       - name: Record artifact hashes (compare with `sha256sum` of a local dist/)
         run: |

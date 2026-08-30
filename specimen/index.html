@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Palette specimen: openpower.tools</title>
+    <meta name="robots" content="noindex" />
+    <link rel="canonical" href="https://www.openpower.tools/specimen/" />
+    <!-- Apply a remembered theme before first paint; the contract with crates/op-site/src/theme.rs is tested. -->
+    <script>try{var t=localStorage.getItem("op-theme");if(t==="light"||t==="auto")document.documentElement.dataset.theme=t}catch(e){}</script>
+    <link data-trunk rel="css" href="../styles/theme.css" />
+    <link data-trunk rel="rust" href="../crates/op-site/Cargo.toml" data-wasm-opt="z" />
+  </head>
+  <body>
+    <op-theme-toggle></op-theme-toggle>
+    <op-site-header
+      heading="Palette specimen"
+      tagline="Every token with its value and WCAG contrast, and the site's own elements, in both themes."
+    ></op-site-header>
+    <main>
+      <p>Design preview for <a href="/">www.openpower.tools</a>. The page follows the theme toggle; the two columns below are pinned to their own theme.</p>
+      <op-palette-specimen></op-palette-specimen>
+    </main>
+    <op-site-footer></op-site-footer>
+    <noscript>
+      <p>This page is rendered by WebAssembly; it needs JavaScript enabled.</p>
+    </noscript>
+  </body>
+</html>

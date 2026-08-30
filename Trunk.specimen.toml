@@ -1,0 +1,18 @@
+# Second Trunk target: the palette specimen at /specimen/. Built after the
+# main target (which empties dist/) with:
+#   trunk build --release --config Trunk.specimen.toml
+# Keep [tools] identical to Trunk.toml so both pages use the same binaries.
+
+[build]
+target = "specimen/index.html"
+dist = "dist/specimen"
+public_url = "/specimen/"
+filehash = true
+
+[tools]
+wasm_bindgen = "0.2.127"
+wasm_opt = "version_132"
+
+[serve]
+addresses = ["127.0.0.1"]
+port = 8081

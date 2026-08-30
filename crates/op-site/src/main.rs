@@ -5,6 +5,7 @@
 //! module starts. Trunk builds this binary for `wasm32-unknown-unknown` and
 //! injects the loader into `index.html`.
 
+mod colour;
 mod components;
 mod html;
 mod theme;

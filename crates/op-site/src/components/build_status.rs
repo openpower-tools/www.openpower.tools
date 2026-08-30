@@ -76,29 +76,39 @@ mod tests {
     }
 
     #[test]
-    fn index_html_uses_every_defined_element_and_no_undefined_op_tags() {
-        let index = include_str!("../../../../index.html");
+    fn pages_use_every_defined_element_and_no_undefined_op_tags() {
+        let pages = [
+            ("index.html", include_str!("../../../../index.html")),
+            (
+                "specimen/index.html",
+                include_str!("../../../../specimen/index.html"),
+            ),
+        ];
         for definition in DEFINITIONS {
             assert!(
-                index.contains(&format!("<{}", definition.tag)),
-                "index.html does not use <{}>",
+                pages
+                    .iter()
+                    .any(|(_, html)| html.contains(&format!("<{}", definition.tag))),
+                "no page uses <{}>",
                 definition.tag
             );
         }
-        for tag in index
-            .split('<')
-            .filter_map(|s| s.strip_prefix("op-"))
-            .map(|s| {
-                let end = s
-                    .find(|c: char| c.is_whitespace() || c == '>')
-                    .unwrap_or(s.len());
-                format!("op-{}", &s[..end])
-            })
-        {
-            assert!(
-                DEFINITIONS.iter().any(|d| d.tag == tag),
-                "index.html uses undefined <{tag}>"
-            );
+        for (page, html) in pages {
+            for tag in html
+                .split('<')
+                .filter_map(|s| s.strip_prefix("op-"))
+                .map(|s| {
+                    let end = s
+                        .find(|c: char| c.is_whitespace() || c == '>')
+                        .unwrap_or(s.len());
+                    format!("op-{}", &s[..end])
+                })
+            {
+                assert!(
+                    DEFINITIONS.iter().any(|d| d.tag == tag),
+                    "{page} uses undefined <{tag}>"
+                );
+            }
         }
     }
 }

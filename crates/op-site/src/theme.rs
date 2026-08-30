@@ -156,7 +156,15 @@ mod tests {
     /// The pre-paint script in index.html must read the same key and values.
     #[test]
     fn index_html_prepaint_script_agrees_with_storage_contract() {
-        let index = include_str!("../../../index.html");
+        for index in [
+            include_str!("../../../index.html"),
+            include_str!("../../../specimen/index.html"),
+        ] {
+            check_prepaint_script(index);
+        }
+    }
+
+    fn check_prepaint_script(index: &str) {
         assert!(
             index.contains(&format!("localStorage.getItem(\"{STORAGE_KEY}\")")),
             "index.html does not read {STORAGE_KEY}"
