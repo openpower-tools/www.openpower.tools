@@ -88,7 +88,9 @@ pub struct ElementClass {
 impl ElementClass {
     /// Creates the Rust state for `host`.
     pub fn create(&self, host: HtmlElement) -> ElementHandle {
-        ElementHandle { inner: (self.create)(host) }
+        ElementHandle {
+            inner: (self.create)(host),
+        }
     }
 }
 
@@ -132,8 +134,18 @@ extern "C" {
 
 /// Registers `definition` with the browser's custom element registry.
 pub fn define(definition: &ElementDefinition) {
-    let observed = definition.observed_attributes.iter().map(|a| JsValue::from_str(a)).collect();
-    define_element(definition.tag, observed, ElementClass { create: definition.create });
+    let observed = definition
+        .observed_attributes
+        .iter()
+        .map(|a| JsValue::from_str(a))
+        .collect();
+    define_element(
+        definition.tag,
+        observed,
+        ElementClass {
+            create: definition.create,
+        },
+    );
 }
 
 #[cfg(test)]
@@ -145,11 +157,21 @@ mod tests {
     #[test]
     fn inline_js_matches_shim_constant() {
         let source = include_str!("lib.rs");
-        let signature = format!("export function {}(tag, observedAttributes, cls) {{", "defineElement");
+        let signature = format!(
+            "export function {}(tag, observedAttributes, cls) {{",
+            "defineElement"
+        );
         let occurrences = source.matches(&signature).count();
-        assert_eq!(occurrences, 2, "expected the shim text once in SHIM and once in inline_js");
-        let inline_start = source.find("inline_js = r#\"").expect("inline_js literal") + "inline_js = r#\"".len();
-        let inline_end = source[inline_start..].find("\"#)]").expect("end of inline_js") + inline_start;
+        assert_eq!(
+            occurrences, 2,
+            "expected the shim text once in SHIM and once in inline_js"
+        );
+        let inline_start =
+            source.find("inline_js = r#\"").expect("inline_js literal") + "inline_js = r#\"".len();
+        let inline_end = source[inline_start..]
+            .find("\"#)]")
+            .expect("end of inline_js")
+            + inline_start;
         assert_eq!(&source[inline_start..inline_end], SHIM);
     }
 
@@ -157,8 +179,16 @@ mod tests {
     /// export with that JS name.
     #[test]
     fn shim_only_calls_exported_methods() {
-        for method in ["connected()", "disconnected()", "adopted()", "attributeChanged(name, oldValue, newValue)"] {
-            assert!(SHIM.contains(&format!(".{method}")), "shim does not call {method}");
+        for method in [
+            "connected()",
+            "disconnected()",
+            "adopted()",
+            "attributeChanged(name, oldValue, newValue)",
+        ] {
+            assert!(
+                SHIM.contains(&format!(".{method}")),
+                "shim does not call {method}"
+            );
         }
         assert!(SHIM.contains("cls.create(this)"));
         let source = include_str!("lib.rs");
@@ -176,8 +206,15 @@ mod tests {
             impl CustomElement for Noop {}
             Box::new(Noop)
         }
-        let definition = ElementDefinition { tag: "op-example", observed_attributes: &["heading"], create };
-        assert!(definition.tag.contains('-'), "custom element tags must contain a hyphen");
+        let definition = ElementDefinition {
+            tag: "op-example",
+            observed_attributes: &["heading"],
+            create,
+        };
+        assert!(
+            definition.tag.contains('-'),
+            "custom element tags must contain a hyphen"
+        );
         assert_eq!(definition.observed_attributes, &["heading"]);
     }
 }

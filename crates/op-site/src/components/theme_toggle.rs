@@ -8,8 +8,16 @@ use web_sys::{Element, Event, HtmlElement};
 use super::{BASE_CSS, shadow_root};
 use crate::theme::{self, Mode};
 
-pub const DEFINITION: ElementDefinition =
-    ElementDefinition { tag: "op-theme-toggle", observed_attributes: &[], create: |host| Box::new(ThemeToggle { host, on_click: None }) };
+pub const DEFINITION: ElementDefinition = ElementDefinition {
+    tag: "op-theme-toggle",
+    observed_attributes: &[],
+    create: |host| {
+        Box::new(ThemeToggle {
+            host,
+            on_click: None,
+        })
+    },
+};
 
 struct ThemeToggle {
     host: HtmlElement,
@@ -19,8 +27,12 @@ struct ThemeToggle {
 
 fn show(button: &Element, mode: Mode) {
     button.set_text_content(Some(&mode.label()));
-    button.set_attribute("aria-label", &mode.description()).expect("set aria-label");
-    button.set_attribute("title", &mode.description()).expect("set title");
+    button
+        .set_attribute("aria-label", &mode.description())
+        .expect("set aria-label");
+    button
+        .set_attribute("title", &mode.description())
+        .expect("set title");
 }
 
 impl CustomElement for ThemeToggle {
@@ -51,7 +63,10 @@ button:hover {{ border-color: var(--op-accent); }}
 </style>
 <button type=\"button\"></button>"
         ));
-        let button = shadow.query_selector("button").expect("query").expect("button in template");
+        let button = shadow
+            .query_selector("button")
+            .expect("query")
+            .expect("button in template");
         let mode = theme::current();
         theme::apply(mode);
         show(&button, mode);
@@ -62,7 +77,9 @@ button:hover {{ border-color: var(--op-accent); }}
             theme::apply(next);
             show(&target, next);
         });
-        button.add_event_listener_with_callback("click", closure.as_ref().unchecked_ref()).expect("add click listener");
+        button
+            .add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())
+            .expect("add click listener");
         self.on_click = Some(closure);
     }
 }

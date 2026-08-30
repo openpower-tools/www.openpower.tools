@@ -5,8 +5,11 @@ use web_sys::HtmlElement;
 
 use super::{BASE_CSS, shadow_root};
 
-pub const DEFINITION: ElementDefinition =
-    ElementDefinition { tag: "op-site-footer", observed_attributes: &[], create: |host| Box::new(SiteFooter { host }) };
+pub const DEFINITION: ElementDefinition = ElementDefinition {
+    tag: "op-site-footer",
+    observed_attributes: &[],
+    create: |host| Box::new(SiteFooter { host }),
+};
 
 struct SiteFooter {
     host: HtmlElement,

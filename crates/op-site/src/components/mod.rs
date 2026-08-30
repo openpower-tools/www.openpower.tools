@@ -43,5 +43,6 @@ pub fn shadow_root(host: &HtmlElement) -> ShadowRoot {
     if let Some(existing) = host.shadow_root() {
         return existing;
     }
-    host.attach_shadow(&ShadowRootInit::new(ShadowRootMode::Open)).expect("attach shadow root")
+    host.attach_shadow(&ShadowRootInit::new(ShadowRootMode::Open))
+        .expect("attach shadow root")
 }

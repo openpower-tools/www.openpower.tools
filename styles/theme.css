@@ -1,68 +1,83 @@
 /*
- * Palette for www.openpower.tools, derived from five source colours:
- * navy #0A1546, deep blue #0B2D6A, blue #1B4C89, crimson #C11E4B and
- * dusty pink #C99C9F. Where a pair of those fails WCAG AA, a tint or shade of
- * the same hue is used instead. crates/op-site/src/palette.rs checks every
- * text/background pair below in `cargo test`; keep the two dark blocks
+ * Palette for www.openpower.tools.
+ *
+ * Dark (the default) is derived from the Worcester colours: Pear Black
+ * #020202, Diglis Deep Blue #334D70, Hive Gold #D7BD44, Cathedral Stone
+ * #DCCAA4 and Saucy Orange #EB6424 (Elgar Bronze #5C2119 only works on light
+ * backgrounds and is left out). Light is derived
+ * from the six Nottingham colours: Sherwood Forest #30544A, Tramway Teal
+ * #1E8477, Minted Pea Green #8CB531, Lace White #E9F0F8, Cave Sandstone
+ * #C6B49E and Chopper Orange #E75019. Where a pair fails WCAG AA, a tint or
+ * shade of the same hue is used instead. crates/op-site/src/palette.rs checks
+ * every text/background pair in `cargo test`; keep the two light blocks
  * identical (the same test enforces that).
  *
- * Theme selection: light by default; the dark block applies when the system
- * prefers dark and no explicit choice was made, or when <html data-theme="dark">
- * is set by <op-theme-toggle> (which stores the choice in localStorage).
+ * Token roles:
+ *   --op-text, --op-muted, --op-link, --op-link-hover  text: 4.5:1 on bg/surface
+ *   --op-accent, --op-focus, --op-border-strong        UI: 3:1 on bg/surface
+ *   --op-highlight                                     decoration only (title rule)
+ *   --op-border                                        decoration only
+ *
+ * The site is dark by default. <op-theme-toggle> stores a choice in
+ * localStorage and mirrors it as <html data-theme="light"> or "auto"; "auto"
+ * follows prefers-color-scheme, and no attribute means dark.
  */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
-  --op-bg: #FBF9F9;
-  --op-surface: #FFFFFF;
-  --op-text: #0A1546;
-  --op-muted: #795E5F;
-  --op-link: #1B4C89;
-  --op-link-hover: #0B2D6A;
-  --op-accent: #C11E4B;
-  --op-focus: #C11E4B;
-  --op-border: #C99C9F;
-  --op-border-strong: #A17D7F;
-  --op-code-bg: #F3EDED;
+  --op-bg: #020202;
+  --op-surface: #2B415F;
+  --op-text: #DCCAA4;
+  --op-muted: #ADB8C6;
+  --op-link: #D7BD44;
+  --op-link-hover: #E6D27A;
+  --op-accent: #EB6424;
+  --op-highlight: #EB6424;
+  --op-focus: #D7BD44;
+  --op-border: #334D70;
+  --op-border-strong: #8F9DB0;
+  --op-code-bg: #1A2738;
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
 }
 
-:root[data-theme="dark"] {
-  color-scheme: dark;
+:root[data-theme="auto"] {
+  color-scheme: light dark;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --op-bg: #0A1546;
-    --op-surface: #0B2D6A;
-    --op-text: #F3F1F4;
-    --op-muted: #C99C9F;
-    --op-link: #8DA6C4;
-    --op-link-hover: #A4B7D0;
-    --op-accent: #E08EA5;
-    --op-focus: #E08EA5;
-    --op-border: #1B4C89;
-    --op-border-strong: #7694B8;
-    --op-code-bg: #0B2D6A;
+@media (prefers-color-scheme: light) {
+  :root[data-theme="auto"] {
+    --op-bg: #E9F0F8;
+    --op-surface: #FFFFFF;
+    --op-text: #30544A;
+    --op-muted: #635A4F;
+    --op-link: #1A7065;
+    --op-link-hover: #30544A;
+    --op-accent: #E75019;
+    --op-highlight: #8CB531;
+    --op-focus: #1E8477;
+    --op-border: #C6B49E;
+    --op-border-strong: #8B7E6F;
+    --op-code-bg: #DDE4EC;
   }
 }
 
-:root[data-theme="dark"] {
-  --op-bg: #0A1546;
-  --op-surface: #0B2D6A;
-  --op-text: #F3F1F4;
-  --op-muted: #C99C9F;
-  --op-link: #8DA6C4;
-  --op-link-hover: #A4B7D0;
-  --op-accent: #E08EA5;
-  --op-focus: #E08EA5;
-  --op-border: #1B4C89;
-  --op-border-strong: #7694B8;
-  --op-code-bg: #0B2D6A;
+:root[data-theme="light"] {
+  --op-bg: #E9F0F8;
+  --op-surface: #FFFFFF;
+  --op-text: #30544A;
+  --op-muted: #635A4F;
+  --op-link: #1A7065;
+  --op-link-hover: #30544A;
+  --op-accent: #E75019;
+  --op-highlight: #8CB531;
+  --op-focus: #1E8477;
+  --op-border: #C6B49E;
+  --op-border-strong: #8B7E6F;
+  --op-code-bg: #DDE4EC;
 }
 
 /* Base styles for the light DOM; shadow roots carry their own. */

@@ -8,8 +8,11 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
-pub const DEFINITION: ElementDefinition =
-    ElementDefinition { tag: "op-starting-points", observed_attributes: &["heading"], create: |host| Box::new(StartingPoints { host }) };
+pub const DEFINITION: ElementDefinition = ElementDefinition {
+    tag: "op-starting-points",
+    observed_attributes: &["heading"],
+    create: |host| Box::new(StartingPoints { host }),
+};
 
 struct StartingPoints {
     host: HtmlElement,
@@ -17,7 +20,10 @@ struct StartingPoints {
 
 impl StartingPoints {
     fn render(&self) {
-        let heading = self.host.get_attribute("heading").unwrap_or_else(|| "Starting points".to_owned());
+        let heading = self
+            .host
+            .get_attribute("heading")
+            .unwrap_or_else(|| "Starting points".to_owned());
         shadow_root(&self.host).set_inner_html(&format!(
             "<style>{BASE_CSS}
 ::slotted(ul) {{ margin: 0; padding-left: 1.25rem; }}

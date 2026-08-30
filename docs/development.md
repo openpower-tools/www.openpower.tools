@@ -31,11 +31,11 @@ Warnings are errors (`.cargo/config.toml`).
 
 ```
 index.html                     the page: custom elements plus light-DOM content
-styles/theme.css               palette tokens (light, dark, data-theme override)
+styles/theme.css               palette tokens (dark default, light, auto via data-theme)
 crates/op-webc/                Web Component bridge (CustomElement trait, shim)
 crates/op-site/src/main.rs     registers the elements when the module starts
 crates/op-site/src/components  one file per element (op-theme-toggle, ...)
-crates/op-site/src/theme.rs    Auto/Light/Dark selection and persistence
+crates/op-site/src/theme.rs    Dark/Light/Auto selection and persistence
 crates/op-site/src/palette.rs  WCAG contrast tests over styles/theme.css
 Trunk.toml                     build settings and pinned tool versions
 docs/research/                 research notes with sources

@@ -1,10 +1,12 @@
-//! Colour theme selection: follow the system (`Auto`) or pin `Light`/`Dark`.
+//! Colour theme selection. The site is dark by default; `Light` pins the
+//! light palette and `Auto` follows the system preference.
 //!
 //! The choice is stored in `localStorage` under [`STORAGE_KEY`] and applied as
-//! `data-theme` on `<html>`, which `styles/theme.css` uses to override the
-//! `prefers-color-scheme` default. `index.html` contains a three-line inline
-//! script that applies the stored value before first paint; it must agree
-//! with [`STORAGE_KEY`] and the stored values here (a test checks that).
+//! `data-theme` on `<html>` (`"light"` or `"auto"`; absent means dark), which
+//! `styles/theme.css` keys its token sets on. `index.html` contains a
+//! three-line inline script that applies the stored value before first paint;
+//! it must agree with [`STORAGE_KEY`] and the stored values here (a test
+//! checks that).
 
 use web_sys::Storage;
 
@@ -13,44 +15,45 @@ const ATTRIBUTE: &str = "data-theme";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    Auto,
-    Light,
     Dark,
+    Light,
+    Auto,
 }
 
 impl Mode {
-    /// Interprets a stored value; anything unrecognised means `Auto`.
+    /// Interprets a stored value; anything unrecognised means the default, `Dark`.
     pub fn parse(stored: Option<&str>) -> Self {
         match stored {
             Some("light") => Self::Light,
-            Some("dark") => Self::Dark,
-            _ => Self::Auto,
+            Some("auto") => Self::Auto,
+            _ => Self::Dark,
         }
     }
 
-    /// Value persisted to storage and used for `data-theme`; `None` for `Auto`.
+    /// Value persisted to storage and used for `data-theme`; `None` for the
+    /// default, `Dark`.
     pub fn stored_value(self) -> Option<&'static str> {
         match self {
-            Self::Auto => None,
+            Self::Dark => None,
             Self::Light => Some("light"),
-            Self::Dark => Some("dark"),
+            Self::Auto => Some("auto"),
         }
     }
 
-    /// The mode a click on the toggle moves to: Auto -> Light -> Dark -> Auto.
+    /// The mode a click on the toggle moves to: Dark -> Light -> Auto -> Dark.
     pub fn next(self) -> Self {
         match self {
-            Self::Auto => Self::Light,
-            Self::Light => Self::Dark,
-            Self::Dark => Self::Auto,
+            Self::Dark => Self::Light,
+            Self::Light => Self::Auto,
+            Self::Auto => Self::Dark,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
-            Self::Auto => "Auto",
-            Self::Light => "Light",
             Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::Auto => "Auto",
         }
     }
 
@@ -62,11 +65,14 @@ impl Mode {
     /// Accessible description of the button's current state and action.
     pub fn description(self) -> String {
         let now = match self {
-            Self::Auto => "Auto, following your system preference",
-            Self::Light => "Light",
             Self::Dark => "Dark",
+            Self::Light => "Light",
+            Self::Auto => "Auto, following your system preference",
         };
-        format!("Colour theme: {now}. Activate to switch to {}.", self.next().name())
+        format!(
+            "Colour theme: {now}. Activate to switch to {}.",
+            self.next().name()
+        )
     }
 }
 
@@ -74,7 +80,7 @@ fn storage() -> Option<Storage> {
     web_sys::window()?.local_storage().ok().flatten()
 }
 
-/// The stored mode, `Auto` if nothing is stored or storage is unavailable.
+/// The stored mode, `Dark` if nothing is stored or storage is unavailable.
 pub fn current() -> Mode {
     let stored = storage().and_then(|s| s.get_item(STORAGE_KEY).ok().flatten());
     Mode::parse(stored.as_deref())
@@ -82,9 +88,14 @@ pub fn current() -> Mode {
 
 /// Applies `mode` to the document and persists it.
 pub fn apply(mode: Mode) {
-    if let Some(root) = web_sys::window().and_then(|w| w.document()).and_then(|d| d.document_element()) {
+    if let Some(root) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+    {
         match mode.stored_value() {
-            Some(value) => root.set_attribute(ATTRIBUTE, value).expect("set data-theme"),
+            Some(value) => root
+                .set_attribute(ATTRIBUTE, value)
+                .expect("set data-theme"),
             None => root.remove_attribute(ATTRIBUTE).expect("remove data-theme"),
         }
     }
@@ -102,33 +113,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stored_values_round_trip_and_unknown_values_mean_auto() {
-        for mode in [Mode::Auto, Mode::Light, Mode::Dark] {
+    fn stored_values_round_trip_and_unknown_values_mean_dark() {
+        for mode in [Mode::Dark, Mode::Light, Mode::Auto] {
             assert_eq!(Mode::parse(mode.stored_value()), mode);
         }
-        for junk in [Some(""), Some("LIGHT"), Some("system"), Some("dark "), None] {
-            assert_eq!(Mode::parse(junk), Mode::Auto, "{junk:?}");
+        for junk in [
+            Some(""),
+            Some("LIGHT"),
+            Some("system"),
+            Some("auto "),
+            Some("dark"),
+            None,
+        ] {
+            assert_eq!(Mode::parse(junk), Mode::Dark, "{junk:?}");
         }
     }
 
     #[test]
     fn next_cycles_through_all_modes_exactly_once() {
-        let mut seen = vec![Mode::Auto];
-        let mut mode = Mode::Auto;
+        let mut seen = vec![Mode::Dark];
+        let mut mode = Mode::Dark;
         for _ in 0..3 {
             mode = mode.next();
             seen.push(mode);
         }
-        assert_eq!(seen, [Mode::Auto, Mode::Light, Mode::Dark, Mode::Auto]);
+        assert_eq!(seen, [Mode::Dark, Mode::Light, Mode::Auto, Mode::Dark]);
     }
 
     #[test]
     fn labels_and_descriptions_name_the_current_and_next_mode() {
-        for mode in [Mode::Auto, Mode::Light, Mode::Dark] {
+        for mode in [Mode::Dark, Mode::Light, Mode::Auto] {
             assert_eq!(mode.label(), format!("Theme: {}", mode.name()));
             let description = mode.description();
             assert!(description.contains(mode.name()), "{description}");
-            assert!(description.ends_with(&format!("switch to {}.", mode.next().name())), "{description}");
+            assert!(
+                description.ends_with(&format!("switch to {}.", mode.next().name())),
+                "{description}"
+            );
         }
     }
 
@@ -136,10 +157,19 @@ mod tests {
     #[test]
     fn index_html_prepaint_script_agrees_with_storage_contract() {
         let index = include_str!("../../../index.html");
-        assert!(index.contains(&format!("localStorage.getItem(\"{STORAGE_KEY}\")")), "index.html does not read {STORAGE_KEY}");
-        for value in [Mode::Light, Mode::Dark].map(|m| m.stored_value().unwrap()) {
-            assert!(index.contains(&format!("t===\"{value}\"")), "index.html does not recognise {value:?}");
+        assert!(
+            index.contains(&format!("localStorage.getItem(\"{STORAGE_KEY}\")")),
+            "index.html does not read {STORAGE_KEY}"
+        );
+        for value in [Mode::Light, Mode::Auto].map(|m| m.stored_value().unwrap()) {
+            assert!(
+                index.contains(&format!("t===\"{value}\"")),
+                "index.html does not recognise {value:?}"
+            );
         }
-        assert!(index.contains("document.documentElement.dataset.theme=t"), "index.html does not set data-theme");
+        assert!(
+            index.contains("document.documentElement.dataset.theme=t"),
+            "index.html does not set data-theme"
+        );
     }
 }

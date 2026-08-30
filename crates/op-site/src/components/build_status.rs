@@ -5,8 +5,11 @@ use web_sys::HtmlElement;
 
 use super::{BASE_CSS, DEFINITIONS, shadow_root};
 
-pub const DEFINITION: ElementDefinition =
-    ElementDefinition { tag: "op-build-status", observed_attributes: &[], create: |host| Box::new(BuildStatus { host }) };
+pub const DEFINITION: ElementDefinition = ElementDefinition {
+    tag: "op-build-status",
+    observed_attributes: &[],
+    create: |host| Box::new(BuildStatus { host }),
+};
 
 struct BuildStatus {
     host: HtmlElement,
@@ -15,12 +18,20 @@ struct BuildStatus {
 /// One line describing this build: crate version, target architecture and the
 /// number of custom elements the module defines.
 pub fn status_line() -> String {
-    format!("op-site {} ({}), {} custom elements defined in Rust", env!("CARGO_PKG_VERSION"), std::env::consts::ARCH, DEFINITIONS.len())
+    format!(
+        "op-site {} ({}), {} custom elements defined in Rust",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::ARCH,
+        DEFINITIONS.len()
+    )
 }
 
 impl CustomElement for BuildStatus {
     fn connected(&mut self) {
-        shadow_root(&self.host).set_inner_html(&format!("<style>{BASE_CSS}</style><h2>Status</h2><p><code>{}</code></p>", status_line()));
+        shadow_root(&self.host).set_inner_html(&format!(
+            "<style>{BASE_CSS}</style><h2>Status</h2><p><code>{}</code></p>",
+            status_line()
+        ));
     }
 }
 
@@ -31,10 +42,26 @@ mod tests {
     #[test]
     fn status_line_reports_version_arch_and_element_count() {
         let line = status_line();
-        assert!(line.starts_with(&format!("op-site {} (", env!("CARGO_PKG_VERSION"))), "{line}");
-        assert!(line.contains(&format!("({})", std::env::consts::ARCH)), "{line}");
-        assert!(line.ends_with(&format!("{} custom elements defined in Rust", DEFINITIONS.len())), "{line}");
-        assert!(DEFINITIONS.len() >= 5, "expected the five site elements, found {}", DEFINITIONS.len());
+        assert!(
+            line.starts_with(&format!("op-site {} (", env!("CARGO_PKG_VERSION"))),
+            "{line}"
+        );
+        assert!(
+            line.contains(&format!("({})", std::env::consts::ARCH)),
+            "{line}"
+        );
+        assert!(
+            line.ends_with(&format!(
+                "{} custom elements defined in Rust",
+                DEFINITIONS.len()
+            )),
+            "{line}"
+        );
+        assert!(
+            DEFINITIONS.len() >= 5,
+            "expected the five site elements, found {}",
+            DEFINITIONS.len()
+        );
     }
 
     #[test]
@@ -52,13 +79,26 @@ mod tests {
     fn index_html_uses_every_defined_element_and_no_undefined_op_tags() {
         let index = include_str!("../../../../index.html");
         for definition in DEFINITIONS {
-            assert!(index.contains(&format!("<{}", definition.tag)), "index.html does not use <{}>", definition.tag);
+            assert!(
+                index.contains(&format!("<{}", definition.tag)),
+                "index.html does not use <{}>",
+                definition.tag
+            );
         }
-        for tag in index.split('<').filter_map(|s| s.strip_prefix("op-")).map(|s| {
-            let end = s.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(s.len());
-            format!("op-{}", &s[..end])
-        }) {
-            assert!(DEFINITIONS.iter().any(|d| d.tag == tag), "index.html uses undefined <{tag}>");
+        for tag in index
+            .split('<')
+            .filter_map(|s| s.strip_prefix("op-"))
+            .map(|s| {
+                let end = s
+                    .find(|c: char| c.is_whitespace() || c == '>')
+                    .unwrap_or(s.len());
+                format!("op-{}", &s[..end])
+            })
+        {
+            assert!(
+                DEFINITIONS.iter().any(|d| d.tag == tag),
+                "index.html uses undefined <{tag}>"
+            );
         }
     }
 }

@@ -22,7 +22,10 @@ mod tests {
 
     #[test]
     fn escapes_every_html_significant_character() {
-        assert_eq!(escape(r#"<a href="x">Tom & Jerry's</a>"#), "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;");
+        assert_eq!(
+            escape(r#"<a href="x">Tom & Jerry's</a>"#),
+            "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&#39;s&lt;/a&gt;"
+        );
     }
 
     #[test]
@@ -37,6 +40,9 @@ mod tests {
         for c in ['<', '>', '"', '\''] {
             assert!(!escaped.contains(c), "{c:?} survived escaping: {escaped}");
         }
-        assert!(!escaped.contains("&&") && !escaped.contains("& "), "bare ampersand survived: {escaped}");
+        assert!(
+            !escaped.contains("&&") && !escaped.contains("& "),
+            "bare ampersand survived: {escaped}"
+        );
     }
 }

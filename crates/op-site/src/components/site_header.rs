@@ -7,8 +7,11 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
-pub const DEFINITION: ElementDefinition =
-    ElementDefinition { tag: "op-site-header", observed_attributes: &["heading", "tagline"], create: |host| Box::new(SiteHeader { host }) };
+pub const DEFINITION: ElementDefinition = ElementDefinition {
+    tag: "op-site-header",
+    observed_attributes: &["heading", "tagline"],
+    create: |host| Box::new(SiteHeader { host }),
+};
 
 struct SiteHeader {
     host: HtmlElement,
@@ -28,7 +31,7 @@ h1::after {{
   width: 3rem;
   height: 0.2rem;
   margin-top: 0.4rem;
-  background: var(--op-accent);
+  background: var(--op-highlight);
 }}
 p {{ color: var(--op-muted); }}
 </style>
