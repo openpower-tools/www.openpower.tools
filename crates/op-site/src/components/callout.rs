@@ -13,10 +13,11 @@
 //!
 //! Notes and tips share the quiet frame - a thin stripe on the right, a
 //! dimmed watermark of the icon beside it, the label in the severity
-//! colour. Warnings and danger trade the stripe for a dark barberpole
-//! background mixed from their own status token (amber, red; each theme
-//! derives its own shades), framing a translucent scrim that keeps the
-//! wording readable - just the barberpole, no border.
+//! colour. Warnings and danger anchor on a solid stripe at the left edge
+//! and draw a dark barberpole mixed from their own status token (amber,
+//! red; each theme derives its own shades) behind a translucent scrim:
+//! warning reveals the pole only as a tab on the right, danger wraps it
+//! over the top, right and bottom as well.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -61,17 +62,26 @@ impl Callout {
             _ => "var(--op-status-info)",
         };
         let icon = iso::glyph(&variant);
-        let (variant_css, scrim_open, scrim_close) =
-            if matches!(variant.as_str(), "warning" | "danger") {
-                (
-                    format!(
-                        ".frame {{
+        let severe = matches!(variant.as_str(), "warning" | "danger");
+        let (variant_css, scrim_open, scrim_close) = if severe {
+            // Warning reveals the pole only as a tab on the right; danger
+            // wraps it over the top, right and bottom too. Both anchor on a
+            // solid stripe at the left edge.
+            let frame_padding = if variant.as_str() == "danger" {
+                "0.5rem 0.5rem 0.5rem 0"
+            } else {
+                "0 1.5rem 0 0"
+            };
+            (
+                format!(
+                    ".frame {{
+  border-left: 0.25rem solid {stripe};
   background: repeating-linear-gradient(
     45deg,
     color-mix(in srgb, {stripe} 45%, #000) 0 0.75rem,
     color-mix(in srgb, {stripe} 22%, #000) 0.75rem 1.5rem
   );
-  padding: 0.5rem;
+  padding: {frame_padding};
 }}
 .scrim {{
   position: relative;
@@ -79,25 +89,25 @@ impl Callout {
   background: color-mix(in srgb, var(--op-raised) 90%, transparent);
   padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
-                    ),
-                    "<div class=\"scrim\">",
-                    "</div>",
-                )
-            } else {
-                (
-                    format!(
-                        ".frame {{
+                ),
+                "<div class=\"scrim\">",
+                "</div>",
+            )
+        } else {
+            (
+                format!(
+                    ".frame {{
   position: relative;
   z-index: 0;
   background: var(--op-raised);
   border-right: 0.25rem solid {stripe};
   padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
-                    ),
-                    "",
-                    "",
-                )
-            };
+                ),
+                "",
+                "",
+            )
+        };
         shadow_root(&self.host).set_inner_html(&format!(
             "<style>{BASE_CSS}
 :host {{ display: block; margin: 1rem 0; }}
