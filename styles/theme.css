@@ -34,8 +34,8 @@
   --op-surface: #2B415F;
   --op-text: #DCCAA4;
   --op-muted: #ADB8C6;
-  --op-link: #D7BD44;
-  --op-link-hover: #E6D27A;
+  --op-link: #E6D27A;
+  --op-link-hover: #D7BD44;
   --op-accent: #EB6424;
   --op-highlight: #EB6424;
   --op-focus: #EB6424;
@@ -53,8 +53,8 @@
     --op-surface: #FFFFFF;
     --op-text: #30544A;
     --op-muted: #635A4F;
-    --op-link: #1A7065;
-    --op-link-hover: #145A51;
+    --op-link: #145A51;
+    --op-link-hover: #1A7065;
     --op-accent: #E75019;
     --op-highlight: #8CB531;
     --op-focus: #1E8477;
@@ -72,8 +72,8 @@
   --op-surface: #FFFFFF;
   --op-text: #30544A;
   --op-muted: #635A4F;
-  --op-link: #1A7065;
-  --op-link-hover: #145A51;
+  --op-link: #145A51;
+  --op-link-hover: #1A7065;
   --op-accent: #E75019;
   --op-highlight: #8CB531;
   --op-focus: #1E8477;
