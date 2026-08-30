@@ -46,6 +46,19 @@ Trunk.specimen.toml            same, for the specimen page (second Trunk target)
 docs/research/                 research notes with sources
 ```
 
+## Fonts
+
+Every webfont is embedded in the wasm binary and registered at runtime with
+the CSS Font Loading API (`crates/op-site/src/fonts.rs`); there are no
+`@font-face` rules and no fetchable font URLs. The embedded faces are all SIL
+OFL (B612, IBM Plex, Iosevka, Space Grotesk; provenance and licences in
+`crates/op-site/assets/fonts/README.md`). The licensed commercial faces
+(PragmataPro, Sys 2.0) are kept out of the repository for now; the stacks
+list them first so they render where installed locally, with Iosevka and
+Space Grotesk as their public stand-ins. Candidate stacks are compared on
+`/specimen/`; the site default is the `--op-font-*` tokens in
+`styles/theme.css`.
+
 ## Palette
 
 Dark (the default) is derived from the Worcester colours and light from the

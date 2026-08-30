@@ -83,12 +83,24 @@
   --op-code-bg: #DDE4EC;
 }
 
+/* Font tokens: candidates are compared on /specimen/; the site default is
+   chosen there. Every webfont is embedded in the wasm binary and registered
+   through the CSS Font Loading API (crates/op-site/src/fonts.rs); the
+   stylesheet declares no font sources at all. Stacks always end in a system
+   fallback for the no-wasm case. */
+:root {
+  --op-font-sans: system-ui, sans-serif;
+  --op-font-heading: var(--op-font-sans);
+  --op-font-serif: "IBM Plex Serif", Georgia, serif;
+  --op-font-mono: ui-monospace, monospace;
+}
+
 /* Base styles for the light DOM; shadow roots carry their own. */
 
 html {
   background: var(--op-bg);
   color: var(--op-text);
-  font-family: system-ui, sans-serif;
+  font-family: var(--op-font-sans);
   line-height: 1.5;
 }
 

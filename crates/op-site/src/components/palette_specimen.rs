@@ -94,7 +94,7 @@ op-palette-specimen .meta .role { color: var(--op-muted); }
 op-palette-specimen .meta .ratio { color: var(--op-muted); }
 op-palette-specimen pre,
 op-palette-specimen code {
-  font-family: ui-monospace, monospace;
+  font-family: var(--op-font-mono);
   background: var(--op-code-bg);
   border-radius: 0.3rem;
 }
@@ -233,6 +233,7 @@ fn render(host: &HtmlElement) {
             annotate(&column);
         }
     }
+    render_typography(host);
 }
 
 impl CustomElement for Specimen {
@@ -241,9 +242,219 @@ impl CustomElement for Specimen {
     }
 }
 
+/// One typography candidate: label, note, and the three stacks.
+struct TypeOption {
+    id: &'static str,
+    label: &'static str,
+    note: &'static str,
+    heading: &'static str,
+    body: &'static str,
+    mono: &'static str,
+    /// Families whose availability the badge reports.
+    check: &'static [&'static str],
+}
+
+const TYPE_OPTIONS: &[TypeOption] = &[
+    TypeOption {
+        id: "b612",
+        label: "A. B612 + B612 Mono",
+        note: "Made for Airbus cockpit displays; SIL OFL, self-hosted.",
+        heading: "'B612', system-ui, sans-serif",
+        body: "'B612', system-ui, sans-serif",
+        mono: "'B612 Mono', ui-monospace, monospace",
+        check: &["B612", "B612 Mono"],
+    },
+    TypeOption {
+        id: "plex",
+        label: "B. IBM Plex Sans + Plex Mono",
+        note: "IBM's open family; SIL OFL, self-hosted. On-theme for POWER.",
+        heading: "'IBM Plex Sans', system-ui, sans-serif",
+        body: "'IBM Plex Sans', system-ui, sans-serif",
+        mono: "'IBM Plex Mono', ui-monospace, monospace",
+        check: &["IBM Plex Sans", "IBM Plex Mono"],
+    },
+    TypeOption {
+        id: "house",
+        label: "C. Sys + PragmataPro (stand-ins: Space Grotesk + Iosevka)",
+        note: "House faces where installed locally; the public gets the open stand-ins.",
+        heading: "'Sys', 'Space Grotesk', system-ui, sans-serif",
+        body: "'Sys', 'Space Grotesk', system-ui, sans-serif",
+        mono: "'PragmataPro Liga', 'Iosevka', ui-monospace, monospace",
+        check: &["Sys", "Space Grotesk", "PragmataPro Liga", "Iosevka"],
+    },
+    TypeOption {
+        id: "mix-avionics",
+        label: "D. B612 headings, Plex Sans body, PragmataPro/Iosevka code",
+        note: "Instrument headings over a quiet text face.",
+        heading: "'B612', system-ui, sans-serif",
+        body: "'IBM Plex Sans', system-ui, sans-serif",
+        mono: "'PragmataPro Liga', 'Iosevka', ui-monospace, monospace",
+        check: &["B612", "IBM Plex Sans", "PragmataPro Liga", "Iosevka"],
+    },
+    TypeOption {
+        id: "mix-sys",
+        label: "E. Sys/Space Grotesk headings, Plex Sans body, PragmataPro/Iosevka code",
+        note: "House voice for headings, Plex for long text.",
+        heading: "'Sys', 'Space Grotesk', system-ui, sans-serif",
+        body: "'IBM Plex Sans', system-ui, sans-serif",
+        mono: "'PragmataPro Liga', 'Iosevka', ui-monospace, monospace",
+        check: &[
+            "Sys",
+            "Space Grotesk",
+            "IBM Plex Sans",
+            "PragmataPro Liga",
+            "Iosevka",
+        ],
+    },
+    TypeOption {
+        id: "system",
+        label: "F. System fonts",
+        note: "The current default: zero bytes, no identity.",
+        heading: "system-ui, sans-serif",
+        body: "system-ui, sans-serif",
+        mono: "ui-monospace, monospace",
+        check: &[],
+    },
+];
+
+const TYPE_STYLE: &str = "
+op-palette-specimen .type-option {
+  background: var(--op-surface);
+  border: 1px solid var(--op-border-strong);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  margin: 0.75rem 0;
+}
+op-palette-specimen .type-option h3 { margin: 0; font-size: 1rem; }
+op-palette-specimen .type-option .t-h {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin: 0.5rem 0 0.25rem;
+}
+op-palette-specimen .type-option .t-b { margin: 0.25rem 0; }
+op-palette-specimen .type-option .t-m {
+  margin: 0.25rem 0 0;
+  background: var(--op-code-bg);
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.3rem;
+  white-space: pre-wrap;
+}
+";
+
+fn type_option_markup(option: &TypeOption) -> String {
+    format!(
+        "<article class=\"type-option\" id=\"type-{}\">
+<h3>{}</h3>
+<p class=\"muted\">{} <span class=\"face-status\" data-families=\"{}\"></span></p>
+<p class=\"t-h\" style=\"font-family: {}\">OpenPOWER firmware, ports and tools</p>
+<p class=\"t-b\" style=\"font-family: {}\">Owner-controlled POWER9 systems: the Talos II and Blackbird boot from fully inspectable firmware. 0123456789 Il1 O0 — <em>italic</em>, <strong>bold</strong>.</p>
+<p class=\"t-m\" style=\"font-family: {}\">pflash -E -p /tmp/talos.pnor &amp;&amp; echo ok  # =&gt; != === 0xDEADBEEF fi ffi</p>
+</article>",
+        option.id,
+        option.label,
+        option.note,
+        option.check.join("|"),
+        option.heading,
+        option.body,
+        option.mono,
+    )
+}
+
+fn annotate_face_status() {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let fonts = document.fonts();
+    let Ok(nodes) = document.query_selector_all("op-palette-specimen .face-status") else {
+        return;
+    };
+    for index in 0..nodes.length() {
+        let Some(el) = nodes.item(index).and_then(|n| n.dyn_into::<Element>().ok()) else {
+            continue;
+        };
+        let families = el.get_attribute("data-families").unwrap_or_default();
+        if families.is_empty() {
+            continue;
+        }
+        let status: Vec<String> = families
+            .split('|')
+            .map(|family| {
+                let loaded = fonts.check(&format!("16px \"{family}\"")).unwrap_or(false);
+                format!("{family}: {}", if loaded { "loaded" } else { "not loaded" })
+            })
+            .collect();
+        el.set_text_content(Some(&status.join(" / ")));
+    }
+}
+
+fn render_typography(host: &HtmlElement) {
+    let cards: String = TYPE_OPTIONS.iter().map(type_option_markup).collect();
+    let section = format!(
+        "<style>{TYPE_STYLE}</style>
+<h2>Typography options</h2>
+<p class=\"muted\">Candidate stacks rendered with the self-hosted webfonts; the badge shows what actually loaded in this browser. Stacks always end in a system fallback.</p>
+{cards}"
+    );
+    let current = host.inner_html();
+    host.set_inner_html(&format!("{current}{section}"));
+    let document = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document");
+    let ready = document.fonts().ready().expect("fonts.ready");
+    wasm_bindgen_futures::spawn_local(async move {
+        let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
+        annotate_face_status();
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Fonts are embedded in the wasm and registered at runtime; the
+    /// stylesheet must not reference font files or declare @font-face.
+    #[test]
+    fn stylesheet_has_no_font_urls_or_font_face_rules() {
+        let css = include_str!("../../../../styles/theme.css");
+        assert!(
+            !css.contains("@font-face"),
+            "unexpected @font-face in theme.css"
+        );
+        assert!(!css.contains("/fonts/"), "unexpected font URL in theme.css");
+        assert!(
+            !css.contains(".woff"),
+            "unexpected font file reference in theme.css"
+        );
+    }
+
+    #[test]
+    fn type_options_reference_families_from_their_own_stacks() {
+        assert!(TYPE_OPTIONS.len() >= 4);
+        for option in TYPE_OPTIONS {
+            for family in option.check {
+                let quoted = format!("'{family}'");
+                assert!(
+                    option.heading.contains(&quoted)
+                        || option.body.contains(&quoted)
+                        || option.mono.contains(&quoted),
+                    "{}: checked family {family} is not in any stack",
+                    option.id
+                );
+            }
+            for stack in [option.heading, option.body, option.mono] {
+                assert!(
+                    stack.ends_with("sans-serif")
+                        || stack.ends_with("monospace")
+                        || stack.ends_with("serif"),
+                    "{}: stack {stack:?} lacks a generic fallback",
+                    option.id
+                );
+            }
+        }
+        let markup = type_option_markup(&TYPE_OPTIONS[0]);
+        assert!(markup.contains("face-status"));
+        assert!(markup.contains(TYPE_OPTIONS[0].label));
+    }
 
     #[test]
     fn every_css_token_has_a_specimen_entry_and_vice_versa() {

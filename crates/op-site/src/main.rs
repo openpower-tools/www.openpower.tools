@@ -7,6 +7,7 @@
 
 mod colour;
 mod components;
+mod fonts;
 mod html;
 mod theme;
 
@@ -15,6 +16,7 @@ mod palette;
 
 fn main() {
     console_error_panic_hook::set_once();
+    fonts::install();
     for definition in components::DEFINITIONS {
         op_webc::define(definition);
     }
