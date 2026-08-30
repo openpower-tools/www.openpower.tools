@@ -1,6 +1,6 @@
 //! Stroke-drawn icon glyphs following the ISO 3864 shape grammar as
 //! registered in ISO 7010 (24x24 viewBox), shared by the components that
-//! signal severity: op-callout frames and the op-badge warning marker.
+//! signal severity (currently the op-callout frames).
 
 /// The icon for a status or severity name, as stroke elements.
 pub(super) fn glyph(variant: &str) -> &'static str {

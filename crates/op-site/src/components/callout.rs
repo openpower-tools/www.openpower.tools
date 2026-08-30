@@ -4,19 +4,19 @@
 //! Severity is triple-coded - the variant word set in the severity colour
 //! where a heading would sit, an icon and a colour - so meaning never rests
 //! on colour alone (WCAG 1.4.1). The icon shapes follow the ISO 3864 shape
-//! grammar as registered in ISO 7010: an equilateral triangle for hazard
-//! warnings (W001), a circle with a diagonal bar for prohibition-grade
-//! danger (P001), a circled i for information, and the square of the
-//! safe-condition series for tips. The hues stay in the matching ISO colour
-//! families (amber, red, blue, green) but use the theme's contrast-checked
-//! status tokens instead of raw signal colours.
+//! grammar as registered in ISO 7010 (see `components::iso`): an equilateral
+//! triangle for hazard warnings (W001), a circle with a diagonal bar for
+//! prohibition-grade danger (P001), a circled i for information, and the
+//! square of the safe-condition series for tips. The hues stay in the
+//! matching ISO colour families (amber, red, blue, green) but use the
+//! theme's contrast-checked status tokens instead of raw signal colours.
 //!
 //! The frame itself is a severity ladder, spending more ink as the stakes
-//! rise. Notes and tips: a thin stripe and a contrasting watermark of the
-//! icon on the right. Warnings: an empty block of the colour on the left and
-//! the triangle knocked out of a solid block on the right. Danger: the
-//! roundel knocked out of solid blocks on both sides with the title and
-//! message centred between them, like a hazard plate.
+//! rise. Notes and tips: a thin stripe and a dimmed watermark of the icon on
+//! the right. Warnings: the triangle posted on the left at full strength,
+//! drawn with the warning amber as its border. Danger: the roundel knocked
+//! out of solid blocks on both sides with the title and message centred
+//! between them, like a hazard plate.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -36,12 +36,11 @@ struct Callout {
 
 const VARIANTS: &[&str] = &["note", "tip", "warning", "danger"];
 
-/// A solid side block, with or without the icon knocked out of it.
-fn block(side: &str, icon: Option<&str>) -> String {
-    let glyph_markup = icon
-        .map(|icon| format!("<svg class=\"glyph\" viewBox=\"0 0 24 24\">{icon}</svg>"))
-        .unwrap_or_default();
-    format!("<span class=\"block {side}\" aria-hidden=\"true\">{glyph_markup}</span>")
+/// A solid side block with the icon knocked out of it (the danger plates).
+fn block(side: &str, icon: &str) -> String {
+    format!(
+        "<span class=\"block {side}\" aria-hidden=\"true\"><svg class=\"glyph\" viewBox=\"0 0 24 24\">{icon}</svg></span>"
+    )
 }
 
 const BLOCK_CSS: &str = "
@@ -91,14 +90,28 @@ impl Callout {
         };
         let icon = iso::glyph(&variant);
         let (variant_css, side_markup) = match variant.as_str() {
-            // An empty block of the colour left, the triangle knocked out of
-            // a solid block right.
+            // The triangle posted on the left at full strength, drawn with
+            // the warning amber as its border, on the plain raised ground.
             "warning" => (
                 format!(
-                    ".frame {{ padding: 0.4rem 3.1rem; }}{BLOCK_CSS}
-.block {{ background: {stripe}; }}"
+                    ".frame {{ padding: 0.4rem 1rem 0.4rem 3.1rem; }}
+.glyph {{
+  position: absolute;
+  left: 0.65rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.8rem;
+  height: 1.8rem;
+  stroke: {stripe};
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}}"
                 ),
-                format!("{}{}", block("left", None), block("right", Some(icon))),
+                format!(
+                    "<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
+                ),
             ),
             // The roundel on both sides, title and message centred between
             // them: a hazard plate.
@@ -107,13 +120,9 @@ impl Callout {
                     ".frame {{ padding: 0.4rem 3.1rem; text-align: center; }}{BLOCK_CSS}
 .block {{ background: {stripe}; }}"
                 ),
-                format!(
-                    "{}{}",
-                    block("left", Some(icon)),
-                    block("right", Some(icon))
-                ),
+                format!("{}{}", block("left", icon), block("right", icon)),
             ),
-            // Advisory: thin stripe, contrasting watermark on the right.
+            // Advisory: thin stripe, dimmed watermark on the right.
             _ => (
                 format!(
                     ".frame {{

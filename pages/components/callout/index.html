@@ -1,13 +1,13 @@
       <p>Highlighted blocks for notes, tips and warnings. Severity is shown three ways at
       once - the variant word set in the severity colour where a heading would sit, an
       ISO-shaped icon, and colour - so none of them has to carry the meaning alone.
-      The frame is a severity ladder: notes and tips stay quiet, warnings flank
-      themselves in their colour, and danger reads like a hazard plate. Content is regular light-DOM markup on a slightly
+      The frame is a severity ladder: notes and tips stay quiet, warnings post their
+      amber-bordered triangle on the left, and danger reads like a hazard plate. Content is regular light-DOM markup on a slightly
       raised background.</p>
       <h2>Variants</h2>
       <op-callout variant="note" heading="Note">The default variant, for neutral asides and context.</op-callout>
       <op-callout variant="tip" heading="Tip">For advice and good practice, striped with the ok green.</op-callout>
-      <op-callout variant="warning" heading="Warning">For things that can bite: an empty amber block left, the triangle right.</op-callout>
+      <op-callout variant="warning" heading="Warning">For things that can bite: the amber-bordered triangle posted on the left.</op-callout>
       <op-callout variant="danger" heading="Data loss ahead">For destructive operations: plated in the danger red on both sides, wording centred.</op-callout>
       <h2>Without a heading</h2>
       <op-callout variant="note">A bare callout: just the variant tag and content, for short asides.</op-callout>
@@ -17,8 +17,8 @@
       prohibition-grade danger (P001), a circled i for information, and the square of the
       safe-condition series for tips. The frame spends more ink as the
       stakes rise: notes and tips keep a thin stripe and a contrasting watermark of
-      their icon on the right; warnings carry an empty block of their colour on the
-      left and the triangle knocked out of a solid block on the right; danger carries
+      their icon on the right; warnings post their triangle on the left,
+      drawn with the warning amber as its border; danger carries
       the roundel on both sides with the title and message centred between them, like
       a hazard plate. The hues stay in the matching ISO colour families -
       amber, red, blue, green - but use the theme's contrast-checked status tokens rather

@@ -52,7 +52,7 @@ pub const PAGES: &[Page] = &[
     page!(
         "components/badge",
         "Badge",
-        "Compact status markers with variant-coloured dots and the warning triangle.",
+        "Compact status markers with variant-coloured dots.",
         "components/badge/index.html"
     ),
     page!(
