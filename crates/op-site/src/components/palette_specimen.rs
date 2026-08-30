@@ -277,10 +277,10 @@ const TYPE_OPTIONS: &[TypeOption] = &[
         id: "house",
         label: "C. Sys + PragmataPro (stand-ins: Space Grotesk + Iosevka)",
         note: "House faces where installed locally; the public gets the open stand-ins.",
-        heading: "'Sys', 'Space Grotesk', system-ui, sans-serif",
-        body: "'Sys', 'Space Grotesk', system-ui, sans-serif",
+        heading: "'Sys 2.0', 'Sys', 'Space Grotesk', system-ui, sans-serif",
+        body: "'Sys 2.0', 'Sys', 'Space Grotesk', system-ui, sans-serif",
         mono: "'PragmataPro Liga', 'Iosevka', ui-monospace, monospace",
-        check: &["Sys", "Space Grotesk", "PragmataPro Liga", "Iosevka"],
+        check: &["Sys 2.0", "Space Grotesk", "PragmataPro Liga", "Iosevka"],
     },
     TypeOption {
         id: "mix-avionics",
@@ -295,7 +295,7 @@ const TYPE_OPTIONS: &[TypeOption] = &[
         id: "mix-sys",
         label: "E. Sys/Space Grotesk headings, Plex Sans body, PragmataPro/Iosevka code",
         note: "House voice for headings, Plex for long text.",
-        heading: "'Sys', 'Space Grotesk', system-ui, sans-serif",
+        heading: "'Sys 2.0', 'Sys', 'Space Grotesk', system-ui, sans-serif",
         body: "'IBM Plex Sans', system-ui, sans-serif",
         mono: "'PragmataPro Liga', 'Iosevka', ui-monospace, monospace",
         check: &[
@@ -333,6 +333,7 @@ op-palette-specimen .type-option .t-h {
 }
 op-palette-specimen .type-option .t-b { margin: 0.25rem 0; }
 op-palette-specimen .type-option .t-m {
+  font-variant-ligatures: contextual;
   margin: 0.25rem 0 0;
   background: var(--op-code-bg);
   padding: 0.3rem 0.5rem;
@@ -364,7 +365,6 @@ fn annotate_face_status() {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return;
     };
-    let fonts = document.fonts();
     let Ok(nodes) = document.query_selector_all("op-palette-specimen .face-status") else {
         return;
     };
@@ -379,8 +379,11 @@ fn annotate_face_status() {
         let status: Vec<String> = families
             .split('|')
             .map(|family| {
-                let loaded = fonts.check(&format!("16px \"{family}\"")).unwrap_or(false);
-                format!("{family}: {}", if loaded { "loaded" } else { "not loaded" })
+                let resolves = crate::fontprobe::family_resolves(family);
+                format!(
+                    "{family}: {}",
+                    if resolves { "resolves" } else { "not here" }
+                )
             })
             .collect();
         el.set_text_content(Some(&status.join(" / ")));

@@ -89,10 +89,12 @@
    stylesheet declares no font sources at all. Stacks always end in a system
    fallback for the no-wasm case. */
 :root {
-  --op-font-sans: system-ui, sans-serif;
-  --op-font-heading: var(--op-font-sans);
+  /* Option E from /specimen/: Sys (Space Grotesk for the public) headings,
+     IBM Plex Sans body, PragmataPro Liga (Iosevka for the public) code. */
+  --op-font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --op-font-heading: "Sys 2.0", "Sys", "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
   --op-font-serif: "IBM Plex Serif", Georgia, serif;
-  --op-font-mono: ui-monospace, monospace;
+  --op-font-mono: "PragmataPro Liga", "PragmataPro Mono Liga", "Iosevka", "IBM Plex Mono", ui-monospace, monospace;
 }
 
 /* Base styles for the light DOM; shadow roots carry their own. */
@@ -134,6 +136,11 @@ main ul {
 
 main li {
   margin: 0.25rem 0;
+}
+
+code,
+pre {
+  font-variant-ligatures: contextual;
 }
 
 /* Leave room for the fixed theme toggle on narrow screens. */

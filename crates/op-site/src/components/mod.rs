@@ -2,6 +2,7 @@
 //! from these tags; nothing here is instantiated from Rust.
 
 mod build_status;
+mod font_diff;
 mod palette_specimen;
 mod site_footer;
 mod site_header;
@@ -19,6 +20,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     build_status::DEFINITION,
     site_footer::DEFINITION,
     palette_specimen::DEFINITION,
+    font_diff::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom
@@ -34,6 +36,7 @@ h2 { font-size: 1.125rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
 p { margin: 0.5rem 0; }
 code {
   font-family: var(--op-font-mono);
+  font-variant-ligatures: contextual;
   background: var(--op-code-bg);
   padding: 0 0.25em;
   border-radius: 0.2em;

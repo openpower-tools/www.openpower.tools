@@ -7,6 +7,7 @@
 
 mod colour;
 mod components;
+mod fontprobe;
 mod fonts;
 mod html;
 mod theme;
