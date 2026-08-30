@@ -46,16 +46,7 @@ async fn install_inner() -> Result<(), JsValue> {
     // inside a transition so the change from the metric-fitted fallbacks
     // cross-fades instead of popping; the layouts are geometrically identical,
     // so the fade reads as a soft morph. Everywhere else, register directly.
-    let reduced_motion = window
-        .match_media("(prefers-reduced-motion: reduce)")
-        .ok()
-        .flatten()
-        .is_some_and(|mql| mql.matches());
-    let start_view_transition =
-        js_sys::Reflect::get(document.as_ref(), &JsValue::from_str("startViewTransition"))
-            .ok()
-            .and_then(|v| v.dyn_into::<js_sys::Function>().ok())
-            .filter(|_| !reduced_motion);
+    let start_view_transition = crate::viewtransition::start_function(&window, &document);
 
     let document_for_register = document.clone();
     let register = move || -> Result<js_sys::Promise, JsValue> {

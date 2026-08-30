@@ -19,11 +19,11 @@
  *   --op-highlight                                     decoration only (title rule)
  *   --op-border                                        decoration only
  *
- * The site is dark by default. <op-theme-toggle> stores a choice in
- * localStorage and mirrors it as <html data-theme="light"> or "auto"; "auto"
- * follows prefers-color-scheme, and no attribute means dark. The
- * .op-theme-dark and .op-theme-light classes scope a token set to a subtree,
- * which the specimen uses to show both themes side by side.
+ * With no stored choice the theme follows the system preference; the toggle
+ * flips dark and light and stores the choice, mirrored as
+ * <html data-theme="dark"> or "light". The .op-theme-dark and .op-theme-light
+ * classes scope a token set to a subtree, which the specimen uses to show
+ * both themes side by side.
  */
 
 :root,
@@ -44,12 +44,11 @@
   --op-code-bg: #1A2738;
 }
 
-:root[data-theme="auto"] {
-  color-scheme: light dark;
-}
-
+/* No explicit choice: follow the system. */
 @media (prefers-color-scheme: light) {
-  :root[data-theme="auto"] {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+
     --op-bg: #E9F0F8;
     --op-surface: #FFFFFF;
     --op-text: #30544A;

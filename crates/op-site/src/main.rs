@@ -11,6 +11,7 @@ mod fontprobe;
 mod fonts;
 mod html;
 mod theme;
+mod viewtransition;
 
 #[cfg(test)]
 mod palette;

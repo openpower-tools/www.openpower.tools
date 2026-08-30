@@ -34,11 +34,11 @@ Warnings are errors (`.cargo/config.toml`).
 ```
 index.html                     the page: custom elements plus light-DOM content
 specimen/index.html            palette specimen page, published at /specimen/
-styles/theme.css               palette tokens (dark default, light, auto via data-theme)
+styles/theme.css               palette tokens (dark and light; no choice follows the system)
 crates/op-webc/                Web Component bridge (CustomElement trait, shim)
 crates/op-site/src/main.rs     registers the elements when the module starts
 crates/op-site/src/components  one file per element (op-theme-toggle, ...)
-crates/op-site/src/theme.rs    Dark/Light/Auto selection and persistence
+crates/op-site/src/theme.rs    dark/light choice, system-following default
 crates/op-site/src/colour.rs   sRGB luminance and WCAG contrast
 crates/op-site/src/palette.rs  WCAG contrast tests over styles/theme.css
 Trunk.toml                     build settings and pinned tool versions
@@ -76,7 +76,9 @@ Dark (the default) is derived from the Worcester colours and light from the
 Nottingham colours; the derivation, roles and contrast requirements are
 documented at the top of `styles/theme.css` and enforced by `cargo test`.
 `/specimen/` renders every token with its value and contrast ratios, and the
-site's elements, in both themes side by side.
+site's elements, in both themes side by side. Toggling the theme runs inside a
+view transition, like the font swap, so the palette cross-fades where the API
+exists and motion is welcome.
 
 ## Adding an element
 

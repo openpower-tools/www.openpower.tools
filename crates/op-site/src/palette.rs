@@ -93,9 +93,9 @@ fn light() -> BTreeMap<String, String> {
     tokens_after(":root[data-theme=\"light\"],\n.op-theme-light {")
 }
 
-/// Light, when `data-theme="auto"` and the system prefers light.
+/// Light, when no explicit choice is stored and the system prefers light.
 fn light_media() -> BTreeMap<String, String> {
-    tokens_after(":root[data-theme=\"auto\"] {\n    --op-bg")
+    tokens_after(":root:not([data-theme=\"dark\"]) {")
 }
 
 #[test]

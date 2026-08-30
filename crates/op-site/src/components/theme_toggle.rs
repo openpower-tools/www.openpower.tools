@@ -15,6 +15,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
         Box::new(ThemeToggle {
             host,
             on_click: None,
+            on_scheme_change: None,
         })
     },
 };
@@ -23,6 +24,9 @@ struct ThemeToggle {
     host: HtmlElement,
     /// Kept alive for as long as the element exists.
     on_click: Option<Closure<dyn FnMut(Event)>>,
+    /// Updates the label if the system preference changes while no explicit
+    /// choice is stored.
+    on_scheme_change: Option<Closure<dyn FnMut(Event)>>,
 }
 
 fn show(button: &Element, mode: Mode) {
@@ -67,15 +71,35 @@ button:hover {{ border-color: var(--op-accent); }}
             .query_selector("button")
             .expect("query")
             .expect("button in template");
-        let mode = theme::current();
-        theme::apply(mode);
-        show(&button, mode);
+        // Start on whatever is in effect: the stored choice, else the system
+        // preference. Nothing is written until the user toggles.
+        show(&button, theme::current());
+
+        if let Some(mql) = web_sys::window().and_then(|w| {
+            w.match_media("(prefers-color-scheme: light)")
+                .ok()
+                .flatten()
+        }) {
+            let target = button.clone();
+            let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
+                if theme::stored().is_none() {
+                    show(&target, theme::current());
+                }
+            });
+            let _ =
+                mql.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
+            self.on_scheme_change = Some(closure);
+        }
 
         let target = button.clone();
         let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
-            let next = theme::current().next();
-            theme::apply(next);
-            show(&target, next);
+            let next = theme::current().opposite();
+            let target = target.clone();
+            // Cross-fade the palette change like the font swap.
+            crate::viewtransition::run(move || {
+                theme::choose(next);
+                show(&target, next);
+            });
         });
         button
             .add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())
