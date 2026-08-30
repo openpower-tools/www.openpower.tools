@@ -268,6 +268,86 @@ op-timeline time {
   color: var(--op-muted);
 }
 
+/* Form controls: light-DOM labels wrap their native controls (no ids needed),
+   the elements provide the box and the selector scope. */
+
+op-input label,
+op-select label {
+  display: block;
+  color: var(--op-muted);
+  font-size: 0.9rem;
+}
+
+op-input input,
+op-input textarea,
+op-select select {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 0.25rem;
+  font: inherit;
+  color: var(--op-text);
+  background: var(--op-bg);
+  border: 1px solid var(--op-border-strong);
+  border-radius: 0.25rem;
+  padding: 0.3rem 0.6rem;
+}
+
+op-input ::placeholder {
+  color: var(--op-muted);
+  opacity: 1;
+}
+
+op-checkbox label,
+op-switch label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+op-checkbox input {
+  accent-color: var(--op-accent);
+  width: 1em;
+  height: 1em;
+  margin: 0;
+}
+
+/* The switch is a native checkbox restyled; semantics stay a checkbox. */
+op-switch input {
+  appearance: none;
+  width: 2.3em;
+  height: 1.25em;
+  margin: 0;
+  border: 1px solid var(--op-border-strong);
+  border-radius: 0.75em;
+  position: relative;
+  cursor: pointer;
+}
+
+op-switch input::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 0.15em;
+  transform: translateY(-50%);
+  width: 0.85em;
+  height: 0.85em;
+  border-radius: 50%;
+  background: var(--op-border-strong);
+  transition:
+    left 120ms ease,
+    background 120ms ease;
+}
+
+op-switch input:checked {
+  border-color: var(--op-accent);
+}
+
+op-switch input:checked::before {
+  left: 1.25em;
+  background: var(--op-accent);
+}
+
 /* Leave room for the fixed theme toggle on narrow screens. */
 @media (max-width: 30rem) {
   body {

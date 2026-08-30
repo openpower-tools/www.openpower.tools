@@ -97,6 +97,36 @@ pub const PAGES: &[Page] = &[
         "Placeholders for content that does not exist yet.",
         "components/empty-state/index.html"
     ),
+    page!(
+        "components/button",
+        "Button",
+        "Action buttons with primary and danger weights.",
+        "components/button/index.html"
+    ),
+    page!(
+        "components/input",
+        "Input",
+        "Labelled text inputs and textareas.",
+        "components/input/index.html"
+    ),
+    page!(
+        "components/select",
+        "Select",
+        "Labelled native selects styled with the theme tokens.",
+        "components/select/index.html"
+    ),
+    page!(
+        "components/checkbox",
+        "Checkbox",
+        "Native checkboxes with their labels.",
+        "components/checkbox/index.html"
+    ),
+    page!(
+        "components/switch",
+        "Switch",
+        "Native checkboxes drawn as switches.",
+        "components/switch/index.html"
+    ),
 ];
 
 /// The shared site navigation, used verbatim on generated pages and mirrored

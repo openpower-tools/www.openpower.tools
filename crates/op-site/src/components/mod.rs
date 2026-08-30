@@ -3,17 +3,22 @@
 
 mod badge;
 mod build_status;
+mod button;
 mod callout;
 mod card;
+mod checkbox;
 mod details;
 mod empty_state;
+mod input;
 mod key_value;
 mod palette_specimen;
+mod select_field;
 mod site_footer;
 mod site_header;
 mod site_nav;
 mod source;
 mod starting_points;
+mod switch;
 mod table;
 mod theme_toggle;
 mod timeline;
@@ -39,6 +44,11 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     source::DEFINITION,
     timeline::DEFINITION,
     empty_state::DEFINITION,
+    button::DEFINITION,
+    input::DEFINITION,
+    select_field::DEFINITION,
+    checkbox::DEFINITION,
+    switch::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom
