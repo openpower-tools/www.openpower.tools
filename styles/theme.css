@@ -92,9 +92,9 @@
   /* Option E from /specimen/: Sys (Space Grotesk for the public) headings,
      IBM Plex Sans body, PragmataPro Liga (Iosevka for the public) code. */
   --op-font-sans: "IBM Plex Sans", system-ui, sans-serif;
-  --op-font-heading: "Sys 2.0", "Sys", "Space Grotesk", "IBM Plex Sans", system-ui, sans-serif;
+  --op-font-heading: "Sys 2.0", "Sys", "Barlow Semi Condensed", "IBM Plex Sans", system-ui, sans-serif;
   --op-font-serif: "IBM Plex Serif", Georgia, serif;
-  --op-font-mono: "PragmataPro Liga", "PragmataPro Mono Liga", "Iosevka", "IBM Plex Mono", ui-monospace, monospace;
+  --op-font-mono: "PragmataPro Liga", "PragmataPro Mono Liga", "Iosevka SS08", "IBM Plex Mono", ui-monospace, monospace;
 }
 
 /* Base styles for the light DOM; shadow roots carry their own. */

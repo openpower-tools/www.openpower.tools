@@ -11,11 +11,14 @@ served as a fetchable URL. All faces below are under the SIL Open Font License
 - plex-sans/ (@ibm/plex-sans 1.1.0), plex-mono/ (@ibm/plex-mono 2.5.0),
   plex-serif/ (@ibm/plex-serif 2.0.0): woff2 taken unmodified from the
   official npm packages at https://github.com/IBM/plex.
-- iosevka/: Iosevka, the official webfont build from
-  https://github.com/be5invis/Iosevka (v34.8.1). Public stand-in for
-  PragmataPro, which is licensed for the site but kept out of the repository
-  for now; the font stacks list the commercial family first so it renders
-  where installed locally.
-- space-grotesk/: Space Grotesk from
-  https://github.com/floriankarsten/space-grotesk (master). Public stand-in
-  for Sys 2.0 on the same terms as above.
+- iosevka-ss08/: Iosevka SS08, the "PragmataPro Style" stylistic set of
+  Iosevka, official webfont build from https://github.com/be5invis/Iosevka
+  (v34.8.1), subsetted to the site's ranges. Public stand-in for PragmataPro,
+  which is licensed for the site but kept out of the repository for now; the
+  font stacks list the commercial family first so it renders where installed
+  locally, and registration applies PragmataPro's measured vertical metrics.
+- barlow-semi-condensed/: Barlow Semi Condensed from
+  https://github.com/google/fonts (ofl/barlowsemicondensed, converted with
+  fonttools). Public stand-in for Sys 2.0 on the same terms; registration
+  scales it 107% with Sys 2.0's measured ascent and descent so width,
+  x-height and cap height land within about 2.5% of the original.
