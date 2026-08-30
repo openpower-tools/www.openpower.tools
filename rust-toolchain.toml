@@ -1,6 +1,6 @@
-# Rust nightly, as decided for this project. The wasm32 target is required for
-# the WebAssembly module in wasm/; rustfmt and clippy are used in CI.
+# Rust nightly, pinned to a dated build so local and CI builds use the same
+# compiler and the wasm output is reproducible. Bump the date deliberately.
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-08-30"
 targets = ["wasm32-unknown-unknown"]
 components = ["rustfmt", "clippy"]

@@ -1,3 +1,8 @@
+# trim-paths is nightly-only (rust-lang/cargo#12137); it strips machine-specific
+# paths (~/.cargo/registry, ~/.rustup) from the wasm so local and CI builds are
+# byte-identical.
+cargo-features = ["trim-paths"]
+
 [workspace]
 resolver = "3"
 members = ["wasm"]
@@ -7,10 +12,11 @@ edition = "2024"
 publish = false
 repository = "https://github.com/openpower-tools/www.openpower.tools"
 
-# Size-oriented release profile for the wasm module. wasm-pack additionally runs
-# wasm-opt on the output.
+# Size-oriented, reproducible release profile for the wasm module. wasm-opt
+# (pinned binaryen from npm) runs afterwards, see package.json.
 [profile.release]
 opt-level = "s"
 lto = true
 codegen-units = 1
 panic = "abort"
+trim-paths = "all"

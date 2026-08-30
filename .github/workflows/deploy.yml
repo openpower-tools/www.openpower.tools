@@ -19,11 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust nightly (see rust-toolchain.toml)
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: wasm32-unknown-unknown
-          components: clippy, rustfmt
+      # rustup reads rust-toolchain.toml (pinned nightly, wasm32 target,
+      # rustfmt, clippy); the runner image ships rustup.
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo --version
 
       - uses: Swatinem/rust-cache@v2
 
@@ -43,8 +45,18 @@ jobs:
       - name: Rust tests (native)
         run: cargo test --workspace
 
-      - name: Build site (wasm-pack, tsc, vite)
+      - name: Build site (wasm-pack, wasm-opt, tsc, vite)
         run: npm run build
+
+      - name: Record artifact hashes (compare with `npm run hashes` locally)
+        run: |
+          {
+            echo '## Artifact hashes'
+            echo '```'
+            npm run --silent hashes
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          npm run --silent hashes
 
       - uses: actions/configure-pages@v6
 

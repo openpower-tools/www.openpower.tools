@@ -15,9 +15,11 @@ or endorsed by the OpenPOWER Foundation, IBM, or Raptor Computing Systems.
 - [Lit](https://lit.dev/) 3 web components written in TypeScript. Components use
   `static properties` and `declare`d fields rather than decorators, so the build
   does not depend on any decorator transform.
-- Rust on the nightly toolchain (`rust-toolchain.toml`), compiled to
+- Rust on a pinned nightly toolchain (`rust-toolchain.toml`), compiled to
   `wasm32-unknown-unknown` with [wasm-pack](https://github.com/wasm-bindgen/wasm-pack)
-  and wasm-bindgen. The crate lives in `wasm/`.
+  and wasm-bindgen, then size-optimised with a pinned
+  [binaryen](https://github.com/WebAssembly/binaryen) `wasm-opt` from npm. The
+  crate lives in `wasm/`.
 - [Vite](https://vite.dev/) 8 for the dev server and the production bundle. The
   wasm-bindgen glue refers to its `.wasm` file with
   `new URL('...', import.meta.url)`, which Vite turns into a hashed asset; no
@@ -30,8 +32,8 @@ or endorsed by the OpenPOWER Foundation, IBM, or Raptor Computing Systems.
 ```
 .github/workflows/deploy.yml   build on push/PR, deploy to Pages on main
 .cargo/config.toml             warnings are errors for Rust
-Cargo.toml                     workspace root (release profile tuned for size)
-rust-toolchain.toml            nightly + wasm32-unknown-unknown + rustfmt/clippy
+Cargo.toml                     workspace root (release profile: size, trim-paths)
+rust-toolchain.toml            pinned nightly + wasm32-unknown-unknown + rustfmt/clippy
 wasm/                          Rust crate compiled to WebAssembly
 index.html                     the index page; mounts <op-home>
 src/main.ts                    registers the custom elements
@@ -44,15 +46,17 @@ docs/research/                 research notes with sources (landscape, stack ver
 ## Local development
 
 Prerequisites: Node.js 22.12 or newer and rustup. rustup reads
-`rust-toolchain.toml` and installs the nightly toolchain and wasm32 target on
-first use. wasm-pack is an npm devDependency; it downloads the wasm-bindgen CLI
-matching `Cargo.lock` on first run.
+`rust-toolchain.toml` and installs the pinned nightly toolchain, the wasm32
+target, rustfmt and clippy on first use (`rustup toolchain install` does it
+explicitly). wasm-pack and binaryen are npm devDependencies; wasm-pack downloads
+the wasm-bindgen CLI matching `Cargo.lock` on first run.
 
 ```
 npm ci
-npm run build      # wasm-pack build, tsc --noEmit, vite build  ->  dist/
-npm run dev        # wasm-pack build, then the Vite dev server
+npm run build      # wasm-pack build, wasm-opt, tsc --noEmit, vite build  ->  dist/
+npm run dev        # wasm build, then the Vite dev server
 npm run preview    # serve dist/ locally
+npm run hashes     # sha256 of the wasm, glue and dist/ files
 ```
 
 Rust checks, identical to CI:
@@ -63,12 +67,30 @@ cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D war
 cargo test --workspace
 ```
 
+## Reproducible builds
+
+`dist/` is meant to be byte-identical wherever it is built. Everything that
+feeds into it is pinned:
+
+- the compiler: a dated nightly in `rust-toolchain.toml`;
+- Rust dependencies: `Cargo.lock`; wasm-pack picks the matching wasm-bindgen CLI
+  from it;
+- wasm-pack, binaryen (`wasm-opt`), TypeScript, Vite and Lit: `package-lock.json`
+  (binaryen is pinned exactly; wasm-pack's own wasm-opt is disabled in
+  `wasm/Cargo.toml` so the npm one is the only optimiser);
+- paths: the release profile sets the nightly-only `trim-paths = "all"` so
+  `~/.cargo/registry` and `~/.rustup` paths do not end up in the binary.
+
+Every CI run prints `npm run hashes` in its job summary. To check a build,
+run `npm run build && npm run hashes` locally and compare.
+
 ## Deployment
 
-Every push to `main` runs the workflow: the `build` job runs the Rust checks and
-`npm run build`, uploads `dist/` as the Pages artifact, and the `deploy` job
-publishes it to the `github-pages` environment. Pull requests run the `build`
-job only.
+Every push to `main` runs the workflow: the `build` job installs the pinned
+toolchain with `rustup toolchain install`, runs the Rust checks and
+`npm run build`, records the artifact hashes, uploads `dist/` as the Pages
+artifact, and the `deploy` job publishes it to the `github-pages` environment.
+Pull requests run the `build` job only.
 
 Pages is configured in the repository settings rather than in files: the
 publishing source is the workflow (`build_type: workflow`) and the custom domain
