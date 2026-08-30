@@ -9,8 +9,11 @@
 //!
 //! Until the pack arrives, text renders in the metric-fitted `local()`
 //! fallback faces declared in `styles/theme.css`, so the eventual swap changes
-//! letterforms without moving layout. There are still no fetchable font URLs:
-//! the pack is a single opaque container, matching the embedded-fonts policy.
+//! letterforms without moving layout. The stacks reference only embedded and
+//! fallback families: locally installed fonts (including the licensed
+//! originals) are deliberately never used, so rendering is identical on every
+//! machine. There are still no fetchable font URLs: the pack is a single
+//! opaque container, matching the embedded-fonts policy.
 
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{Cache, FontFace, FontFaceDescriptors, Response, Window};

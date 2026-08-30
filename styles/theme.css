@@ -91,12 +91,12 @@
 :root {
   /* Option E from /specimen/: Sys (Space Grotesk for the public) headings,
      IBM Plex Sans body, PragmataPro Liga (Iosevka for the public) code. */
-  /* Order: commercial originals (render only where locally installed),
-     embedded stand-ins (registered from the wasm), then a curated system tail
-     for environments where the Font Loading API path never runs. */
+  /* Order: the embedded faces (registered from the font pack), then the
+     metric-fitted local() fallbacks, then a generic tail. Locally installed
+     fonts are deliberately absent: everyone gets the same rendering. */
   --op-font-sans: "IBM Plex Sans", "op-body-fallback", system-ui, sans-serif;
-  --op-font-heading: "Sys 2.0", "Sys", "Barlow Semi Condensed", "op-heading-fallback", system-ui, sans-serif;
-  --op-font-mono: "PragmataPro Liga", "PragmataPro Mono Liga", "Iosevka SS08", "op-mono-fallback", ui-monospace, monospace;
+  --op-font-heading: "Barlow Semi Condensed", "op-heading-fallback", system-ui, sans-serif;
+  --op-font-mono: "Iosevka SS08", "op-mono-fallback", ui-monospace, monospace;
 }
 
 /* Metric-fitted local fallbacks: while the font pack downloads (and wherever

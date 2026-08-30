@@ -11,12 +11,12 @@ fetchable font URL. All faces below are under the SIL Open Font License
   official npm package at https://github.com/IBM/plex.
 - iosevka-ss08/: Iosevka SS08, the "PragmataPro Style" stylistic set of
   Iosevka, official webfont build from https://github.com/be5invis/Iosevka
-  (v34.8.1), subsetted to the site's ranges. Public stand-in for PragmataPro,
-  which is licensed for the site but kept out of the repository for now; the
-  font stacks list the commercial family first so it renders where installed
-  locally, and registration applies PragmataPro's measured vertical metrics.
+  (v34.8.1), subsetted to the site's ranges. Fitted replacement for
+  PragmataPro (licensed for the site but kept out of the repository, and
+  deliberately not referenced in the stacks so rendering is identical
+  everywhere); registration applies PragmataPro's measured vertical metrics.
 - barlow-semi-condensed/: Barlow Semi Condensed from
   https://github.com/google/fonts (ofl/barlowsemicondensed, converted with
-  fonttools). Public stand-in for Sys 2.0 on the same terms; registration
+  fonttools). Fitted replacement for Sys 2.0 on the same terms; registration
   scales it 107% with Sys 2.0's measured ascent and descent so width,
   x-height and cap height land within about 2.5% of the original.

@@ -278,27 +278,18 @@ struct TypeOption {
 
 const TYPE_OPTIONS: &[TypeOption] = &[
     TypeOption {
-        id: "local",
-        label: "As chosen (option E), with the licensed originals where installed",
-        note: "Sys 2.0 headings, IBM Plex Sans body, PragmataPro Liga code.",
-        heading: "'Sys 2.0', 'Sys', 'Barlow Semi Condensed', system-ui, sans-serif",
-        body: "'IBM Plex Sans', system-ui, sans-serif",
-        mono: "'PragmataPro Liga', 'Iosevka SS08', ui-monospace, monospace",
-        check: &["Sys 2.0", "PragmataPro Liga"],
-    },
-    TypeOption {
-        id: "public",
-        label: "Public rendering: the fitted embedded stand-ins",
-        note: "Barlow Semi Condensed fitted to Sys, Iosevka SS08 fitted to PragmataPro.",
+        id: "site",
+        label: "Site rendering: the fitted embedded faces",
+        note: "Barlow Semi Condensed fitted to Sys 2.0 for headings, IBM Plex Sans body, Iosevka SS08 fitted to PragmataPro for code; identical on every machine.",
         heading: "'Barlow Semi Condensed', system-ui, sans-serif",
         body: "'IBM Plex Sans', system-ui, sans-serif",
         mono: "'Iosevka SS08', ui-monospace, monospace",
         check: &["Barlow Semi Condensed", "IBM Plex Sans", "Iosevka SS08"],
     },
     TypeOption {
-        id: "no-wasm",
-        label: "No WebAssembly: the curated system tail",
-        note: "Metric-fitted local() faces: what renders before the pack arrives, and wherever it never can.",
+        id: "fallback",
+        label: "Before the pack arrives, and wherever it never can",
+        note: "Metric-fitted local() faces: the swap to the embedded faces changes letterforms without moving layout.",
         heading: "'op-heading-fallback', system-ui, sans-serif",
         body: "'op-body-fallback', system-ui, sans-serif",
         mono: "'op-mono-fallback', ui-monospace, monospace",
@@ -384,7 +375,7 @@ fn render_typography(host: &HtmlElement) {
     let section = format!(
         "<style>{TYPE_STYLE}</style>
 <h2>Typography</h2>
-<p class=\"muted\">The chosen stacks at their three tiers: licensed originals where installed, the fitted embedded stand-ins the public sees, and the curated system tail for browsers where the Font Loading API path never runs.</p>
+<p class=\"muted\">The typography as everyone sees it: the fitted embedded faces, and the metric-fitted fallbacks that hold layout until the font pack arrives. Locally installed fonts are deliberately not used.</p>
 {cards}"
     );
     let current = host.inner_html();
@@ -427,7 +418,7 @@ mod tests {
 
     #[test]
     fn type_options_reference_families_from_their_own_stacks() {
-        assert!(TYPE_OPTIONS.len() >= 3);
+        assert!(TYPE_OPTIONS.len() >= 2);
         for option in TYPE_OPTIONS {
             for family in option.check {
                 let quoted = format!("'{family}'");
