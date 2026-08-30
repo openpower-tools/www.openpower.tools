@@ -28,7 +28,7 @@ pub const BASE_CSS: &str = "
 a { color: var(--op-link); }
 a:hover { color: var(--op-link-hover); }
 :focus-visible { outline: 2px solid var(--op-focus); outline-offset: 2px; }
-h1, h2 { margin: 0; line-height: 1.2; font-family: var(--op-font-heading); }
+h1, h2 { margin: 0; line-height: 1.2; font-family: var(--op-font-heading); letter-spacing: var(--op-heading-fallback-tracking, 0em); }
 h1 { font-size: 1.75rem; }
 h2 { font-size: 1.125rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }
 p { margin: 0.5rem 0; }

@@ -131,6 +131,13 @@ a:hover {
   outline-offset: 2px;
 }
 
+h1,
+h2,
+h3 {
+  font-family: var(--op-font-heading);
+  letter-spacing: var(--op-heading-fallback-tracking, 0em);
+}
+
 main p {
   margin: 0.5rem 0;
 }

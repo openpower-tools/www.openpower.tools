@@ -81,6 +81,11 @@ async fn install_inner() -> Result<(), JsValue> {
             loaded.push(&font_face.loaded()?.into());
             let _ = fonts.add(&font_face);
         }
+        // Headings drop their fallback tracking the moment the real faces
+        // are in, inside the same transition frame.
+        if let Some(root) = document_for_register.document_element() {
+            let _ = root.set_attribute("data-op-fonts", "ready");
+        }
         // Let the transition wait until every face is parsed and renderable.
         Ok(js_sys::Promise::all(&loaded))
     };
