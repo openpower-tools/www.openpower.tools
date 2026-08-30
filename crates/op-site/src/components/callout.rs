@@ -11,13 +11,13 @@
 //! matching ISO colour families (amber, red, blue, green) but use the
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
-//! Notes and tips share the quiet frame - a thin stripe on the right, a
-//! dimmed watermark of the icon beside it, the label in the severity
-//! colour. Warnings and danger anchor on a solid stripe at the left edge
-//! and draw a dark barberpole mixed from their own status token (amber,
-//! red; each theme derives its own shades) behind a translucent scrim:
-//! warning reveals the pole only as a tab on the right, danger wraps it
-//! over the top, right and bottom as well.
+//! Notes and tips share the quiet frame - a thin stripe on the right with
+//! the dimmed watermark of the icon beside it. Warnings and danger anchor
+//! on a solid stripe at the left edge with their icon beside it - danger
+//! posts one on each side - over a dark barberpole mixed from their own
+//! status token (amber, red) behind a translucent scrim: a faint texture
+//! under warning's scrim, a visible wrap over danger's top, right and
+//! bottom.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -62,15 +62,27 @@ impl Callout {
             _ => "var(--op-status-info)",
         };
         let icon = iso::glyph(&variant);
+        let glyph = |side: &str| {
+            format!(
+                "<svg class=\"glyph {side}\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
+            )
+        };
+        // Advisory icons watermark the right; warning posts its icon on the
+        // left beside the stripe; danger posts one on each side.
+        let icons_markup = match variant.as_str() {
+            "warning" => glyph("left"),
+            "danger" => format!("{}{}", glyph("left"), glyph("right")),
+            _ => glyph("right"),
+        };
         let severe = matches!(variant.as_str(), "warning" | "danger");
         let (variant_css, scrim_open, scrim_close) = if severe {
-            // Warning reveals the pole only as a tab on the right; danger
-            // wraps it over the top, right and bottom too. Both anchor on a
-            // solid stripe at the left edge.
-            let frame_padding = if variant.as_str() == "danger" {
-                "0.5rem 0.5rem 0.5rem 0"
+            // Warning's pole hides under the full-bleed scrim (a faint
+            // texture); danger's wraps the top, right and bottom. Both
+            // anchor on the solid stripe at the left edge.
+            let (frame_padding, scrim_padding) = if variant.as_str() == "danger" {
+                ("0.5rem 0.5rem 0.5rem 0", "0.4rem 3.1rem 0.4rem 3.1rem")
             } else {
-                "0 1.5rem 0 0"
+                ("0", "0.4rem 1rem 0.4rem 3.1rem")
             };
             (
                 format!(
@@ -87,7 +99,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: color-mix(in srgb, var(--op-raised) 90%, transparent);
-  padding: 0.4rem 3.1rem 0.4rem 1rem;
+  padding: {scrim_padding};
 }}"
                 ),
                 "<div class=\"scrim\">",
@@ -116,7 +128,6 @@ impl Callout {
   position: absolute;
   z-index: -1;
   top: 50%;
-  right: 0.75rem;
   transform: translateY(-50%);
   width: 2rem;
   height: 2rem;
@@ -127,6 +138,8 @@ impl Callout {
   stroke-linecap: round;
   stroke-linejoin: round;
 }}
+.glyph.left {{ left: 0.75rem; }}
+.glyph.right {{ right: 0.75rem; }}
 .heading {{ font-weight: 700; margin: 0.15rem 0 0.25rem; }}
 .variant {{
   margin: 0 0 0.1rem;
@@ -137,7 +150,7 @@ impl Callout {
   color: {stripe};
 }}
 </style>
-<div class=\"frame\">{scrim_open}<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg><p class=\"variant\">{variant}</p>{heading_markup}<slot></slot>{scrim_close}</div>"
+<div class=\"frame\">{scrim_open}{icons_markup}<p class=\"variant\">{variant}</p>{heading_markup}<slot></slot>{scrim_close}</div>"
         ));
     }
 }
