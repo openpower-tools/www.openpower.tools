@@ -1,0 +1,14 @@
+[package]
+name = "openpower-tools-wasm"
+version = "0.1.0"
+description = "WebAssembly module for www.openpower.tools"
+edition.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2.127"
+console_error_panic_hook = "0.1.7"

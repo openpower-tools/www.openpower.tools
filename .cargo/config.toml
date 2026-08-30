@@ -1,0 +1,3 @@
+# Warnings are errors, locally and in CI.
+[build]
+rustflags = ["-D", "warnings"]

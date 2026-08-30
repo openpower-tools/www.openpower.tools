@@ -1,0 +1,25 @@
+{
+  "name": "www.openpower.tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Skeleton for www.openpower.tools: community-driven support for OpenPOWER / Talos II firmware and software ports",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build:wasm": "wasm-pack build wasm --release --target web --out-dir ../src/wasm-pkg --out-name openpower_tools",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run build:wasm && npm run typecheck && vite build",
+    "dev": "npm run build:wasm && vite",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "wasm-pack": "^0.15.0"
+  }
+}
