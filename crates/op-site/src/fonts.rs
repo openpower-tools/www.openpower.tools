@@ -3,6 +3,10 @@
 //! exist; the stacks in `styles/theme.css` and on the specimen page end in
 //! system fallbacks for the no-wasm case.
 //!
+//! Only the faces the chosen typography actually uses are embedded; every
+//! token in `styles/theme.css` ends in a curated system-font tail for
+//! environments where this registration path never runs (no JavaScript, no
+//! WebAssembly, or no CSS Font Loading API).
 //! All embedded faces are SIL OFL 1.1 (licences alongside the files, see
 //! `crates/op-site/assets/fonts/README.md`). Iosevka and Space Grotesk are
 //! public stand-ins for the licensed commercial faces PragmataPro and Sys 2.0,
@@ -57,19 +61,6 @@ const SYS_FIT: Option<(&str, &str, &str)> = Some(("107%", "98%", "18%"));
 const PRAGMATA_FIT: Option<(&str, &str, &str)> = Some(("100%", "92%", "18%"));
 
 const FACES: &[EmbeddedFace] = &[
-    face!("B612", "400", "normal", "b612/B612-Regular.woff2"),
-    face!("B612", "700", "normal", "b612/B612-Bold.woff2"),
-    face!("B612", "400", "italic", "b612/B612-Italic.woff2"),
-    face!("B612", "700", "italic", "b612/B612-BoldItalic.woff2"),
-    face!("B612 Mono", "400", "normal", "b612/B612Mono-Regular.woff2"),
-    face!("B612 Mono", "700", "normal", "b612/B612Mono-Bold.woff2"),
-    face!("B612 Mono", "400", "italic", "b612/B612Mono-Italic.woff2"),
-    face!(
-        "B612 Mono",
-        "700",
-        "italic",
-        "b612/B612Mono-BoldItalic.woff2"
-    ),
     face!(
         "IBM Plex Sans",
         "400",
@@ -93,42 +84,6 @@ const FACES: &[EmbeddedFace] = &[
         "400",
         "italic",
         "plex-sans/IBMPlexSans-Italic.woff2"
-    ),
-    face!(
-        "IBM Plex Mono",
-        "400",
-        "normal",
-        "plex-mono/IBMPlexMono-Regular.woff2"
-    ),
-    face!(
-        "IBM Plex Mono",
-        "700",
-        "normal",
-        "plex-mono/IBMPlexMono-Bold.woff2"
-    ),
-    face!(
-        "IBM Plex Mono",
-        "400",
-        "italic",
-        "plex-mono/IBMPlexMono-Italic.woff2"
-    ),
-    face!(
-        "IBM Plex Serif",
-        "400",
-        "normal",
-        "plex-serif/IBMPlexSerif-Regular.woff2"
-    ),
-    face!(
-        "IBM Plex Serif",
-        "700",
-        "normal",
-        "plex-serif/IBMPlexSerif-Bold.woff2"
-    ),
-    face!(
-        "IBM Plex Serif",
-        "400",
-        "italic",
-        "plex-serif/IBMPlexSerif-Italic.woff2"
     ),
     face!(
         "Iosevka SS08",
@@ -233,7 +188,7 @@ mod tests {
 
     #[test]
     fn every_embedded_face_is_woff2_and_nonempty() {
-        assert_eq!(FACES.len(), 26);
+        assert_eq!(FACES.len(), 12);
         for face in FACES {
             assert!(
                 face.bytes.len() > 10_000,
@@ -254,11 +209,7 @@ mod tests {
     #[test]
     fn families_weights_and_styles_are_consistent() {
         let count = |family: &str| FACES.iter().filter(|f| f.family == family).count();
-        assert_eq!(count("B612"), 4);
-        assert_eq!(count("B612 Mono"), 4);
         assert_eq!(count("IBM Plex Sans"), 4);
-        assert_eq!(count("IBM Plex Mono"), 3);
-        assert_eq!(count("IBM Plex Serif"), 3);
         assert_eq!(count("Iosevka SS08"), 4);
         assert_eq!(count("Barlow Semi Condensed"), 4);
         for f in FACES {

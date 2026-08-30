@@ -256,68 +256,30 @@ struct TypeOption {
 
 const TYPE_OPTIONS: &[TypeOption] = &[
     TypeOption {
-        id: "b612",
-        label: "A. B612 + B612 Mono",
-        note: "Made for Airbus cockpit displays; SIL OFL, self-hosted.",
-        heading: "'B612', system-ui, sans-serif",
-        body: "'B612', system-ui, sans-serif",
-        mono: "'B612 Mono', ui-monospace, monospace",
-        check: &["B612", "B612 Mono"],
-    },
-    TypeOption {
-        id: "plex",
-        label: "B. IBM Plex Sans + Plex Mono",
-        note: "IBM's open family; SIL OFL, self-hosted. On-theme for POWER.",
-        heading: "'IBM Plex Sans', system-ui, sans-serif",
-        body: "'IBM Plex Sans', system-ui, sans-serif",
-        mono: "'IBM Plex Mono', ui-monospace, monospace",
-        check: &["IBM Plex Sans", "IBM Plex Mono"],
-    },
-    TypeOption {
-        id: "house",
-        label: "C. Sys + PragmataPro (stand-ins: Barlow Semi Condensed + Iosevka SS08)",
-        note: "House faces where installed locally; the public gets the open stand-ins.",
-        heading: "'Sys 2.0', 'Sys', 'Barlow Semi Condensed', system-ui, sans-serif",
-        body: "'Sys 2.0', 'Sys', 'Barlow Semi Condensed', system-ui, sans-serif",
-        mono: "'PragmataPro Liga', 'Iosevka SS08', ui-monospace, monospace",
-        check: &[
-            "Sys 2.0",
-            "Barlow Semi Condensed",
-            "PragmataPro Liga",
-            "Iosevka SS08",
-        ],
-    },
-    TypeOption {
-        id: "mix-avionics",
-        label: "D. B612 headings, Plex Sans body, PragmataPro/Iosevka SS08 code",
-        note: "Instrument headings over a quiet text face.",
-        heading: "'B612', system-ui, sans-serif",
-        body: "'IBM Plex Sans', system-ui, sans-serif",
-        mono: "'PragmataPro Liga', 'Iosevka SS08', ui-monospace, monospace",
-        check: &["B612", "IBM Plex Sans", "PragmataPro Liga", "Iosevka SS08"],
-    },
-    TypeOption {
-        id: "mix-sys",
-        label: "E. Sys/Barlow headings, Plex Sans body, PragmataPro/Iosevka SS08 code",
-        note: "House voice for headings, Plex for long text.",
+        id: "local",
+        label: "As chosen (option E), with the licensed originals where installed",
+        note: "Sys 2.0 headings, IBM Plex Sans body, PragmataPro Liga code.",
         heading: "'Sys 2.0', 'Sys', 'Barlow Semi Condensed', system-ui, sans-serif",
         body: "'IBM Plex Sans', system-ui, sans-serif",
         mono: "'PragmataPro Liga', 'Iosevka SS08', ui-monospace, monospace",
-        check: &[
-            "Sys",
-            "Barlow Semi Condensed",
-            "IBM Plex Sans",
-            "PragmataPro Liga",
-            "Iosevka SS08",
-        ],
+        check: &["Sys 2.0", "PragmataPro Liga"],
     },
     TypeOption {
-        id: "system",
-        label: "F. System fonts",
-        note: "The current default: zero bytes, no identity.",
-        heading: "system-ui, sans-serif",
-        body: "system-ui, sans-serif",
-        mono: "ui-monospace, monospace",
+        id: "public",
+        label: "Public rendering: the fitted embedded stand-ins",
+        note: "Barlow Semi Condensed fitted to Sys, Iosevka SS08 fitted to PragmataPro.",
+        heading: "'Barlow Semi Condensed', system-ui, sans-serif",
+        body: "'IBM Plex Sans', system-ui, sans-serif",
+        mono: "'Iosevka SS08', ui-monospace, monospace",
+        check: &["Barlow Semi Condensed", "IBM Plex Sans", "Iosevka SS08"],
+    },
+    TypeOption {
+        id: "no-wasm",
+        label: "No WebAssembly: the curated system tail",
+        note: "What renders when the Font Loading API path never runs.",
+        heading: "'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', 'Helvetica Neue', system-ui, sans-serif",
+        body: "system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+        mono: "ui-monospace, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace",
         check: &[],
     },
 ];
@@ -399,8 +361,8 @@ fn render_typography(host: &HtmlElement) {
     let cards: String = TYPE_OPTIONS.iter().map(type_option_markup).collect();
     let section = format!(
         "<style>{TYPE_STYLE}</style>
-<h2>Typography options</h2>
-<p class=\"muted\">Candidate stacks rendered with the self-hosted webfonts; the badge shows what actually loaded in this browser. Stacks always end in a system fallback.</p>
+<h2>Typography</h2>
+<p class=\"muted\">The chosen stacks at their three tiers: licensed originals where installed, the fitted embedded stand-ins the public sees, and the curated system tail for browsers where the Font Loading API path never runs.</p>
 {cards}"
     );
     let current = host.inner_html();
@@ -437,7 +399,7 @@ mod tests {
 
     #[test]
     fn type_options_reference_families_from_their_own_stacks() {
-        assert!(TYPE_OPTIONS.len() >= 4);
+        assert!(TYPE_OPTIONS.len() >= 3);
         for option in TYPE_OPTIONS {
             for family in option.check {
                 let quoted = format!("'{family}'");

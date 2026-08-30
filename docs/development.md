@@ -50,9 +50,10 @@ docs/research/                 research notes with sources
 
 Every webfont is embedded in the wasm binary and registered at runtime with
 the CSS Font Loading API (`crates/op-site/src/fonts.rs`); there are no
-`@font-face` rules and no fetchable font URLs. The embedded faces are all SIL
-OFL (B612, IBM Plex, Iosevka, Space Grotesk; provenance and licences in
-`crates/op-site/assets/fonts/README.md`). The licensed commercial faces
+`@font-face` rules and no fetchable font URLs. Only the chosen faces are embedded, all SIL
+OFL (IBM Plex Sans, Iosevka SS08, Barlow Semi Condensed; provenance and
+licences in `crates/op-site/assets/fonts/README.md`), and every font token
+ends in a curated system tail for browsers where that path never runs. The licensed commercial faces
 (PragmataPro, Sys 2.0) are kept out of the repository for now; the stacks
 list them first so they render where installed locally, with Iosevka and
 Space Grotesk as their public stand-ins. Candidate stacks are compared on
