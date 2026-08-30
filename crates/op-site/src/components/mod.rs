@@ -2,6 +2,7 @@
 //! from these tags; nothing here is instantiated from Rust.
 
 mod badge;
+mod breadcrumb;
 mod build_status;
 mod button;
 mod callout;
@@ -11,6 +12,7 @@ mod details;
 mod empty_state;
 mod input;
 mod key_value;
+mod pagination;
 mod palette_specimen;
 mod select_field;
 mod site_footer;
@@ -20,8 +22,10 @@ mod source;
 mod starting_points;
 mod switch;
 mod table;
+mod tabs;
 mod theme_toggle;
 mod timeline;
+mod tooltip;
 
 use op_webc::ElementDefinition;
 use web_sys::{HtmlElement, ShadowRoot, ShadowRootInit, ShadowRootMode};
@@ -49,6 +53,11 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     select_field::DEFINITION,
     checkbox::DEFINITION,
     switch::DEFINITION,
+    tabs::DEFINITION,
+    tabs::TAB_DEFINITION,
+    breadcrumb::DEFINITION,
+    pagination::DEFINITION,
+    tooltip::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

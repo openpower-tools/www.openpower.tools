@@ -1,0 +1,21 @@
+      <p>Page navigation for split lists. The pages are a regular ordered list of links,
+      with aria-current on the current page and a plain span for gaps.</p>
+      <h2>Example</h2>
+      <op-pagination>
+        <ol>
+          <li><a href="#" rel="prev">Previous</a></li>
+          <li><a href="#">1</a></li>
+          <li><a href="#" aria-current="page">2</a></li>
+          <li><a href="#">3</a></li>
+          <li><span class="gap">&#8230;</span></li>
+          <li><a href="#">9</a></li>
+          <li><a href="#" rel="next">Next</a></li>
+        </ol>
+      </op-pagination>
+      <h2>Markup</h2>
+      <pre>&lt;op-pagination&gt;
+  &lt;ol&gt;
+    &lt;li&gt;&lt;a href="/ports/1/"&gt;1&lt;/a&gt;&lt;/li&gt;
+    &lt;li&gt;&lt;a href="/ports/2/" aria-current="page"&gt;2&lt;/a&gt;&lt;/li&gt;
+  &lt;/ol&gt;
+&lt;/op-pagination&gt;</pre>

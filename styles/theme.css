@@ -312,14 +312,17 @@ op-checkbox input {
   margin: 0;
 }
 
-/* The switch is a native checkbox restyled; semantics stay a checkbox. */
+/* The switch is a native checkbox restyled; semantics stay a checkbox. The
+   empty side of the track prints the state as the IEC power numerals - 1 on,
+   0 off - and hovering slides a ghost of the thumb to the state a click
+   would reach. */
 op-switch input {
   appearance: none;
-  width: 2.3em;
-  height: 1.25em;
+  width: 2.6em;
+  height: 1.4em;
   margin: 0;
   border: 1px solid var(--op-border-strong);
-  border-radius: 0.75em;
+  border-radius: 0.8em;
   position: relative;
   cursor: pointer;
 }
@@ -328,15 +331,28 @@ op-switch input::before {
   content: "";
   position: absolute;
   top: 50%;
-  left: 0.15em;
+  left: 0.18em;
   transform: translateY(-50%);
-  width: 0.85em;
-  height: 0.85em;
+  width: 0.95em;
+  height: 0.95em;
   border-radius: 50%;
   background: var(--op-border-strong);
   transition:
-    left 120ms ease,
-    background 120ms ease;
+    left 160ms ease,
+    opacity 160ms ease,
+    background 160ms ease;
+}
+
+op-switch input::after {
+  content: "0";
+  position: absolute;
+  top: 50%;
+  right: 0.38em;
+  transform: translateY(-50%);
+  font-family: var(--op-font-mono);
+  font-size: 0.7em;
+  line-height: 1;
+  color: var(--op-muted);
 }
 
 op-switch input:checked {
@@ -344,8 +360,79 @@ op-switch input:checked {
 }
 
 op-switch input:checked::before {
-  left: 1.25em;
+  left: 1.4em;
   background: var(--op-accent);
+}
+
+op-switch input:checked::after {
+  content: "1";
+  right: auto;
+  left: 0.44em;
+  color: var(--op-accent);
+}
+
+/* Hover previews the click: the thumb slides, ghosted, to its target. */
+@media (prefers-reduced-motion: no-preference) {
+  op-switch input:hover:not(:checked)::before {
+    left: 1.4em;
+    opacity: 0.45;
+  }
+
+  op-switch input:checked:hover::before {
+    left: 0.18em;
+    opacity: 0.45;
+  }
+}
+
+/* Breadcrumb and pagination trails are light-DOM lists of links. */
+
+op-breadcrumb ol {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  font-size: 0.9rem;
+}
+
+/* Separators drawn here stay out of the accessible name. */
+op-breadcrumb li + li::before {
+  content: "/";
+  color: var(--op-muted);
+  margin-right: 0.35rem;
+}
+
+op-breadcrumb [aria-current="page"] {
+  color: var(--op-muted);
+}
+
+op-pagination ol {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0;
+}
+
+op-pagination a,
+op-pagination .gap {
+  display: inline-block;
+  min-width: 1.4rem;
+  text-align: center;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  text-decoration: none;
+}
+
+op-pagination a:hover {
+  border-color: var(--op-accent);
+}
+
+op-pagination [aria-current="page"] {
+  border-color: var(--op-border-strong);
 }
 
 /* Leave room for the fixed theme toggle on narrow screens. */

@@ -1,25 +1,26 @@
       <p>Highlighted blocks for notes, tips and warnings. Severity is shown three ways at
       once - the variant word set in the severity colour where a heading would sit, an
       ISO-shaped icon, and colour - so none of them has to carry the meaning alone.
-      Warning and danger carry their icon on the left, notes and tips on the right -
-      each knocked out of a solid block of its colour - so the severe and the advisory
-      separate at a glance. Content is regular light-DOM markup on a slightly
+      The frame is a severity ladder: notes and tips stay quiet, warnings flank
+      themselves in their colour, and danger reads like a hazard plate. Content is regular light-DOM markup on a slightly
       raised background.</p>
       <h2>Variants</h2>
       <op-callout variant="note" heading="Note">The default variant, for neutral asides and context.</op-callout>
       <op-callout variant="tip" heading="Tip">For advice and good practice, striped with the ok green.</op-callout>
-      <op-callout variant="warning" heading="Warning">For things that can bite; the left block carries the warning amber.</op-callout>
-      <op-callout variant="danger" heading="Data loss ahead">For destructive operations; the left block carries the danger red and the wording carries the severity.</op-callout>
+      <op-callout variant="warning" heading="Warning">For things that can bite: an empty amber block left, the triangle right.</op-callout>
+      <op-callout variant="danger" heading="Data loss ahead">For destructive operations: plated in the danger red on both sides, wording centred.</op-callout>
       <h2>Without a heading</h2>
       <op-callout variant="note">A bare callout: just the variant tag and content, for short asides.</op-callout>
       <h2>Icons</h2>
       <p>The icon shapes follow the ISO 3864 shape grammar as registered in ISO 7010: a
       triangle for hazard warnings (W001), a circle with a diagonal bar for
       prohibition-grade danger (P001), a circled i for information, and the square of the
-      safe-condition series for tips. Every icon is knocked out of
-      a solid block of its severity colour in the page background colour, like an ISO
-      sign: warning and danger blocks sit on the left, note and tip blocks on the
-      right beside the thin stripe, so the two groups also separate by side. The hues stay in the matching ISO colour families -
+      safe-condition series for tips. The frame spends more ink as the
+      stakes rise: notes and tips keep a thin stripe and a contrasting watermark of
+      their icon on the right; warnings carry an empty block of their colour on the
+      left and the triangle knocked out of a solid block on the right; danger carries
+      the roundel on both sides with the title and message centred between them, like
+      a hazard plate. The hues stay in the matching ISO colour families -
       amber, red, blue, green - but use the theme's contrast-checked status tokens rather
       than raw signal colours, which would fail WCAG AA on these backgrounds.</p>
       <h2>Markup</h2>

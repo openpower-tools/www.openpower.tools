@@ -1,0 +1,22 @@
+      <p>A tabbed region: the panels are light-DOM op-tab children and the tablist is
+      rendered from their labels, activated by click or the arrow keys.</p>
+      <h2>Example</h2>
+      <op-tabs>
+        <op-tab label="Debian">
+          <p>Install from the ppc64el netinst image; the installer runs under Petitboot's
+          kernel and picks up the NVMe target directly.</p>
+        </op-tab>
+        <op-tab label="Fedora">
+          <p>Fedora Server for ppc64le boots unmodified; select the HTTPS install source
+          from the Petitboot menu.</p>
+        </op-tab>
+        <op-tab label="FreeBSD">
+          <p>Community images exist for POWER9; serial console settings need adjusting
+          before first boot.</p>
+        </op-tab>
+      </op-tabs>
+      <h2>Markup</h2>
+      <pre>&lt;op-tabs&gt;
+  &lt;op-tab label="Debian"&gt;...&lt;/op-tab&gt;
+  &lt;op-tab label="Fedora"&gt;...&lt;/op-tab&gt;
+&lt;/op-tabs&gt;</pre>

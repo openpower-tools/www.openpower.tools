@@ -127,6 +127,30 @@ pub const PAGES: &[Page] = &[
         "Native checkboxes drawn as switches.",
         "components/switch/index.html"
     ),
+    page!(
+        "components/tabs",
+        "Tabs",
+        "Tabbed regions with keyboard activation.",
+        "components/tabs/index.html"
+    ),
+    page!(
+        "components/breadcrumb",
+        "Breadcrumb",
+        "Where-am-I trails with stylesheet separators.",
+        "components/breadcrumb/index.html"
+    ),
+    page!(
+        "components/pagination",
+        "Pagination",
+        "Page navigation for split lists.",
+        "components/pagination/index.html"
+    ),
+    page!(
+        "components/tooltip",
+        "Tooltip",
+        "Hover and focus annotations for terms.",
+        "components/tooltip/index.html"
+    ),
 ];
 
 /// The shared site navigation, used verbatim on generated pages and mirrored

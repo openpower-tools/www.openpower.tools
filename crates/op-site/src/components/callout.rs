@@ -11,12 +11,12 @@
 //! families (amber, red, blue, green) but use the theme's contrast-checked
 //! status tokens instead of raw signal colours.
 //!
-//! Severe variants (warning, danger) read differently from advisory ones
-//! at a glance: their icon block sits on the left, while notes and tips
-//! carry theirs on the right beside a thin stripe. In both, the icon is
-//! knocked out of a solid block of the severity colour in the page
-//! background colour, echoing an ISO sign; the side and the stripe keep the
-//! two groups apart even before colour is read.
+//! The frame itself is a severity ladder, spending more ink as the stakes
+//! rise. Notes and tips: a thin stripe and a contrasting watermark of the
+//! icon on the right. Warnings: an empty block of the colour on the left and
+//! the triangle knocked out of a solid block on the right. Danger: the
+//! roundel knocked out of solid blocks on both sides with the title and
+//! message centred between them, like a hazard plate.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -56,6 +56,36 @@ fn glyph(variant: &str) -> &'static str {
     }
 }
 
+/// A solid side block, with or without the icon knocked out of it.
+fn block(side: &str, icon: Option<&str>) -> String {
+    let glyph_markup = icon
+        .map(|icon| format!("<svg class=\"glyph\" viewBox=\"0 0 24 24\">{icon}</svg>"))
+        .unwrap_or_default();
+    format!("<span class=\"block {side}\" aria-hidden=\"true\">{glyph_markup}</span>")
+}
+
+const BLOCK_CSS: &str = "
+.block {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2.1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.block.left { left: 0; }
+.block.right { right: 0; }
+.glyph {
+  width: 1.3rem;
+  height: 1.3rem;
+  stroke: var(--op-bg);
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}";
+
 impl Callout {
     fn render(&self) {
         let variant = self
@@ -68,11 +98,11 @@ impl Callout {
             .as_deref()
             .map(|h| format!("<p class=\"heading\">{}</p>", escape(h)))
             .unwrap_or_default();
-        // The stripe or block, the label and the icon carry the variant
-        // colour. The label sits where a heading would, as text (4.5:1 on the
-        // page background, enforced by palette.rs); icons are decorative
-        // (aria-hidden) because the label word is always visible. The knocked
-        // out icon inherits the same 4.5:1 pair, read the other way round.
+        // The frame, the label and the icon carry the variant colour. The
+        // label sits where a heading would, as text (4.5:1 on the page and
+        // raised backgrounds, enforced by palette.rs); icons and blocks are
+        // decorative (aria-hidden) because the label word is always visible.
+        // Knocked-out icons reuse the same pair, read the other way round.
         let stripe = match variant.as_str() {
             "tip" => "var(--op-status-ok)",
             "warning" => "var(--op-status-warning)",
@@ -80,21 +110,57 @@ impl Callout {
             _ => "var(--op-status-info)",
         };
         let icon = glyph(&variant);
-        let severe = matches!(variant.as_str(), "warning" | "danger");
-        // Severe icons sit left; advisory icons sit right beside the thin
-        // stripe. Both are knocked out of a solid block of the colour.
-        let (gutter_side, frame_padding) = if severe {
-            ("left", "0.4rem 1rem 0.4rem 3.1rem")
-        } else {
-            ("right", "0.4rem 3.1rem 0.4rem 1rem")
-        };
-        let stripe_css = if severe {
-            String::new()
-        } else {
-            format!(
-                "border-left: 0.25rem solid {stripe};
-  "
-            )
+        let (variant_css, side_markup) = match variant.as_str() {
+            // An empty block of the colour left, the triangle knocked out of
+            // a solid block right.
+            "warning" => (
+                format!(
+                    ".frame {{ padding: 0.4rem 3.1rem; }}{BLOCK_CSS}
+.block {{ background: {stripe}; }}"
+                ),
+                format!("{}{}", block("left", None), block("right", Some(icon))),
+            ),
+            // The roundel on both sides, title and message centred between
+            // them: a hazard plate.
+            "danger" => (
+                format!(
+                    ".frame {{ padding: 0.4rem 3.1rem; text-align: center; }}{BLOCK_CSS}
+.block {{ background: {stripe}; }}"
+                ),
+                format!(
+                    "{}{}",
+                    block("left", Some(icon)),
+                    block("right", Some(icon))
+                ),
+            ),
+            // Advisory: thin stripe, contrasting watermark on the right.
+            _ => (
+                format!(
+                    ".frame {{
+  z-index: 0;
+  border-left: 0.25rem solid {stripe};
+  padding: 0.4rem 3.1rem 0.4rem 1rem;
+}}
+.glyph {{
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  right: 0.75rem;
+  transform: translateY(-50%);
+  width: 2rem;
+  height: 2rem;
+  stroke: {stripe};
+  opacity: 0.45;
+  fill: none;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}}"
+                ),
+                format!(
+                    "<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
+                ),
+            ),
         };
         shadow_root(&self.host).set_inner_html(&format!(
             "<style>{BASE_CSS}
@@ -102,28 +168,8 @@ impl Callout {
 .frame {{
   position: relative;
   background: var(--op-raised);
-  {stripe_css}padding: {frame_padding};
 }}
-.gutter {{
-  position: absolute;
-  {gutter_side}: 0;
-  top: 0;
-  bottom: 0;
-  width: 2.1rem;
-  background: {stripe};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}}
-.glyph {{
-  width: 1.3rem;
-  height: 1.3rem;
-  stroke: var(--op-bg);
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}}
+{variant_css}
 .heading {{ font-weight: 700; margin: 0.15rem 0 0.25rem; }}
 .variant {{
   margin: 0 0 0.1rem;
@@ -134,7 +180,7 @@ impl Callout {
   color: {stripe};
 }}
 </style>
-<div class=\"frame\"><span class=\"gutter\" aria-hidden=\"true\"><svg class=\"glyph\" viewBox=\"0 0 24 24\">{icon}</svg></span><p class=\"variant\">{variant}</p>{heading_markup}<slot></slot></div>"
+<div class=\"frame\">{side_markup}<p class=\"variant\">{variant}</p>{heading_markup}<slot></slot></div>"
         ));
     }
 }
