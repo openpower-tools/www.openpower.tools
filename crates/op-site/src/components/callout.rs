@@ -12,8 +12,8 @@
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
 //! Every variant anchors on a colour stripe at the left edge. Notes and
-//! tips keep the quiet frame with the dimmed watermark of the icon on the
-//! right; warnings and danger post their icon on each side, over a dark
+//! tips keep the quiet frame with the dimmed watermark of the icon beside
+//! the stripe; warnings and danger post their icon on each side, over a dark
 //! barberpole mixed from their own status token (amber, red) behind a
 //! translucent scrim: a faint texture under warning's scrim, visible
 //! bands above and below danger's.
@@ -66,11 +66,11 @@ impl Callout {
                 "<svg class=\"glyph {side}\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
             )
         };
-        // Advisory icons watermark the right; warning and danger post one
-        // on each side beside the stripe.
+        // Advisory icons watermark the left beside the stripe; warning and
+        // danger post one on each side.
         let icons_markup = match variant.as_str() {
             "warning" | "danger" => format!("{}{}", glyph("left"), glyph("right")),
-            _ => glyph("right"),
+            _ => glyph("left"),
         };
         let severe = matches!(variant.as_str(), "warning" | "danger");
         let (variant_css, scrim_open, scrim_close) = if severe {
@@ -111,7 +111,7 @@ impl Callout {
   z-index: 0;
   background: var(--op-raised);
   border-left: 0.25rem solid {stripe};
-  padding: 0.4rem 3.1rem 0.4rem 1rem;
+  padding: 0.4rem 1rem 0.4rem 3.1rem;
 }}"
                 ),
                 "",
