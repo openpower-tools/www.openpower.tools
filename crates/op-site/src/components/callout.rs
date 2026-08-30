@@ -11,12 +11,11 @@
 //! matching ISO colour families (amber, red, blue, green) but use the
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
-//! The frame itself is a severity ladder, spending more ink as the stakes
-//! rise. Notes and tips: a thin stripe and a dimmed watermark of the icon on
-//! the right. Warnings: the triangle posted on the left at full strength,
-//! drawn with the warning amber as its border. Danger: the roundel knocked
-//! out of solid blocks on both sides with the title and message centred
-//! between them, like a hazard plate.
+//! Every variant shares the same quiet frame - a thin stripe on the right,
+//! a dimmed watermark of the icon beside it, the label in the severity
+//! colour. Danger is the one specialisation: a dark-red barberpole
+//! background, mixed from the danger token so each theme derives its own
+//! shades, framing a translucent scrim that keeps the wording readable.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -36,35 +35,6 @@ struct Callout {
 
 const VARIANTS: &[&str] = &["note", "tip", "warning", "danger"];
 
-/// A solid side block with the icon knocked out of it (the danger plates).
-fn block(side: &str, icon: &str) -> String {
-    format!(
-        "<span class=\"block {side}\" aria-hidden=\"true\"><svg class=\"glyph\" viewBox=\"0 0 24 24\">{icon}</svg></span>"
-    )
-}
-
-const BLOCK_CSS: &str = "
-.block {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2.1rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.block.left { left: 0; }
-.block.right { right: 0; }
-.glyph {
-  width: 1.3rem;
-  height: 1.3rem;
-  stroke: var(--op-bg);
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}";
-
 impl Callout {
     fn render(&self) {
         let variant = self
@@ -77,11 +47,12 @@ impl Callout {
             .as_deref()
             .map(|h| format!("<p class=\"heading\">{}</p>", escape(h)))
             .unwrap_or_default();
-        // The frame, the label and the icon carry the variant colour. The
+        // The stripe, the label and the icon carry the variant colour. The
         // label sits where a heading would, as text (4.5:1 on the page and
-        // raised backgrounds, enforced by palette.rs); icons and blocks are
-        // decorative (aria-hidden) because the label word is always visible.
-        // Knocked-out icons reuse the same pair, read the other way round.
+        // raised backgrounds, enforced by palette.rs); the icon is decorative
+        // (aria-hidden) because the label word is always visible. The danger
+        // scrim is 90% of the raised background, so the tested raised pairs
+        // hold under it within their margins.
         let stripe = match variant.as_str() {
             "tip" => "var(--op-status-ok)",
             "warning" => "var(--op-status-warning)",
@@ -89,47 +60,47 @@ impl Callout {
             _ => "var(--op-status-info)",
         };
         let icon = iso::glyph(&variant);
-        let (variant_css, side_markup) = match variant.as_str() {
-            // The triangle posted on the left at full strength, drawn with
-            // the warning amber as its border, on the plain raised ground.
-            "warning" => (
-                format!(
-                    ".frame {{ padding: 0.4rem 1rem 0.4rem 3.1rem; }}
-.glyph {{
-  position: absolute;
-  left: 0.65rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 1.8rem;
-  height: 1.8rem;
-  stroke: {stripe};
-  fill: none;
-  stroke-width: 1.7;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}}"
-                ),
-                format!(
-                    "<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
-                ),
-            ),
-            // The roundel on both sides, title and message centred between
-            // them: a hazard plate.
-            "danger" => (
-                format!(
-                    ".frame {{ padding: 0.4rem 3.1rem; text-align: center; }}{BLOCK_CSS}
-.block {{ background: {stripe}; }}"
-                ),
-                format!("{}{}", block("left", icon), block("right", icon)),
-            ),
-            // Advisory: thin stripe, dimmed watermark on the right.
-            _ => (
+        let (variant_css, scrim_open, scrim_close) = if variant.as_str() == "danger" {
+            (
                 format!(
                     ".frame {{
-  z-index: 0;
-  border-left: 0.25rem solid {stripe};
-  padding: 0.4rem 3.1rem 0.4rem 1rem;
+  background: repeating-linear-gradient(
+    45deg,
+    color-mix(in srgb, {stripe} 45%, #000) 0 0.75rem,
+    color-mix(in srgb, {stripe} 22%, #000) 0.75rem 1.5rem
+  );
+  border-right: 0.25rem solid {stripe};
+  padding: 0.5rem;
 }}
+.scrim {{
+  position: relative;
+  z-index: 0;
+  background: color-mix(in srgb, var(--op-raised) 90%, transparent);
+  padding: 0.4rem 3.1rem 0.4rem 1rem;
+}}"
+                ),
+                "<div class=\"scrim\">",
+                "</div>",
+            )
+        } else {
+            (
+                format!(
+                    ".frame {{
+  position: relative;
+  z-index: 0;
+  background: var(--op-raised);
+  border-right: 0.25rem solid {stripe};
+  padding: 0.4rem 3.1rem 0.4rem 1rem;
+}}"
+                ),
+                "",
+                "",
+            )
+        };
+        shadow_root(&self.host).set_inner_html(&format!(
+            "<style>{BASE_CSS}
+:host {{ display: block; margin: 1rem 0; }}
+{variant_css}
 .glyph {{
   position: absolute;
   z-index: -1;
@@ -144,21 +115,7 @@ impl Callout {
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
-}}"
-                ),
-                format!(
-                    "<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
-                ),
-            ),
-        };
-        shadow_root(&self.host).set_inner_html(&format!(
-            "<style>{BASE_CSS}
-:host {{ display: block; margin: 1rem 0; }}
-.frame {{
-  position: relative;
-  background: var(--op-raised);
 }}
-{variant_css}
 .heading {{ font-weight: 700; margin: 0.15rem 0 0.25rem; }}
 .variant {{
   margin: 0 0 0.1rem;
@@ -169,7 +126,7 @@ impl Callout {
   color: {stripe};
 }}
 </style>
-<div class=\"frame\">{side_markup}<p class=\"variant\">{variant}</p>{heading_markup}<slot></slot></div>"
+<div class=\"frame\">{scrim_open}<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg><p class=\"variant\">{variant}</p>{heading_markup}<slot></slot>{scrim_close}</div>"
         ));
     }
 }
