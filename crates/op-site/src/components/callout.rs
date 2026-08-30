@@ -15,8 +15,8 @@
 //! tips keep the quiet frame with the dimmed watermark of the icon on the
 //! right; warnings and danger post their icon on each side, over a dark
 //! barberpole mixed from their own status token (amber, red) behind a
-//! translucent scrim: a faint texture under warning's scrim, a visible
-//! wrap over danger's top, right and bottom.
+//! translucent scrim: a faint texture under warning's scrim, visible
+//! bands above and below danger's.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -75,10 +75,10 @@ impl Callout {
         let severe = matches!(variant.as_str(), "warning" | "danger");
         let (variant_css, scrim_open, scrim_close) = if severe {
             // Warning's pole hides under the full-bleed scrim (a faint
-            // texture); danger's wraps the top, right and bottom. Both
-            // anchor on the solid stripe at the left edge.
+            // texture); danger's shows as bands above and below the scrim.
+            // Both anchor on the solid stripe at the left edge.
             let frame_padding = if variant.as_str() == "danger" {
-                "0.5rem 0.5rem 0.5rem 0"
+                "0.5rem 0"
             } else {
                 "0"
             };
