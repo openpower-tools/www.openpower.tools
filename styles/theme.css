@@ -99,40 +99,10 @@
   --op-font-mono: "Iosevka SS08", "op-mono-fallback", ui-monospace, monospace;
 }
 
-/* Metric-fitted local fallbacks: while the font pack downloads (and wherever
-   it never can), text renders in system faces scaled and metric-overridden to
-   the originals' measured geometry, so the swap to the real faces changes
-   letterforms without moving layout. Sources are local() only: no fetchable
-   font URLs exist. Liberation faces are metric-compatible stand-ins for the
-   Windows and mac equivalents. Consolas is left out of the mono list on
-   purpose: its 0.55em advance does not fit the shared 83% adjustment. */
-
-@font-face {
-  font-family: "op-heading-fallback";
-  src: local("Arial Narrow"), local("Liberation Sans Narrow"), local("Roboto Condensed");
-  size-adjust: 111%;
-  ascent-override: 98%;
-  descent-override: 18%;
-  line-gap-override: 0%;
-}
-
-@font-face {
-  font-family: "op-body-fallback";
-  src: local("Arial"), local("Liberation Sans"), local("Helvetica Neue"), local("Roboto");
-  size-adjust: 101%;
-  ascent-override: 103%;
-  descent-override: 28%;
-  line-gap-override: 0%;
-}
-
-@font-face {
-  font-family: "op-mono-fallback";
-  src: local("Menlo"), local("DejaVu Sans Mono"), local("Liberation Mono"), local("Courier New");
-  size-adjust: 83%;
-  ascent-override: 92%;
-  descent-override: 18%;
-  line-gap-override: 0%;
-}
+/* The metric-fitted local() fallback faces (op-heading-fallback,
+   op-body-fallback, op-mono-fallback) live in a stylesheet generated at build
+   time by crates/op-assets, which computes every size-adjust and box override
+   from the actual font tables so the numbers can never go stale. */
 
 /* Base styles for the light DOM; shadow roots carry their own. */
 

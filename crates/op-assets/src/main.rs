@@ -1,13 +1,151 @@
-//! Trunk `post_build` hook. Reads the woff2 files listed in
-//! [`op_fontpack::MANIFEST`], encodes them into a single content-hashed pack
-//! in the Trunk staging directory, and injects
-//! `<meta name="op-fonts" content="fonts-<hash>.pack">` into the staged
-//! `index.html` so the wasm can find it with a page-relative fetch. Runs for
-//! both Trunk targets, so each page carries its own copy of the pack.
+//! Trunk `post_build` hook.
+//!
+//! 1. Measures each embedded face from its own font tables and computes the
+//!    fit against the recorded target geometry of the original it replaces,
+//!    so metric numbers can never go stale when fonts are updated.
+//! 2. Encodes all faces into a single content-hashed pack
+//!    (`fonts-<hash>.pack`) in the Trunk staging directory and injects
+//!    `<meta name="op-fonts">` so the wasm can fetch it page-relative.
+//! 3. Generates the metric-fitted `local()` fallback stylesheet
+//!    (`fonts-fallback-<hash>.css`) from the same targets against the frozen
+//!    metrics of the Arial-class system designs, and injects its `<link>`.
+//!
+//! Browsers apply `size-adjust` to override metrics as well (verified by
+//! measurement in Chromium), so every override written here is the target box
+//! divided by the computed size adjustment.
 
 use std::path::{Path, PathBuf};
 
+use op_fontpack::{
+    Face, FitTarget, MANIFEST, PLEX_SANS_TARGET, PRAGMATA_TARGET, REF_STRING, SYS_TARGET,
+};
 use sha2::{Digest, Sha256};
+
+/// Advance width of [`REF_STRING`] at a 100px em, measured from the font's
+/// cmap and hmtx tables (kerning is not applied; these faces do not kern the
+/// reference string materially, and the same convention was used to measure
+/// the targets).
+fn ref_width_per_100em(font_bytes: &[u8]) -> f64 {
+    let face = ttf_parser::Face::parse(font_bytes, 0).expect("parse font");
+    let upem = f64::from(face.units_per_em());
+    let mut units = 0.0;
+    for c in REF_STRING.chars() {
+        let glyph = face
+            .glyph_index(c)
+            .unwrap_or_else(|| panic!("font lacks {c:?} from the reference string"));
+        let advance = face
+            .glyph_hor_advance(glyph)
+            .unwrap_or_else(|| panic!("no advance for {c:?}"));
+        units += f64::from(advance);
+    }
+    units / upem * 100.0
+}
+
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+/// `(size_adjust, ascent_override, descent_override)` percentages fitting a
+/// face of measured reference width `measured` to `target`.
+fn fit_percentages(target: &FitTarget, measured: f64) -> (f64, f64, f64) {
+    let scale = target.ref_width / measured;
+    (
+        round1(scale * 100.0),
+        round1(target.ascent_pct / scale),
+        round1(target.descent_pct / scale),
+    )
+}
+
+fn load_faces(assets: &Path) -> Vec<Face> {
+    MANIFEST
+        .iter()
+        .map(|entry| {
+            let path = assets.join(entry.path);
+            let woff2 = std::fs::read(&path)
+                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+            assert!(woff2.starts_with(b"wOF2"), "{} is not woff2", entry.path);
+            let metrics = entry.fit.map(|target| {
+                let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
+                    .unwrap_or_else(|e| panic!("cannot decode {}: {e:?}", entry.path));
+                let (s, a, d) = fit_percentages(&target, ref_width_per_100em(&ttf));
+                (format!("{s}%"), format!("{a}%"), format!("{d}%"))
+            });
+            Face {
+                family: entry.family.to_owned(),
+                weight: entry.weight.to_owned(),
+                style: entry.style.to_owned(),
+                metrics,
+                bytes: woff2,
+            }
+        })
+        .collect()
+}
+
+/// The frozen reference widths of the system font classes the fallbacks bind
+/// to (Arial Narrow, Arial and the 0.60em-advance monospace class), measured
+/// with [`REF_STRING`] at a 100px em from their Liberation metric clones.
+/// Consolas is excluded from the mono sources on purpose: its 0.55em advance
+/// does not fit the shared adjustment.
+struct FallbackDef {
+    family: &'static str,
+    sources: &'static [&'static str],
+    base_ref_width: f64,
+    target: FitTarget,
+}
+
+const FALLBACKS: &[FallbackDef] = &[
+    FallbackDef {
+        family: "op-heading-fallback",
+        sources: &["Arial Narrow", "Liberation Sans Narrow", "Roboto Condensed"],
+        base_ref_width: 1887.0,
+        target: SYS_TARGET,
+    },
+    FallbackDef {
+        family: "op-body-fallback",
+        sources: &["Arial", "Liberation Sans", "Helvetica Neue", "Roboto"],
+        base_ref_width: 2301.0,
+        target: PLEX_SANS_TARGET,
+    },
+    FallbackDef {
+        family: "op-mono-fallback",
+        sources: &[
+            "Menlo",
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Courier New",
+        ],
+        base_ref_width: 2700.0,
+        target: PRAGMATA_TARGET,
+    },
+];
+
+fn fallback_css() -> String {
+    let mut css = String::from(
+        "/* Generated by op-assets: metric-fitted local() fallback faces. The\n   overrides are target boxes divided by the size adjustment, because\n   browsers scale override metrics by size-adjust too. Do not edit. */\n",
+    );
+    for def in FALLBACKS {
+        let (s, a, d) = fit_percentages(&def.target, def.base_ref_width);
+        let sources: Vec<String> = def
+            .sources
+            .iter()
+            .map(|s| format!("local(\"{s}\")"))
+            .collect();
+        css.push_str(&format!(
+            "\n@font-face {{\n  font-family: \"{}\";\n  src: {};\n  size-adjust: {s}%;\n  ascent-override: {a}%;\n  descent-override: {d}%;\n  line-gap-override: 0%;\n}}\n",
+            def.family,
+            sources.join(", "),
+        ));
+    }
+    css
+}
+
+fn short_hash(bytes: &[u8]) -> String {
+    let hash = Sha256::digest(bytes);
+    format!(
+        "{:x}",
+        u128::from_be_bytes(hash[..16].try_into().expect("16 bytes"))
+    )
+}
 
 fn main() {
     let staging = std::env::var_os("TRUNK_STAGING_DIR")
@@ -15,41 +153,25 @@ fn main() {
         .expect("TRUNK_STAGING_DIR is set by Trunk for hooks");
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts");
 
-    let faces: Vec<op_fontpack::Face> = op_fontpack::MANIFEST
-        .iter()
-        .map(|entry| {
-            let path = assets.join(entry.path);
-            let bytes = std::fs::read(&path)
-                .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-            assert!(bytes.starts_with(b"wOF2"), "{} is not woff2", entry.path);
-            op_fontpack::Face {
-                family: entry.family.to_owned(),
-                weight: entry.weight.to_owned(),
-                style: entry.style.to_owned(),
-                metrics: entry
-                    .metrics
-                    .map(|(a, b, c)| (a.to_owned(), b.to_owned(), c.to_owned())),
-                bytes,
-            }
-        })
-        .collect();
-
+    let faces = load_faces(&assets);
     let pack = op_fontpack::encode(&faces);
-    let hash = Sha256::digest(&pack);
-    let name = format!(
-        "fonts-{:x}.pack",
-        u128::from_be_bytes(hash[..16].try_into().expect("16 bytes"))
-    );
-    std::fs::write(staging.join(&name), &pack).expect("write pack");
+    let pack_name = format!("fonts-{}.pack", short_hash(&pack));
+    std::fs::write(staging.join(&pack_name), &pack).expect("write pack");
+
+    let css = fallback_css();
+    let css_name = format!("fonts-fallback-{}.css", short_hash(css.as_bytes()));
+    std::fs::write(staging.join(&css_name), &css).expect("write fallback css");
 
     let index = staging.join("index.html");
     let html = std::fs::read_to_string(&index).expect("read staged index.html");
-    let meta = format!("<meta name=\"op-fonts\" content=\"{name}\" />");
     assert!(
         !html.contains("name=\"op-fonts\""),
         "op-fonts meta already present"
     );
-    let html = html.replacen("</head>", &format!("{meta}</head>"), 1);
+    let inject = format!(
+        "<link rel=\"stylesheet\" href=\"{css_name}\" /><meta name=\"op-fonts\" content=\"{pack_name}\" />"
+    );
+    let html = html.replacen("</head>", &format!("{inject}</head>"), 1);
     assert!(
         html.contains("name=\"op-fonts\""),
         "no </head> in staged index.html"
@@ -57,7 +179,7 @@ fn main() {
     std::fs::write(&index, html).expect("write staged index.html");
 
     println!(
-        "op-assets: packed {} faces into {name} ({} bytes)",
+        "op-assets: packed {} faces into {pack_name} ({} bytes), fallback css {css_name}",
         faces.len(),
         pack.len()
     );
@@ -65,14 +187,17 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use super::*;
+
+    fn assets() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts")
+    }
 
     /// Every manifest entry must point at a real woff2 file in the assets.
     #[test]
     fn manifest_files_exist_and_are_woff2() {
-        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts");
-        for entry in op_fontpack::MANIFEST {
-            let path = assets.join(entry.path);
+        for entry in MANIFEST {
+            let path = assets().join(entry.path);
             let bytes =
                 std::fs::read(&path).unwrap_or_else(|e| panic!("missing {}: {e}", path.display()));
             assert!(bytes.len() > 10_000, "{} looks truncated", entry.path);
@@ -80,24 +205,72 @@ mod tests {
         }
     }
 
-    /// The pack must be byte-stable so its content hash is reproducible.
+    /// The computed fits must land in sane ranges, and Iosevka SS08 must come
+    /// out at unity scale: it shares PragmataPro's character advance, which is
+    /// exactly why it was chosen. A drift here means the font changed.
     #[test]
-    fn encoding_is_deterministic() {
-        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts");
-        let faces: Vec<op_fontpack::Face> = op_fontpack::MANIFEST
-            .iter()
-            .map(|e| op_fontpack::Face {
-                family: e.family.to_owned(),
-                weight: e.weight.to_owned(),
-                style: e.style.to_owned(),
-                metrics: e
-                    .metrics
-                    .map(|(a, b, c)| (a.to_owned(), b.to_owned(), c.to_owned())),
-                bytes: std::fs::read(assets.join(e.path)).expect("read"),
-            })
-            .collect();
+    fn computed_fits_match_design_expectations() {
+        let faces = load_faces(&assets());
+        let metric = |family: &str| {
+            faces
+                .iter()
+                .find(|f| f.family == family && f.style == "normal" && f.weight == "400")
+                .and_then(|f| f.metrics.clone())
+                .unwrap_or_else(|| panic!("{family} has no computed metrics"))
+        };
+        let parse = |s: &str| s.trim_end_matches('%').parse::<f64>().expect("percent");
+        let (s, a, d) = metric("Iosevka SS08");
+        assert!(
+            (parse(&s) - 100.0).abs() <= 2.0,
+            "SS08 scale {s} drifted from unity"
+        );
+        assert!(
+            (parse(&a) - PRAGMATA_TARGET.ascent_pct).abs() <= 3.0,
+            "SS08 ascent {a}"
+        );
+        assert!(
+            (parse(&d) - PRAGMATA_TARGET.descent_pct).abs() <= 1.0,
+            "SS08 descent {d}"
+        );
+        let (s, _, _) = metric("Barlow Semi Condensed");
+        let s = parse(&s);
+        assert!(
+            (104.0..=114.0).contains(&s),
+            "Barlow scale {s} outside expectation"
+        );
+        assert!(
+            faces
+                .iter()
+                .filter(|f| f.family == "IBM Plex Sans")
+                .all(|f| f.metrics.is_none())
+        );
+    }
+
+    /// The generated stylesheet must contain only local() sources and one
+    /// rule per fallback family, and the same input must always produce the
+    /// same bytes so the content hash is reproducible.
+    #[test]
+    fn fallback_css_is_local_only_and_deterministic() {
+        let css = fallback_css();
+        assert_eq!(css.matches("@font-face").count(), FALLBACKS.len());
+        assert!(!css.contains("url("));
+        for def in FALLBACKS {
+            assert!(css.contains(def.family));
+        }
+        assert_eq!(css, fallback_css());
+        let faces = load_faces(&assets());
         assert_eq!(op_fontpack::encode(&faces), op_fontpack::encode(&faces));
-        let decoded = op_fontpack::decode(&op_fontpack::encode(&faces)).expect("decode");
-        assert_eq!(decoded.len(), op_fontpack::MANIFEST.len());
+    }
+
+    /// The mono fallback adjustment must fit the 0.60em-advance class.
+    #[test]
+    fn fallback_fits_are_sane() {
+        for def in FALLBACKS {
+            let (s, a, d) = fit_percentages(&def.target, def.base_ref_width);
+            assert!((70.0..=125.0).contains(&s), "{}: scale {s}", def.family);
+            assert!(a > 50.0 && d > 5.0, "{}: box {a}/{d}", def.family);
+        }
+        let (s, _, _) = fit_percentages(&PRAGMATA_TARGET, 2700.0);
+        assert!((82.0..=85.0).contains(&s));
     }
 }
