@@ -12,6 +12,7 @@
     <!-- Apply a remembered theme before first paint; the contract with crates/op-site/src/theme.rs is tested. -->
     <script>try{var t=localStorage.getItem("op-theme");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
     <link data-trunk rel="css" href="styles/theme.css" />
+    <link data-trunk rel="copy-file" href="vendor/aframe-1.8.0.min.js" />
     <link data-trunk rel="rust" href="crates/op-site/Cargo.toml" data-wasm-opt="z" />
   </head>
   <body>

@@ -14,6 +14,7 @@ mod input;
 mod key_value;
 mod pagination;
 mod palette_specimen;
+mod scene;
 mod select_field;
 mod site_footer;
 mod site_header;
@@ -58,6 +59,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     breadcrumb::DEFINITION,
     pagination::DEFINITION,
     tooltip::DEFINITION,
+    scene::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

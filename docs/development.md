@@ -100,6 +100,14 @@ profile uses nightly `trim-paths`, and Trunk pins wasm-bindgen and wasm-opt.
 Each CI run prints `sha256sum` of every file in `dist/` in its job summary;
 compare with `find dist -type f | sort | xargs sha256sum` locally.
 
+## Vendored libraries
+
+`vendor/aframe-1.8.0.min.js` is A-Frame 1.8.0, fetched from
+https://aframe.io/releases/1.8.0/aframe.min.js (sha256
+27a49c530c18c0710f5d0b9492934d5ba6670fe492be37a5e5ea890f26a9864f). Trunk
+copies it unhashed into the site root; `op-scene` loads it lazily, only on
+pages that contain the element.
+
 ## Deployment and DNS
 
 Pages is published by the workflow (`build_type: workflow`) with custom domain

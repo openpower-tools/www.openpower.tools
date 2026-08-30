@@ -151,6 +151,12 @@ pub const PAGES: &[Page] = &[
         "Hover and focus annotations for terms.",
         "components/tooltip/index.html"
     ),
+    page!(
+        "components/scene",
+        "Scene",
+        "Embedded A-Frame scenes with Rust-driven behaviour.",
+        "components/scene/index.html"
+    ),
 ];
 
 /// The shared site navigation, used verbatim on generated pages and mirrored
