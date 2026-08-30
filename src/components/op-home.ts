@@ -163,6 +163,15 @@ export class OpHome extends LitElement {
             >github.com/openpower-tools/www.openpower.tools</a
           >
         </p>
+        <p>
+          Code is licensed under the
+          <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0-or-later</a>; content under
+          <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>. Product and
+          organisation names belong to their owners. See
+          <a href="https://github.com/openpower-tools/www.openpower.tools/blob/main/LICENSE.md"
+            >LICENSE.md</a
+          >.
+        </p>
       </footer>
     `;
   }

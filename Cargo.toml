@@ -10,6 +10,7 @@ members = ["wasm"]
 [workspace.package]
 edition = "2024"
 publish = false
+license = "GPL-3.0-or-later"
 repository = "https://github.com/openpower-tools/www.openpower.tools"
 
 # Size-oriented, reproducible release profile for the wasm module. wasm-opt

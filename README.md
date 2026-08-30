@@ -148,6 +148,8 @@ toolchain ports, naming) with a source URL for every claim and a list of open
 questions. `docs/research/stack-verification.md` records the checks behind the
 tooling choices above.
 
-## License
+## Licence
 
-Not chosen yet.
+Code is licensed under GPL-3.0-or-later and content under CC BY-SA 4.0; see
+[LICENSE.md](LICENSE.md) for the split, the contribution terms and the
+trademark note.

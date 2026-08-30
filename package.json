@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Skeleton for www.openpower.tools: community-driven support for OpenPOWER / Talos II firmware and software ports",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
     "node": ">=22.12"
