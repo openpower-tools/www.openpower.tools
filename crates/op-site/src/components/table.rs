@@ -1,7 +1,8 @@
 //! `<op-table>`: a scroll container and skin for a light-DOM `<table>`. The
 //! cell and caption styles live in `styles/theme.css` (shadow CSS cannot
-//! reach inside the slotted table); a `dense` attribute on the element
-//! tightens the cell padding from there too.
+//! reach inside the slotted table). Row rules are opt-in via a `lined`
+//! attribute and a `dense` attribute tightens the cell padding, both applied
+//! from that stylesheet too.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;

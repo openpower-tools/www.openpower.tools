@@ -1,5 +1,7 @@
       <p>A scroll container and skin for a regular light-DOM table. Cells stay ordinary
-      th/td markup; a dense attribute tightens the padding for long reference tables.</p>
+      th/td markup. By default only the header carries a rule - alignment and spacing
+      separate the rows - while a lined attribute restores row rules and a dense
+      attribute tightens the padding for long reference tables.</p>
       <h2>Example</h2>
       <op-table>
         <table>
@@ -13,8 +15,8 @@
           </tbody>
         </table>
       </op-table>
-      <h2>Dense</h2>
-      <op-table dense>
+      <h2>Dense, lined</h2>
+      <op-table dense lined>
         <table>
           <thead><tr><th>Partition</th><th>Size</th></tr></thead>
           <tbody>
@@ -25,6 +27,6 @@
         </table>
       </op-table>
       <h2>Markup</h2>
-      <pre>&lt;op-table dense&gt;
+      <pre>&lt;op-table dense lined&gt;
   &lt;table&gt;...&lt;/table&gt;
 &lt;/op-table&gt;</pre>

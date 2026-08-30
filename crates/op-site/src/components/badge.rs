@@ -25,7 +25,8 @@ impl Badge {
             .get_attribute("variant")
             .filter(|v| VARIANTS.contains(&v.as_str()))
             .unwrap_or_else(|| "neutral".to_owned());
-        // Outline style: the dot carries the variant colour, text stays AA.
+        // The dot and label are the data ink; the faint outline only bounds
+        // the badge's extent in running prose.
         let dot = match variant.as_str() {
             "ok" => "var(--op-status-ok)",
             "warning" => "var(--op-status-warning)",
@@ -39,11 +40,10 @@ impl Badge {
   display: inline-flex;
   align-items: center;
   gap: 0.35em;
-  border: 1px solid var(--op-border-strong);
+  border: 1px solid var(--op-border);
   border-radius: 1em;
   padding: 0.05em 0.7em 0.05em 0.5em;
   font-size: 0.8em;
-  background: var(--op-surface);
   white-space: nowrap;
 }}
 .dot {{

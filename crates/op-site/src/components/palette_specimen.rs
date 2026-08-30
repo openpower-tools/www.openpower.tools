@@ -48,6 +48,11 @@ const TOKENS: &[(&str, &str, Role)] = &[
     ("--op-bg", "page background", Role::Backdrop),
     ("--op-surface", "controls and panels", Role::Backdrop),
     ("--op-code-bg", "code background", Role::Backdrop),
+    (
+        "--op-raised",
+        "raised background (callouts)",
+        Role::Backdrop,
+    ),
     ("--op-text", "body text", Role::Text),
     ("--op-muted", "secondary text", Role::Text),
     ("--op-link", "links", Role::Text),

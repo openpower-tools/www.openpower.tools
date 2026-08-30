@@ -16,8 +16,11 @@
  *   --op-text, --op-muted, --op-link, --op-link-hover  text: 4.5:1 on bg/surface
  *   --op-accent, --op-focus, --op-border-strong        UI: 3:1 on bg/surface
  *     (dark: orange is the interaction colour, gold the link colour)
- *   --op-status-{neutral,info,ok,warning,danger}       UI: 3:1 on bg/surface
- *     (one hue per meaning in both themes: callout stripes, badge dots)
+ *   --op-raised                                        lifted background (callout fills);
+ *     text, links and status labels keep 4.5:1 on it
+ *   --op-status-{info,ok,warning,danger}               text: 4.5:1 on bg/raised; UI: 3:1 on surface
+ *     (one hue per meaning in both themes: callout labels and stripes,
+ *     badge and timeline dots; neutral is UI-only at 3:1)
  *   --op-highlight                                     decoration only (title rule)
  *   --op-border                                        decoration only
  *
@@ -50,6 +53,8 @@
   --op-status-ok: #97C264;
   --op-status-warning: #E0A458;
   --op-status-danger: #E4756A;
+
+  --op-raised: #131A26;
 }
 
 /* No explicit choice: follow the system. */
@@ -72,9 +77,11 @@
 
   --op-status-neutral: #8B7E6F;
   --op-status-info: #2F6DA8;
-  --op-status-ok: #4A7A18;
+  --op-status-ok: #447114;
   --op-status-warning: #8A6207;
   --op-status-danger: #B03A30;
+
+  --op-raised: #FFFFFF;
   }
 }
 
@@ -97,9 +104,11 @@
 
   --op-status-neutral: #8B7E6F;
   --op-status-info: #2F6DA8;
-  --op-status-ok: #4A7A18;
+  --op-status-ok: #447114;
   --op-status-warning: #8A6207;
   --op-status-danger: #B03A30;
+
+  --op-raised: #FFFFFF;
 }
 
 /* Font tokens: candidates are compared on /specimen/; the site default is
@@ -191,14 +200,19 @@ op-key-value dd {
 op-table th,
 op-table td {
   padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--op-border);
   text-align: left;
 }
 
 op-table th {
   color: var(--op-muted);
   font-weight: 600;
-  border-bottom-color: var(--op-border-strong);
+  border-bottom: 1px solid var(--op-border-strong);
+}
+
+/* Row rules are opt-in: alignment and spacing carry an airy table on their
+   own; lined earns its ink on long or dense reference tables. */
+op-table[lined] td {
+  border-bottom: 1px solid var(--op-border);
 }
 
 op-table caption {

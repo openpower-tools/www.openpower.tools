@@ -42,17 +42,29 @@ const REQUIRED_PAIRS: &[(&str, &str, f64)] = &[
     ("--op-focus", "--op-surface", 3.0),
     ("--op-border-strong", "--op-bg", 3.0),
     ("--op-border-strong", "--op-surface", 3.0),
-    // status colours mark callout stripes and badge dots: non-text contrast
+    // status colours label callouts as text on the page background (4.5:1)
+    // and mark stripes and dots against both backgrounds (3:1 non-text)
     ("--op-status-neutral", "--op-bg", 3.0),
     ("--op-status-neutral", "--op-surface", 3.0),
-    ("--op-status-info", "--op-bg", 3.0),
+    ("--op-status-info", "--op-bg", 4.5),
     ("--op-status-info", "--op-surface", 3.0),
-    ("--op-status-ok", "--op-bg", 3.0),
+    ("--op-status-ok", "--op-bg", 4.5),
     ("--op-status-ok", "--op-surface", 3.0),
-    ("--op-status-warning", "--op-bg", 3.0),
+    ("--op-status-warning", "--op-bg", 4.5),
     ("--op-status-warning", "--op-surface", 3.0),
-    ("--op-status-danger", "--op-bg", 3.0),
+    ("--op-status-danger", "--op-bg", 4.5),
     ("--op-status-danger", "--op-surface", 3.0),
+    // callouts fill with the raised background; their labels, text and any
+    // links or dots inside must hold their grade on it
+    ("--op-text", "--op-raised", 4.5),
+    ("--op-muted", "--op-raised", 4.5),
+    ("--op-link", "--op-raised", 4.5),
+    ("--op-link-hover", "--op-raised", 4.5),
+    ("--op-status-info", "--op-raised", 4.5),
+    ("--op-status-ok", "--op-raised", 4.5),
+    ("--op-status-warning", "--op-raised", 4.5),
+    ("--op-status-danger", "--op-raised", 4.5),
+    ("--op-status-neutral", "--op-raised", 3.0),
 ];
 
 fn contrast(a: &str, b: &str) -> f64 {
