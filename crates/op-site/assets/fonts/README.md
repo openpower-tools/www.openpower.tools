@@ -1,8 +1,10 @@
-# Embedded fonts
+# Webfonts
 
-Every webfont is compiled into the wasm binary and registered at runtime with
-the CSS Font Loading API (`crates/op-site/src/fonts.rs`); nothing here is
-served as a fetchable URL. All faces below are under the SIL Open Font License
+These files are packed at build time into a single content-hashed container
+(`crates/op-assets`, listed in `crates/op-fontpack`'s manifest) that the site
+fetches progressively and registers through the CSS Font Loading API
+(`crates/op-site/src/fonts.rs`); nothing here is served as an individual
+fetchable font URL. All faces below are under the SIL Open Font License
 1.1, with each licence file alongside the fonts.
 
 - plex-sans/ (@ibm/plex-sans 1.1.0): woff2 taken unmodified from the

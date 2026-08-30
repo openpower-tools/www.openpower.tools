@@ -2,7 +2,6 @@
 //! from these tags; nothing here is instantiated from Rust.
 
 mod build_status;
-mod font_diff;
 mod palette_specimen;
 mod site_footer;
 mod site_header;
@@ -20,7 +19,6 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     build_status::DEFINITION,
     site_footer::DEFINITION,
     palette_specimen::DEFINITION,
-    font_diff::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

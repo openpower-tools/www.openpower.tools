@@ -48,9 +48,14 @@ docs/research/                 research notes with sources
 
 ## Fonts
 
-Every webfont is embedded in the wasm binary and registered at runtime with
-the CSS Font Loading API (`crates/op-site/src/fonts.rs`); there are no
-`@font-face` rules and no fetchable font URLs. Only the chosen faces are embedded, all SIL
+The wasm binary carries no font bytes: a Trunk post_build hook
+(`crates/op-assets`) packs the woff2 files into a single content-hashed
+container advertised by `<meta name="op-fonts">`, and the wasm fetches it
+after first paint through the Cache Storage API, decodes it
+(`crates/op-fontpack`) and registers every face with the CSS Font Loading API
+(`crates/op-site/src/fonts.rs`). Until it arrives, metric-fitted `local()`
+fallback faces in `styles/theme.css` keep layout stable, so the swap changes
+letterforms without movement. There are no fetchable font URLs. Only the chosen faces are embedded, all SIL
 OFL (IBM Plex Sans, Iosevka SS08, Barlow Semi Condensed; provenance and
 licences in `crates/op-site/assets/fonts/README.md`), and every font token
 ends in a curated system tail for browsers where that path never runs. The licensed commercial faces

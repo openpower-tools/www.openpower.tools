@@ -8,12 +8,15 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+op-fontpack.workspace = true
 op-webc.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
+  "Cache",
+  "CacheStorage",
   "CssStyleDeclaration",
   "Document",
   "Element",
@@ -26,9 +29,11 @@ web-sys = { workspace = true, features = [
   "Location",
   "Node",
   "NodeList",
+  "Response",
   "ShadowRoot",
   "ShadowRootInit",
   "ShadowRootMode",
   "Storage",
   "Window",
+  "console",
 ] }

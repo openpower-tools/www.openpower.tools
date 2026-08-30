@@ -20,36 +20,6 @@
     <main>
       <p>Design preview for <a href="/">www.openpower.tools</a>. The page follows the theme toggle; the two columns below are pinned to their own theme.</p>
       <op-palette-specimen></op-palette-specimen>
-      <h2>Differential renderings</h2>
-      <p>
-        The same text in the commercial face and its public stand-in: solo lines (no fallback, so
-        a missing font shows the browser default), then the stand-in in accent over the original.
-        Drift and letterform differences appear as fringes.
-      </p>
-      <op-font-diff
-        label-a="Sys 2.0 (local only)"
-        family-a="Sys 2.0"
-        label-b="Barlow Semi Condensed, fitted (embedded stand-in)"
-        family-b="Barlow Semi Condensed"
-        font-size="1.7rem"
-        sample="OpenPOWER firmware, ports and tools — AaBbGgKkQqRr 0123456789 Il1 O0"
-      ></op-font-diff>
-      <op-font-diff
-        label-a="PragmataPro Liga (local only)"
-        family-a="PragmataPro Liga"
-        label-b="Iosevka SS08, fitted (embedded stand-in)"
-        family-b="Iosevka SS08"
-        font-size="1.1rem"
-        sample="pflash -E -p /tmp/talos.pnor && echo ok  # => != === -> 0xDEADBEEF fi ffi Il1 O0 {}[]()"
-      ></op-font-diff>
-      <op-font-diff
-        label-a="IBM Plex Sans (embedded)"
-        family-a="IBM Plex Sans"
-        label-b="system-ui (no-wasm fallback)"
-        family-b="system-ui"
-        font-size="1.25rem"
-        sample="Owner-controlled POWER9 systems boot from fully inspectable firmware. 0123456789"
-      ></op-font-diff>
     </main>
     <op-site-footer></op-site-footer>
     <noscript>

@@ -17,11 +17,18 @@ use crate::colour::{self, Rgb};
 pub const DEFINITION: ElementDefinition = ElementDefinition {
     tag: "op-palette-specimen",
     observed_attributes: &[],
-    create: |host| Box::new(Specimen { host }),
+    create: |host| {
+        Box::new(Specimen {
+            host,
+            on_fonts_installed: None,
+        })
+    },
 };
 
 struct Specimen {
     host: HtmlElement,
+    /// Kept alive for as long as the element exists.
+    on_fonts_installed: Option<wasm_bindgen::prelude::Closure<dyn FnMut(web_sys::Event)>>,
 }
 
 /// How a token's contrast is reported.
@@ -238,6 +245,21 @@ fn render(host: &HtmlElement) {
 
 impl CustomElement for Specimen {
     fn connected(&mut self) {
+        // Attach the listener before the first render/probe so a pack that
+        // installs in between cannot be missed.
+        if self.on_fonts_installed.is_none()
+            && let Some(document) = web_sys::window().and_then(|w| w.document())
+        {
+            let closure =
+                wasm_bindgen::prelude::Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
+                    annotate_face_status()
+                });
+            let _ = document.add_event_listener_with_callback(
+                "op-fonts-installed",
+                closure.as_ref().unchecked_ref(),
+            );
+            self.on_fonts_installed = Some(closure);
+        }
         render(&self.host);
     }
 }
@@ -276,10 +298,10 @@ const TYPE_OPTIONS: &[TypeOption] = &[
     TypeOption {
         id: "no-wasm",
         label: "No WebAssembly: the curated system tail",
-        note: "What renders when the Font Loading API path never runs.",
-        heading: "'Roboto Condensed', 'Arial Narrow', 'Liberation Sans Narrow', 'DejaVu Sans Condensed', 'Helvetica Neue', system-ui, sans-serif",
-        body: "system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
-        mono: "ui-monospace, 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace",
+        note: "Metric-fitted local() faces: what renders before the pack arrives, and wherever it never can.",
+        heading: "'op-heading-fallback', system-ui, sans-serif",
+        body: "'op-body-fallback', system-ui, sans-serif",
+        mono: "'op-mono-fallback', ui-monospace, monospace",
         check: &[],
     },
 ];
@@ -381,20 +403,26 @@ fn render_typography(host: &HtmlElement) {
 mod tests {
     use super::*;
 
-    /// Fonts are embedded in the wasm and registered at runtime; the
-    /// stylesheet must not reference font files or declare @font-face.
+    /// Fonts arrive only through the pack; the stylesheet may declare
+    /// metric-fitted local() fallback faces but never a fetchable source.
     #[test]
-    fn stylesheet_has_no_font_urls_or_font_face_rules() {
+    fn stylesheet_declares_no_fetchable_font_sources() {
         let css = include_str!("../../../../styles/theme.css");
-        assert!(
-            !css.contains("@font-face"),
-            "unexpected @font-face in theme.css"
-        );
-        assert!(!css.contains("/fonts/"), "unexpected font URL in theme.css");
+        assert!(!css.contains("url("), "unexpected url() in theme.css");
         assert!(
             !css.contains(".woff"),
             "unexpected font file reference in theme.css"
         );
+        let blocks: Vec<&str> = css.split("@font-face").skip(1).collect();
+        assert!(!blocks.is_empty(), "expected local() fallback faces");
+        for block in &blocks {
+            let block = &block[..block.find('}').expect("closing brace")];
+            assert!(block.contains("local("), "font-face without local() source");
+            assert!(
+                block.contains("size-adjust"),
+                "fallback face without metric fit"
+            );
+        }
     }
 
     #[test]

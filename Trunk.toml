@@ -15,3 +15,10 @@ wasm_opt = "version_132"
 [serve]
 addresses = ["127.0.0.1"]
 port = 8080
+
+# Packs the webfonts into a content-hashed blob in the staging directory and
+# injects its name as <meta name="op-fonts"> (see crates/op-assets).
+[[hooks]]
+stage = "post_build"
+command = "cargo"
+command_arguments = ["run", "--quiet", "--release", "-p", "op-assets"]

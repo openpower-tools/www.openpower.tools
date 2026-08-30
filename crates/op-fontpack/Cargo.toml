@@ -1,0 +1,8 @@
+[package]
+name = "op-fontpack"
+version = "0.1.0"
+description = "Container format and manifest for the site's progressively loaded font pack"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "op-assets"
+version = "0.1.0"
+description = "Trunk post_build hook: packs the webfonts and injects the pack URL"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+op-fontpack = { path = "../op-fontpack" }
+sha2 = "0.10"
