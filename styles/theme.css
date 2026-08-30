@@ -18,6 +18,8 @@
  *     (dark: orange is the interaction colour, gold the link colour)
  *   --op-raised                                        lifted background (callout fills);
  *     text, links and status labels keep 4.5:1 on it
+ *   --op-pole-base                                     decoration only (barberpole mix
+ *     target: black in dark, white in light)
  *   --op-status-{info,ok,warning,danger}               text: 4.5:1 on bg/raised; UI: 3:1 on surface
  *     (one hue per meaning in both themes: callout labels and stripes,
  *     badge and timeline dots; neutral is UI-only at 3:1)
@@ -55,6 +57,7 @@
   --op-status-danger: #E4756A;
 
   --op-raised: #131A26;
+  --op-pole-base: #000000;
 }
 
 /* No explicit choice: follow the system. */
@@ -82,6 +85,7 @@
   --op-status-danger: #B03A30;
 
   --op-raised: #FFFFFF;
+  --op-pole-base: #FFFFFF;
   }
 }
 
@@ -109,6 +113,7 @@
   --op-status-danger: #B03A30;
 
   --op-raised: #FFFFFF;
+  --op-pole-base: #FFFFFF;
 }
 
 /* Font tokens: candidates are compared on /specimen/; the site default is

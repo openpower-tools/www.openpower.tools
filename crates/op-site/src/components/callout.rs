@@ -13,8 +13,9 @@
 //!
 //! Every variant anchors on a colour stripe at the left edge. Notes and
 //! tips keep the quiet frame with the dimmed watermark of the icon beside
-//! the stripe; warnings and danger post their icon on each side, over a dark
-//! barberpole mixed from their own status token (amber, red) behind a
+//! the stripe; warnings and danger post their icon on each side, over a
+//! barberpole mixed from their own status token toward the theme's pole
+//! base - black in the dark theme, white in the light - behind a
 //! translucent scrim: a faint texture under warning's scrim, visible
 //! bands above and below danger's.
 
@@ -88,8 +89,8 @@ impl Callout {
   border-left: 0.25rem solid {stripe};
   background: repeating-linear-gradient(
     45deg,
-    color-mix(in srgb, {stripe} 45%, #000) 0 0.75rem,
-    color-mix(in srgb, {stripe} 22%, #000) 0.75rem 1.5rem
+    color-mix(in srgb, {stripe} 45%, var(--op-pole-base)) 0 0.75rem,
+    color-mix(in srgb, {stripe} 22%, var(--op-pole-base)) 0.75rem 1.5rem
   );
   padding: {frame_padding};
 }}

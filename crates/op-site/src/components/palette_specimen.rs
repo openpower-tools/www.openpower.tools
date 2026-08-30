@@ -53,6 +53,7 @@ const TOKENS: &[(&str, &str, Role)] = &[
         "raised background (callouts)",
         Role::Backdrop,
     ),
+    ("--op-pole-base", "barberpole mix base", Role::Decoration),
     ("--op-text", "body text", Role::Text),
     ("--op-muted", "secondary text", Role::Text),
     ("--op-link", "links", Role::Text),
