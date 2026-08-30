@@ -25,7 +25,15 @@ use sha2::{Digest, Sha256};
 /// cmap and hmtx tables (kerning is not applied; these faces do not kern the
 /// reference string materially, and the same convention was used to measure
 /// the targets).
-fn ref_width_per_100em(font_bytes: &[u8]) -> f64 {
+/// Width of [`REF_STRING`] plus x-height and cap height, all at a 100px em,
+/// measured from the font's own tables.
+struct Measured {
+    ref_width: f64,
+    x_height: Option<f64>,
+    cap_height: Option<f64>,
+}
+
+fn measure(font_bytes: &[u8]) -> Measured {
     let face = ttf_parser::Face::parse(font_bytes, 0).expect("parse font");
     let upem = f64::from(face.units_per_em());
     let mut units = 0.0;
@@ -38,7 +46,11 @@ fn ref_width_per_100em(font_bytes: &[u8]) -> f64 {
             .unwrap_or_else(|| panic!("no advance for {c:?}"));
         units += f64::from(advance);
     }
-    units / upem * 100.0
+    Measured {
+        ref_width: units / upem * 100.0,
+        x_height: face.x_height().map(|v| f64::from(v) / upem * 100.0),
+        cap_height: face.capital_height().map(|v| f64::from(v) / upem * 100.0),
+    }
 }
 
 fn round1(v: f64) -> f64 {
@@ -56,8 +68,9 @@ fn fit_percentages(target: &FitTarget, measured: f64) -> (f64, f64, f64) {
     )
 }
 
-fn load_faces(assets: &Path) -> Vec<Face> {
-    MANIFEST
+fn load_faces(assets: &Path) -> (Vec<Face>, Option<RenderedStandin>) {
+    let mut heading_standin = None;
+    let faces = MANIFEST
         .iter()
         .map(|entry| {
             let path = assets.join(entry.path);
@@ -67,7 +80,18 @@ fn load_faces(assets: &Path) -> Vec<Face> {
             let metrics = entry.fit.map(|target| {
                 let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
                     .unwrap_or_else(|e| panic!("cannot decode {}: {e:?}", entry.path));
-                let (s, a, d) = fit_percentages(&target, ref_width_per_100em(&ttf));
+                let measured = measure(&ttf);
+                let (s, a, d) = fit_percentages(&target, measured.ref_width);
+                if entry.family == "Barlow Semi Condensed"
+                    && entry.weight == "400"
+                    && entry.style == "normal"
+                {
+                    let scale = target.ref_width / measured.ref_width;
+                    heading_standin = Some(RenderedStandin {
+                        x_height: measured.x_height.map(|v| v * scale),
+                        cap_height: measured.cap_height.map(|v| v * scale),
+                    });
+                }
                 (format!("{s}%"), format!("{a}%"), format!("{d}%"))
             });
             Face {
@@ -78,7 +102,8 @@ fn load_faces(assets: &Path) -> Vec<Face> {
                 bytes: woff2,
             }
         })
-        .collect()
+        .collect();
+    (faces, heading_standin)
 }
 
 /// The frozen reference widths of the system font classes the fallbacks bind
@@ -90,6 +115,11 @@ struct FallbackDef {
     family: &'static str,
     sources: &'static [&'static str],
     base_ref_width: f64,
+    /// x-height and cap height of the base class at a 100px em, measured from
+    /// the Liberation metric clones. Present only where the base's aspect
+    /// differs enough from its replacement that pure width fitting looks
+    /// oversized, and an optical compromise is wanted.
+    base_optics: Option<(f64, f64)>,
     target: FitTarget,
 }
 
@@ -98,12 +128,14 @@ const FALLBACKS: &[FallbackDef] = &[
         family: "op-heading-fallback",
         sources: &["Arial Narrow", "Liberation Sans Narrow", "Roboto Condensed"],
         base_ref_width: 1887.0,
+        base_optics: Some((53.2, 69.5)),
         target: SYS_TARGET,
     },
     FallbackDef {
         family: "op-body-fallback",
         sources: &["Arial", "Liberation Sans", "Helvetica Neue", "Roboto"],
         base_ref_width: 2301.0,
+        base_optics: None,
         target: PLEX_SANS_TARGET,
     },
     FallbackDef {
@@ -115,16 +147,53 @@ const FALLBACKS: &[FallbackDef] = &[
             "Courier New",
         ],
         base_ref_width: 2700.0,
+        base_optics: None,
         target: PRAGMATA_TARGET,
     },
 ];
 
-fn fallback_css() -> String {
+/// Weights of the fit axes when a fallback gets the optical compromise:
+/// cap height carries the size feel of headings, x-height the bulk of
+/// lowercase, and width the layout stability at swap time. A pure width fit
+/// made the Arial-Narrow class look visibly oversized next to Barlow.
+const OPTICAL_WEIGHTS: (f64, f64, f64) = (0.5, 0.3, 0.2); // (cap, x-height, width)
+
+/// The rendered optics of the stand-in the fallback swaps into: its measured
+/// table values scaled by its own computed size adjustment.
+struct RenderedStandin {
+    x_height: Option<f64>,
+    cap_height: Option<f64>,
+}
+
+fn fallback_scale(def: &FallbackDef, standin: Option<&RenderedStandin>) -> f64 {
+    let width_ratio = def.target.ref_width / def.base_ref_width;
+    match (def.base_optics, standin) {
+        (Some((base_xh, base_cap)), Some(rendered)) => {
+            let (w_cap, w_xh, w_width) = OPTICAL_WEIGHTS;
+            match (rendered.cap_height, rendered.x_height) {
+                (Some(cap), Some(xh)) => {
+                    let cap_ratio = cap / base_cap;
+                    let xh_ratio = xh / base_xh;
+                    (cap_ratio.ln() * w_cap + xh_ratio.ln() * w_xh + width_ratio.ln() * w_width)
+                        .exp()
+                }
+                _ => width_ratio,
+            }
+        }
+        _ => width_ratio,
+    }
+}
+
+fn fallback_css(heading_standin: Option<&RenderedStandin>) -> String {
     let mut css = String::from(
-        "/* Generated by op-assets: metric-fitted local() fallback faces. The\n   overrides are target boxes divided by the size adjustment, because\n   browsers scale override metrics by size-adjust too. Do not edit. */\n",
+        "/* Generated by op-assets: metric-fitted local() fallback faces. The\n   overrides are target boxes divided by the size adjustment, because\n   browsers scale override metrics by size-adjust too. The heading\n   fallback trades some width parity for cap and x-height parity with\n   the rendered stand-in, because the Arial-Narrow class is optically\n   much taller per unit of width. Do not edit. */\n",
     );
     for def in FALLBACKS {
-        let (s, a, d) = fit_percentages(&def.target, def.base_ref_width);
+        let standin = def.base_optics.and(heading_standin);
+        let scale = fallback_scale(def, standin);
+        let s = round1(scale * 100.0);
+        let a = round1(def.target.ascent_pct / scale);
+        let d = round1(def.target.descent_pct / scale);
         let sources: Vec<String> = def
             .sources
             .iter()
@@ -153,12 +222,12 @@ fn main() {
         .expect("TRUNK_STAGING_DIR is set by Trunk for hooks");
     let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts");
 
-    let faces = load_faces(&assets);
+    let (faces, heading_standin) = load_faces(&assets);
     let pack = op_fontpack::encode(&faces);
     let pack_name = format!("fonts-{}.pack", short_hash(&pack));
     std::fs::write(staging.join(&pack_name), &pack).expect("write pack");
 
-    let css = fallback_css();
+    let css = fallback_css(heading_standin.as_ref());
     let css_name = format!("fonts-fallback-{}.css", short_hash(css.as_bytes()));
     std::fs::write(staging.join(&css_name), &css).expect("write fallback css");
 
@@ -210,7 +279,7 @@ mod tests {
     /// exactly why it was chosen. A drift here means the font changed.
     #[test]
     fn computed_fits_match_design_expectations() {
-        let faces = load_faces(&assets());
+        let (faces, _) = load_faces(&assets());
         let metric = |family: &str| {
             faces
                 .iter()
@@ -251,15 +320,43 @@ mod tests {
     /// same bytes so the content hash is reproducible.
     #[test]
     fn fallback_css_is_local_only_and_deterministic() {
-        let css = fallback_css();
+        let (faces, standin) = load_faces(&assets());
+        let css = fallback_css(standin.as_ref());
         assert_eq!(css.matches("@font-face").count(), FALLBACKS.len());
         assert!(!css.contains("url("));
         for def in FALLBACKS {
             assert!(css.contains(def.family));
         }
-        assert_eq!(css, fallback_css());
-        let faces = load_faces(&assets());
+        assert_eq!(css, fallback_css(standin.as_ref()));
         assert_eq!(op_fontpack::encode(&faces), op_fontpack::encode(&faces));
+    }
+
+    /// The heading fallback must compromise towards optical parity: smaller
+    /// than the pure width fit, but bounded so the swap reflow stays modest.
+    #[test]
+    fn heading_fallback_uses_the_optical_compromise() {
+        let (_, standin) = load_faces(&assets());
+        let standin = standin.expect("Barlow provides the rendered stand-in optics");
+        assert!(
+            standin.x_height.is_some() && standin.cap_height.is_some(),
+            "Barlow tables lack optics"
+        );
+        let heading = &FALLBACKS[0];
+        assert!(heading.base_optics.is_some());
+        let width_fit = heading.target.ref_width / heading.base_ref_width;
+        let optical = fallback_scale(heading, Some(&standin));
+        assert!(
+            optical < width_fit,
+            "optical {optical} not below width fit {width_fit}"
+        );
+        assert!(
+            optical > width_fit - 0.09,
+            "optical {optical} too far from width fit {width_fit}"
+        );
+        assert!(
+            (0.98..=1.10).contains(&optical),
+            "optical scale {optical} implausible"
+        );
     }
 
     /// The mono fallback adjustment must fit the 0.60em-advance class.
