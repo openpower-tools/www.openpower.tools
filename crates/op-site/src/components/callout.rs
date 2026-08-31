@@ -11,9 +11,8 @@
 //! matching ISO colour families (amber, red, blue, green) but use the
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
-//! Every variant anchors on a colour stripe at the left edge. Notes and
-//! tips keep the quiet frame with the dimmed watermark of the icon beside
-//! the stripe; warnings and danger post their icon on each side, over a
+//! Every variant anchors on a colour stripe at the left edge and
+//! watermarks its dimmed icon on the right. Warnings and danger add a
 //! barberpole mixed from their own status token toward the theme's pole
 //! base - black in the dark theme, white in the light - behind a
 //! translucent scrim: a faint texture under warning's scrim, visible
@@ -62,17 +61,10 @@ impl Callout {
             _ => "var(--op-status-info)",
         };
         let icon = iso::glyph(&variant);
-        let glyph = |side: &str| {
-            format!(
-                "<svg class=\"glyph {side}\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>"
-            )
-        };
-        // Advisory icons watermark the left beside the stripe; warning and
-        // danger post one on each side.
-        let icons_markup = match variant.as_str() {
-            "warning" | "danger" => format!("{}{}", glyph("left"), glyph("right")),
-            _ => glyph("left"),
-        };
+        // Every variant watermarks its icon on the right; the left edge
+        // belongs to the stripe alone.
+        let icons_markup =
+            format!("<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>");
         let severe = matches!(variant.as_str(), "warning" | "danger");
         let (variant_css, scrim_open, scrim_close) = if severe {
             // Warning's pole hides under the full-bleed scrim (a faint
@@ -98,7 +90,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: color-mix(in srgb, var(--op-raised) 90%, transparent);
-  padding: 0.4rem 3.1rem 0.4rem 3.1rem;
+  padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
                 ),
                 "<div class=\"scrim\">",
@@ -112,7 +104,7 @@ impl Callout {
   z-index: 0;
   background: var(--op-raised);
   border-left: 0.25rem solid {stripe};
-  padding: 0.4rem 1rem 0.4rem 3.1rem;
+  padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
                 ),
                 "",
@@ -127,6 +119,7 @@ impl Callout {
   position: absolute;
   z-index: -1;
   top: 50%;
+  right: 0.75rem;
   transform: translateY(-50%);
   width: 2rem;
   height: 2rem;
@@ -137,8 +130,6 @@ impl Callout {
   stroke-linecap: round;
   stroke-linejoin: round;
 }}
-.glyph.left {{ left: 0.75rem; }}
-.glyph.right {{ right: 0.75rem; }}
 .heading {{ font-weight: 700; margin: 0.15rem 0 0.25rem; }}
 .variant {{
   margin: 0 0 0.1rem;
