@@ -11,7 +11,8 @@
 //! matching ISO colour families (amber, red, blue, green) but use the
 //! theme's contrast-checked status tokens instead of raw signal colours.
 //!
-//! Every variant anchors on a colour stripe at the left edge and
+//! Every variant anchors on a hairline colour stripe at the left edge
+//! (max(0.025rem, 1px), so it never vanishes on low-density screens) and
 //! watermarks its dimmed icon on the right. Warnings and danger add a
 //! barberpole mixed from their own status token toward the theme's pole
 //! base - black in the dark theme, white in the light - behind a
@@ -78,7 +79,7 @@ impl Callout {
             (
                 format!(
                     ".frame {{
-  border-left: 0.25rem solid {stripe};
+  border-left: max(0.025rem, 1px) solid {stripe};
   background: repeating-linear-gradient(
     45deg,
     color-mix(in srgb, {stripe} 45%, var(--op-pole-base)) 0 0.75rem,
@@ -103,7 +104,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: var(--op-raised);
-  border-left: 0.25rem solid {stripe};
+  border-left: max(0.025rem, 1px) solid {stripe};
   padding: 0.4rem 3.1rem 0.4rem 1rem;
 }}"
                 ),
