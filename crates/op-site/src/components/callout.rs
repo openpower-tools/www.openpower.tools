@@ -1,9 +1,11 @@
 //! `<op-callout variant="note|tip|warning|danger" heading="...">`: a
 //! highlighted block for notes, tips and warnings. Content is light-DOM.
 //!
-//! Severity is triple-coded - the variant word set in the severity colour
-//! where a heading would sit, an icon and a colour - so meaning never rests
-//! on colour alone (WCAG 1.4.1). The icon shapes follow the ISO 3864 shape
+//! Severity is signalled by the heading, set in small caps in the
+//! severity colour, with the icon and the frame reinforcing it. There is no variant label - a
+//! callout without a heading shows no label at all - so the author's
+//! wording must say what the colour says (WCAG 1.4.1: shape and words,
+//! never colour alone). The icon shapes follow the ISO 3864 shape
 //! grammar as registered in ISO 7010 (see `components::iso`): an equilateral
 //! triangle for hazard warnings (W001), a circle with a diagonal bar for
 //! prohibition-grade danger (P001), a circled i for information, and the
@@ -49,10 +51,10 @@ impl Callout {
             .as_deref()
             .map(|h| format!("<p class=\"heading\">{}</p>", escape(h)))
             .unwrap_or_default();
-        // The stripe, the label and the icon carry the variant colour. The
-        // label sits where a heading would, as text (4.5:1 on the page and
-        // raised backgrounds, enforced by palette.rs); the icon is decorative
-        // (aria-hidden) because the label word is always visible. The severe
+        // The stripe, the heading and the icon carry the variant colour.
+        // The heading is text (4.5:1 on the page and raised backgrounds,
+        // enforced by palette.rs); the icon is decorative (aria-hidden), so
+        // the author's wording must carry the severity in words. The severe
         // scrim is 90% of the raised background, so the tested raised pairs
         // hold under it within their margins.
         let stripe = match variant.as_str() {
@@ -131,17 +133,15 @@ impl Callout {
   stroke-linecap: round;
   stroke-linejoin: round;
 }}
-.heading {{ font-weight: 700; margin: 0.15rem 0 0.25rem; }}
-.variant {{
-  margin: 0 0 0.1rem;
-  font-size: 0.75rem;
+.heading {{
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  margin: 0 0 0.25rem;
   color: {stripe};
+  font-variant-caps: small-caps;
+  letter-spacing: 0.03em;
 }}
 </style>
-<div class=\"frame\">{scrim_open}{icons_markup}<p class=\"variant\">{variant}</p>{heading_markup}<slot></slot>{scrim_close}</div>"
+<div class=\"frame\">{scrim_open}{icons_markup}{heading_markup}<slot></slot>{scrim_close}</div>"
         ));
     }
 }
