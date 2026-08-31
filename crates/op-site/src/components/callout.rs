@@ -68,6 +68,8 @@ impl Callout {
         // belongs to the stripe alone.
         let icons_markup =
             format!("<svg class=\"glyph\" viewBox=\"0 0 24 24\" aria-hidden=\"true\">{icon}</svg>");
+        // Right padding = icon (2rem) + icon inset (0.75rem) + half an icon
+        // of clearance (1rem) = 3.75rem: text never crowds the watermark.
         let severe = matches!(variant.as_str(), "warning" | "danger");
         let (variant_css, scrim_open, scrim_close) = if severe {
             // Warning's pole hides under the full-bleed scrim (a faint
@@ -93,7 +95,7 @@ impl Callout {
   position: relative;
   z-index: 0;
   background: color-mix(in srgb, var(--op-raised) 90%, transparent);
-  padding: 0.4rem 3.1rem 0.4rem 1rem;
+  padding: 0.4rem 3.75rem 0.4rem 1rem;
 }}"
                 ),
                 "<div class=\"scrim\">",
@@ -107,7 +109,7 @@ impl Callout {
   z-index: 0;
   background: var(--op-raised);
   border-left: max(0.025rem, 1px) solid {stripe};
-  padding: 0.4rem 3.1rem 0.4rem 1rem;
+  padding: 0.4rem 3.75rem 0.4rem 1rem;
 }}"
                 ),
                 "",
