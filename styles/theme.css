@@ -587,6 +587,16 @@ op-tree summary::marker {
   color: var(--op-muted);
 }
 
+/* The component gallery on /components/: cards of live examples, two-up
+   where the column allows. */
+
+.op-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 0 1rem;
+  align-items: start;
+}
+
 /* The A-Frame scene owns its light-DOM subtree (see op-site scene.rs). */
 op-scene {
   display: block;
