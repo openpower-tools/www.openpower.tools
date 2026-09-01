@@ -165,6 +165,20 @@ Native:
   manifest, never treated as pressure, never capped; expect the first
   cold-node membind allocation to evict ARC and run long — the changepoint
   rule absorbs it; do not misread it as an anomaly.
+- Swap disabled for the campaign (swapoff -a in setup with state saved,
+  swapon -a in restore; preflight asserts SwapTotal == 0) so tmpfs model
+  pages are unevictable. Staged-copy placement is attested by a mapper
+  running UNDER the copy's own policy at staging, at run start and before
+  every round, with automatic re-staging on drift (node copies >= 99%
+  on-node; interleaved copies 48-52% node 0); no unbound process may touch
+  staged pages. The node-8 ARC balloon (a strict membind=8 allocation at
+  run start and before interleaved-cell invocations) is retained as the
+  lever that makes the ARC yield node-8 memory, and is a pressure event
+  that is safe only with swap off [AMENDED 2026-09-02, pilot-informed,
+  pre-campaign, experimentalist sign-off: atlas carries a 128 GiB
+  swapfile; under balloon pressure the kernel evicted staged tmpfs pages
+  to swap and unbound touches re-faulted them onto the wrong node,
+  scrambling every N8b/AX top-up invocation].
 - llama-bench: -o json (raw samples_ns kept), --delay 3, warmup on
   (llama-bench's untimed warmup makes native reps steady-state by tool
   construction — stated for symmetry with the browser evidence rule),
