@@ -321,6 +321,7 @@ class Watcher(threading.Thread):
 
     def run(self):
         t0 = time.time()
+        ticks = 0
         while not self.stop_flag:
             now = time.time()
             try:
@@ -340,13 +341,18 @@ class Watcher(threading.Thread):
                     and max(self.rss_hist[-3:]) - min(self.rss_hist[-3:]) < 2048):
                 self.snapshot("a")
                 self.snapshot_a_done = True
-            if int(now - t0) % 3 == 0:
+            # rolling end-of-run snapshot: /proc/<pid> vanishes the moment
+            # the process exits, so "run end" = the last one taken alive
+            if self.snapshot_a_done and ticks % 10 == 0:
+                self.snapshot("b")
+            if ticks % 3 == 0:
                 self.sample_stat39()
+            ticks += 1
             time.sleep(1.0)
 
     def finish(self):
         self.sample_stat39()
-        self.snapshot("b")
+        self.snapshot("b")  # best effort; rolling copy above is the fallback
         self.stop_flag = True
 
 def parse_numa_maps(text):
@@ -416,8 +422,13 @@ def invoke(cell, model, row, rnd, out_root):
 
     # gates
     gates = {"cmd": argv, "wall_s": round(wall, 1), "exit": proc.returncode}
-    maps_b = evdir / "numa_maps.b"
-    locality = parse_numa_maps(maps_b.read_text()) if maps_b.exists() else {}
+    locality, src_used = {}, None
+    for tag in ("b", "a"):
+        snap = evdir / f"numa_maps.{tag}"
+        if snap.exists() and snap.read_text().strip():
+            locality, src_used = parse_numa_maps(snap.read_text()), tag
+            break
+    gates["numa_snapshot_used"] = src_used
     total = sum(locality.values()) or 1
     if placement == "inter":
         frac0 = locality.get(0, 0) / total
