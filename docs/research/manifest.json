@@ -1,0 +1,38 @@
+{
+  "_purpose": "Artifact manifest referenced by benchmark-protocol.md. Amendments MUST be committed before first use of each artifact; entries are append-only.",
+  "llama_cpp_commit": "0eadefebd3f8f92a86d634a0e5b8fffc9dc792c0",
+  "models": {
+    "m1_smollm2_360m_instruct_q4_k_m": {
+      "source": "https://huggingface.co/bartowski/SmolLM2-360M-Instruct-GGUF/resolve/main/SmolLM2-360M-Instruct-Q4_K_M.gguf",
+      "sha256": "2fa3f013dcdd7b99f9b237717fa0b12d75bbb89984cc1274be1471a465bac9c2",
+      "bytes": 270590880
+    },
+    "m2_qwen3_0_6b_q4_k_m": {
+      "source": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF (resolved via fallback quant mirror; URL recorded at download)",
+      "sha256": "9acfc1e001311f34b4252001b626f2e466d592a42065f66571bff3790d4e1b14",
+      "bytes": 484220320
+    },
+    "embedding_qwen3_embedding_0_6b_q8_0": {
+      "source": "https://huggingface.co/Qwen/Qwen3-Embedding-0.6B-GGUF",
+      "sha256": "TO BE COMMITTED BEFORE FIRST USE"
+    },
+    "smoke_stories15m_q4_0": {
+      "source": "https://huggingface.co/ggml-org/models (tinyllamas)",
+      "sha256": "TO BE COMMITTED BEFORE FIRST USE"
+    }
+  },
+  "browser": {
+    "wllama_compat_build": "3.6.1 — vendored file hashes TO BE COMMITTED BEFORE FIRST USE",
+    "chromium_ppc64le": "Fedora package NEVR + container image digest TO BE COMMITTED BEFORE FIRST USE",
+    "chromium_x86_control_host": "TO BE NAMED BEFORE BROWSER RUNS (role: qualitative context, non-decisional)"
+  },
+  "amo_patch": {
+    "description": "Single-binary runtime toggle at the three chunk-claim sites (ggml_threadpool_chunk_add, mul_mat claim, graph_compute_thread)",
+    "diff_sha256": "TO BE COMMITTED BEFORE FIRST USE",
+    "counter_layout": "TO BE DOCUMENTED WITH THE PATCH (private 128-byte lines)"
+  },
+  "analysis": {
+    "stack": "PyMC + ArviZ under uv run; versions and per-fit random_seed recorded in results artifacts",
+    "changepoint": "ruptures PELT, cost l2, min_size 3, BIC-style penalty fixed in committed analysis script"
+  }
+}
