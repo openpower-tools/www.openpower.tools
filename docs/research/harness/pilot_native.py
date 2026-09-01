@@ -287,9 +287,10 @@ def cmd_preflight(_args):
 # ---------- attestation machinery ----------
 
 class Watcher(threading.Thread):
-    def __init__(self, pid, cpus, evdir):
+    def __init__(self, pid, cpus, evdir, row):
         super().__init__(daemon=True)
         self.pid, self.cpus, self.evdir = pid, set(cpus), evdir
+        self.row = row
         self.freq = []
         self.stat39 = []
         self.allowed = set()
@@ -299,10 +300,10 @@ class Watcher(threading.Thread):
 
     def snapshot(self, tag):
         try:
-            (self.evdir / f"numa_maps.{tag}").write_text(
+            (self.evdir / f"numa_maps.{self.row}.{tag}").write_text(
                 Path(f"/proc/{self.pid}/numa_maps").read_text())
             ns = run_out(["numastat", "-p", str(self.pid)])
-            (self.evdir / f"numastat.{tag}").write_text(ns.stdout)
+            (self.evdir / f"numastat.{self.row}.{tag}").write_text(ns.stdout)
         except (FileNotFoundError, ProcessLookupError):
             pass
 
@@ -403,7 +404,7 @@ def invoke(cell, model, row, rnd, out_root):
     log(f"round {rnd} {cell} {model} {row} r={r}: {' '.join(argv)}")
     t_start = time.time()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    watcher = Watcher(proc.pid, cpus, evdir)
+    watcher = Watcher(proc.pid, cpus, evdir, row)
     watcher.start()
     sib = sibling_check(cpus, 10) if one_thread_per_core(cpus) else {}
     stdout, stderr = proc.communicate(timeout=3600)
@@ -424,7 +425,7 @@ def invoke(cell, model, row, rnd, out_root):
     gates = {"cmd": argv, "wall_s": round(wall, 1), "exit": proc.returncode}
     locality, src_used = {}, None
     for tag in ("b", "a"):
-        snap = evdir / f"numa_maps.{tag}"
+        snap = evdir / f"numa_maps.{row}.{tag}"
         if snap.exists() and snap.read_text().strip():
             locality, src_used = parse_numa_maps(snap.read_text()), tag
             break
