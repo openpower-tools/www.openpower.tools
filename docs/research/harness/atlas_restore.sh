@@ -23,6 +23,9 @@ done
 echo "== un-corral system.slice =="
 systemctl set-property --runtime system.slice AllowedCPUs=""
 
+echo "== restore swap =="
+swapon -a || true
+
 echo "== restart irqbalance if it was active =="
 if grep -q active "$STATE/irqbalance" 2>/dev/null; then
   systemctl start irqbalance

@@ -131,33 +131,51 @@ def numactl_prefix(placement, cpus=None):
         pre.append("--physcpubind=" + ",".join(map(str, cpus)))
     return pre
 
-def map_locality(path):
-    """Map the file, touch every page, report this process's page placement
-    for that mapping from /proc/self/numa_maps (tmpfs pages ARE the file)."""
-    import mmap
-    with open(path, "rb") as fh:
-        mm = mmap.mmap(fh.fileno(), 0, prot=mmap.PROT_READ)
-        step = 65536  # 64K pages on atlas
-        total = 0
-        for off in range(0, len(mm), step):
-            total += mm[off]
-        base = None
-        counts = {}
-        for line in open("/proc/self/numa_maps"):
-            if str(path) in line:
-                for tok in line.split():
-                    if tok.startswith("N") and "=" in tok:
-                        node, pages = tok[1:].split("=")
-                        counts[int(node)] = counts.get(int(node), 0) + int(pages)
-        mm.close()
-    return counts
+MAPPER = """
+import json, mmap, sys
+path = sys.argv[1]
+with open(path, "rb") as fh:
+    mm = mmap.mmap(fh.fileno(), 0, prot=mmap.PROT_READ)
+    t = 0
+    for off in range(0, len(mm), 65536):  # 64K pages on atlas
+        t += mm[off]
+    counts = {}
+    for line in open("/proc/self/numa_maps"):
+        if path in line:
+            for tok in line.split():
+                if tok.startswith("N") and "=" in tok:
+                    n, p = tok[1:].split("=")
+                    counts[n] = counts.get(n, 0) + int(p)
+    mm.close()
+print(json.dumps(counts))
+"""
+
+def map_locality(path, placement):
+    """Placement of a staged copy, measured by a mapper running UNDER the
+    copy's own policy. Touching pages faults in any that were evicted, and
+    only a matching policy makes such a refault land where staging
+    intended — an unbound toucher (as the harness's digest check once was)
+    scatters them onto its local node. Resident pages never move, so a
+    drifted copy still reads as drifted and gets re-staged."""
+    proc = subprocess.run(numactl_prefix(placement) + [sys.executable, "-c", MAPPER, str(path)],
+                          capture_output=True, text=True, check=True)
+    return {int(k): v for k, v in json.loads(proc.stdout).items()}
+
+def placement_ok(loc, placement):
+    total = max(sum(loc.values()), 1)
+    if placement == "inter":
+        return 0.48 <= loc.get(0, 0) / total <= 0.52
+    return loc.get(placement, 0) / total >= 0.99
 
 def balloon_node8(gib=6):
     """Force reclaim (ARC eviction) on node 8 so strict membind and the
     interleave writer have headroom there; the balloon frees on exit.
     Rationale (measured 2026-09-01): the ~41 GiB ZFS ARC concentrates on
     node 8 (319 MB free); membind triggers eviction but --interleave
-    silently falls back to node 0 (observed 94/6 on a staged copy)."""
+    silently falls back to node 0 (observed 94/6 on a staged copy).
+    SAFE ONLY WITH SWAP OFF (preflight enforces): with a swapfile present the
+    kernel evicted the tmpfs model pages instead of shrinking the ARC, and
+    later touches re-faulted them onto the wrong node (the top-up scramble)."""
     log(f"balloon: touching {gib} GiB under membind=8 to force ARC eviction")
     code = (f"x = bytearray({gib} << 30)\n"
             "for i in range(0, len(x), 65536):\n"
@@ -198,10 +216,10 @@ def stage_one(model, info, placement, force=False):
     dst = staging_path(model, placement)
     dst.parent.mkdir(parents=True, exist_ok=True)
     ok = dst.exists() and not force and sha256_file(dst) == info["sha256"]
-    if ok and placement == "inter":
-        loc = map_locality(dst)
-        if not 0.48 <= inter_frac0(loc) <= 0.52:
-            log(f"stage {dst}: digest OK but placement {loc} not interleaved; re-staging")
+    if ok:
+        loc = map_locality(dst, placement)
+        if not placement_ok(loc, placement):
+            log(f"stage {dst}: digest OK but placement {loc} off for {placement}; re-staging")
             ok = False
     if ok:
         log(f"stage {dst}: present, digest and placement OK")
@@ -215,9 +233,8 @@ def stage_one(model, info, placement, force=False):
         subprocess.run(numactl_prefix(placement) + ["cp", str(info["src"]), str(dst)], check=True)
     digest = sha256_file(dst)
     assert digest == info["sha256"], f"digest mismatch for {dst}: {digest}"
-    loc = map_locality(dst)
-    if placement == "inter":
-        assert 0.48 <= inter_frac0(loc) <= 0.52, f"interleave staging off: {loc}"
+    loc = map_locality(dst, placement)
+    assert placement_ok(loc, placement), f"staging placement off for {placement}: {loc}"
     log(f"stage {dst}: digest OK, page placement {loc}")
     att = SHM / f"staging-{model}-{placement}.json"
     att.write_text(json.dumps({"path": str(dst), "sha256": digest,
@@ -231,12 +248,13 @@ def cmd_stage(_args):
     log("staging complete")
 
 def verify_staging():
+    """Digest + placement of every staged copy (under each copy's own
+    policy), re-staging any that drifted. Called at run start and before
+    every round."""
     for placement in (0, 8, "inter"):
         for model, info in MODELS.items():
-            dst = staging_path(model, placement)
-            assert dst.exists() and sha256_file(dst) == info["sha256"], \
-                f"staging invalid: {dst} (run stage first)"
-    log("staged digests verified")
+            stage_one(model, info, placement)
+    log("staged copies verified (digest + placement)")
 
 # ---------- preflight ----------
 
@@ -257,6 +275,11 @@ def cmd_preflight(_args):
     irq = run_out(["systemctl", "is-active", "irqbalance"]).stdout.strip()
     if irq == "active":
         fails.append("irqbalance active (run atlas_setup.sh)")
+    swap_kb = [l for l in Path("/proc/meminfo").read_text().splitlines()
+               if l.startswith("SwapTotal:")][0].split()[1]
+    if swap_kb != "0":
+        fails.append(f"swap enabled ({swap_kb} kB): tmpfs model pages would be "
+                     "evictable under node pressure — run atlas_setup.sh (swapoff)")
     if not BENCH.exists():
         fails.append(f"missing {BENCH}")
     for model, info in MODELS.items():
@@ -511,6 +534,8 @@ def cmd_run(args):
         combos = [(c, m) for c in cells for m in models]
         random.Random(20260901 + rnd).shuffle(combos)
         log(f"=== round {rnd}: {len(combos)} cell x model combos ===")
+        if rnd > 0:
+            verify_staging()
         for cell, model in combos:
             for row in ("pp512", "tg128"):
                 for attempt in (1, 2):
