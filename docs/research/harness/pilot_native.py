@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
 """Native pilot runner for benchmark-protocol.md (REGISTERED, rev 3 as amended).
 
-Runs ON atlas (python3 stdlib only). Implements the registered native cells
+Runs ON atlas under uv-managed python (uv run pilot_native.py ...);
+stdlib-only dependencies. Implements the registered native cells
 (section 2), environment controls and attestations (section 3), and the
 pilot design (section 4: 5 runs per cell, dimensioning only, EXCLUDED from
 decision posteriors).
