@@ -244,8 +244,21 @@ Browser:
   fixed-n; named accurately).
 - Warm-up / steady state (browser): per invocation, PELT changepoint
   segmentation on log per-iteration times (ruptures 1.1.10, cost l2,
-  min_size=3, penalty = 3*log(n) with n the invocation's recorded
-  iteration count); steady state = final segment, required >= 5 iterations
+  min_size=3, penalty = 3 * sigma2_hat * log(n) with n the invocation's
+  recorded iteration count and sigma2_hat = (MAD(diff(log t))/0.6745)^2 / 2,
+  the robust first-difference variance of the log times -- BIC-style
+  scaling for the l2 cost, which carries units of log-value^2 [AMENDED
+  2026-09-01, pre-data, statistician sign-off (review round 4): the
+  originally registered unscaled 3*log(n) penalty is dimensionally
+  inconsistent with the l2 cost and cannot fire below a ~5x rate change at
+  observed within-invocation variance (~6e-4 log^2), which would retain
+  warmup in the "final segment" and poison the Kendall-tau gate; caught by
+  the scripts-before-data rule during script verification, before any
+  pilot or A/A data existed]. Quantisation guard: if the MAD of the
+  differences is zero (tied timer readings under the 100 us timer), use
+  the plain variance of the differences / 2; if that is also zero the
+  series is constant and steady by definition); steady state = final
+  segment, required >= 5 iterations
   with |Kendall tau| <= 0.4 on that segment (the registered trend gate);
   otherwise the invocation is marked no-steady-state, recorded, and re-run.
   Only pre-final-segment iterations are discarded. Native needs no
