@@ -174,7 +174,16 @@ Native:
 
 NUMA attestation gate (hard, per run): numastat -p and /proc/<pid>/numa_maps
 snapshotted (a) after model load + first measured rep and (b) at run end;
->= 99% of resident pages on the bound node (AX cell: 45-55% per node);
+>= 99% of MEASUREMENT pages — anonymous mappings (heap/stack/anon) plus
+the tmpfs model file — on the bound node (AX cell: 45-55% per node over
+the same measurement set); file-backed executable/library mappings are
+excluded from the gate and reported descriptively per run (excluded page
+counts per node recorded in the attestation) [AMENDED 2026-09-02,
+pilot-informed, pre-campaign, experimentalist sign-off: the unfiltered
+gate counted ~10 MB of bench-binary/library page-cache mappings that
+memory policy does not govern — a constant 162 foreign pages failed
+every N8b invocation and tipped marginal AX rounds; run end = the last
+snapshot observable while the process is alive];
 thread placement attested by sampling /proc/<pid>/task/*/stat field 39 at
 >= 5 steady-state points — every sample within the cell's CPU list — and
 per-thread Cpus_allowed_list equal to the registered list. numa_maps
