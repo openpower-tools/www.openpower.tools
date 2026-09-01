@@ -44,6 +44,12 @@ pub const PAGES: &[Page] = &[
         "components/index.html"
     ),
     page!(
+        "components/palette",
+        "Component palette",
+        "Every component rendered live, side by side.",
+        "components/palette/index.html"
+    ),
+    page!(
         "components/callout",
         "Callout",
         "Highlighted blocks for notes, tips and warnings.",

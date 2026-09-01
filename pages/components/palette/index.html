@@ -1,0 +1,124 @@
+      <p>
+        The whole catalogue rendered live, side by side: each card carries a small
+        example, and the full set of states and variants lives on the component's
+        own page.
+      </p>
+      <op-callout variant="note" heading="A living gallery">
+        These examples are the real elements, rendered by the same wasm as everywhere
+        else - flip the theme and they follow.
+      </op-callout>
+      <h2>Content</h2>
+      <div class="op-gallery">
+        <op-card heading="Callout" href="/components/callout/">
+          <op-callout variant="tip" heading="Tip">Hairline, watermark, wording.</op-callout>
+        </op-card>
+        <op-card heading="Badge" href="/components/badge/">
+          <p><op-badge variant="ok">verified</op-badge> <op-badge variant="warning">stale</op-badge> <op-badge variant="info">upstream</op-badge></p>
+        </op-card>
+        <op-card heading="Card" href="/components/card/">
+          <op-card heading="A nested card">Titled containers with optional link headings and footers.</op-card>
+        </op-card>
+        <op-card heading="Details" href="/components/details/">
+          <op-details summary="Serial console settings">115200 8N1, from the BMC.</op-details>
+        </op-card>
+        <op-card heading="Key-value" href="/components/key-value/">
+          <op-key-value><dl><dt>CPU</dt><dd>POWER9 Sforza</dd><dt>BMC</dt><dd>AST2500</dd></dl></op-key-value>
+        </op-card>
+        <op-card heading="Table" href="/components/table/">
+          <op-table dense lined>
+            <table>
+              <thead><tr><th>Part</th><th>Size</th></tr></thead>
+              <tbody><tr><td>HBB</td><td>512 KiB</td></tr><tr><td>PAYLOAD</td><td>1 MiB</td></tr></tbody>
+            </table>
+          </op-table>
+        </op-card>
+        <op-card heading="Source" href="/components/source/">
+          <op-source label="shell">
+<pre>pflash -i</pre>
+          </op-source>
+        </op-card>
+        <op-card heading="Timeline" href="/components/timeline/">
+          <op-timeline>
+            <ol>
+              <li data-status="ok"><time>2026-08</time>Site live.</li>
+              <li data-status="info"><time>2026-09</time>Gallery lands.</li>
+            </ol>
+          </op-timeline>
+        </op-card>
+        <op-card heading="Empty state" href="/components/empty-state/">
+          <op-empty-state heading="Nothing here yet"><p>And it says so, plainly.</p></op-empty-state>
+        </op-card>
+        <op-card heading="KPI" href="/components/kpi/">
+          <p>
+            <op-kpi label="CPU temp" value="52" unit="&deg;C" state="ok"></op-kpi>
+            <op-kpi label="Fan" value="4,120" unit="rpm"></op-kpi>
+          </p>
+        </op-card>
+        <op-card heading="Steps" href="/components/steps/">
+          <op-steps>
+            <ol>
+              <li data-state="done">Back up the PNOR.</li>
+              <li data-state="current">Flash the image.</li>
+            </ol>
+          </op-steps>
+        </op-card>
+        <op-card heading="Tree" href="/components/tree/">
+          <op-tree>
+            <ul><li><details open><summary>PNOR</summary><ul><li><code>HBB</code> 512 KiB</li></ul></details></li></ul>
+          </op-tree>
+        </op-card>
+      </div>
+      <h2>Controls</h2>
+      <div class="op-gallery">
+        <op-card heading="Button" href="/components/button/">
+          <p><op-button>Default</op-button> <op-button variant="primary">Primary</op-button></p>
+        </op-card>
+        <op-card heading="Input" href="/components/input/">
+          <op-input><label>BMC address <input type="text" placeholder="bmc.talos.local" /></label></op-input>
+        </op-card>
+        <op-card heading="Select" href="/components/select/">
+          <op-select><label>Channel <select><option>Raptor stock</option><option>Upstream</option></select></label></op-select>
+        </op-card>
+        <op-card heading="Checkbox" href="/components/checkbox/">
+          <op-checkbox><label><input type="checkbox" checked /> Petitboot autoboot</label></op-checkbox>
+        </op-card>
+        <op-card heading="Switch" href="/components/switch/">
+          <op-switch><label><input type="checkbox" checked /> Follow the system theme</label></op-switch>
+        </op-card>
+        <op-card heading="Tooltip" href="/components/tooltip/">
+          <p>The <op-tooltip text="Processor NOR flash"><a href="#">PNOR</a></op-tooltip> holds the boot firmware.</p>
+        </op-card>
+        <op-card heading="Chip" href="/components/chip/">
+          <p><op-chip toggle pressed variant="info">POWER9</op-chip> <op-chip removable>talos-ii</op-chip></p>
+        </op-card>
+        <op-card heading="Progress" href="/components/progress/">
+          <op-progress label="Flashing" value="62"></op-progress>
+        </op-card>
+      </div>
+      <h2>Navigation</h2>
+      <div class="op-gallery">
+        <op-card heading="Tabs" href="/components/tabs/">
+          <op-tabs>
+            <op-tab label="Debian"><p>ppc64el netinst.</p></op-tab>
+            <op-tab label="Fedora"><p>Server for ppc64le.</p></op-tab>
+          </op-tabs>
+        </op-card>
+        <op-card heading="Breadcrumb" href="/components/breadcrumb/">
+          <op-breadcrumb>
+            <ol><li><a href="/">Home</a></li><li><a href="/components/" aria-current="page">Components</a></li></ol>
+          </op-breadcrumb>
+        </op-card>
+        <op-card heading="Pagination" href="/components/pagination/">
+          <op-pagination>
+            <ol><li><a href="#">1</a></li><li><a href="#" aria-current="page">2</a></li><li><a href="#">3</a></li></ol>
+          </op-pagination>
+        </op-card>
+      </div>
+      <h2>Immersive</h2>
+      <div class="op-gallery">
+        <op-card heading="Scene" href="/components/scene/">
+          <p>Embedded A-Frame scenes with Rust-driven behaviour. The 1.3 MB runtime
+          loads lazily, only on pages containing the element, so the live example
+          stays on its own page.</p>
+        </op-card>
+      </div>
