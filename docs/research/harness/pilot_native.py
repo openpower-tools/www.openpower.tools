@@ -152,24 +152,91 @@ def map_locality(path):
         mm.close()
     return counts
 
+def balloon_node8(gib=6):
+    """Force reclaim (ARC eviction) on node 8 so strict membind and the
+    interleave writer have headroom there; the balloon frees on exit.
+    Rationale (measured 2026-09-01): the ~41 GiB ZFS ARC concentrates on
+    node 8 (319 MB free); membind triggers eviction but --interleave
+    silently falls back to node 0 (observed 94/6 on a staged copy)."""
+    log(f"balloon: touching {gib} GiB under membind=8 to force ARC eviction")
+    code = (f"x = bytearray({gib} << 30)\n"
+            "for i in range(0, len(x), 65536):\n"
+            "    x[i] = 1\n")
+    subprocess.run(["numactl", "--membind=8", sys.executable, "-c", code], check=True)
+
+INTER_CHUNK = 65536  # one 64K page on atlas
+
+def interleave_copy(src, dst):
+    """Deterministic 50/50 interleave: even 64K chunks written under
+    membind=0, odd under membind=8 (tmpfs places pages at write time, per
+    offset) — allocator-fallback-proof, unlike --interleave."""
+    size = Path(src).stat().st_size
+    with open(dst, "wb") as fh:
+        fh.truncate(size)
+    helper = (
+        "import sys\n"
+        "src, dst, parity = sys.argv[1], sys.argv[2], int(sys.argv[3])\n"
+        f"CH = {INTER_CHUNK}\n"
+        "s = open(src, 'rb'); d = open(dst, 'r+b')\n"
+        "off = parity * CH\n"
+        "while True:\n"
+        "    s.seek(off)\n"
+        "    buf = s.read(CH)\n"
+        "    if not buf: break\n"
+        "    d.seek(off)\n"
+        "    d.write(buf)\n"
+        "    off += 2 * CH\n"
+    )
+    for parity, node in ((0, 0), (1, 8)):
+        subprocess.run(["numactl", f"--membind={node}", sys.executable, "-c",
+                        helper, str(src), str(dst), str(parity)], check=True)
+
+def inter_frac0(loc):
+    return loc.get(0, 0) / max(sum(loc.values()), 1)
+
+def stage_one(model, info, placement, force=False):
+    dst = staging_path(model, placement)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    ok = dst.exists() and not force and sha256_file(dst) == info["sha256"]
+    if ok and placement == "inter":
+        loc = map_locality(dst)
+        if not 0.48 <= inter_frac0(loc) <= 0.52:
+            log(f"stage {dst}: digest OK but placement {loc} not interleaved; re-staging")
+            ok = False
+    if ok:
+        log(f"stage {dst}: present, digest and placement OK")
+        return
+    if placement == "inter":
+        log(f"stage {dst} <- {info['src']} (deterministic two-pass interleave)")
+        dst.unlink(missing_ok=True)
+        interleave_copy(info["src"], dst)
+    else:
+        log(f"stage {dst} <- {info['src']} under {numactl_prefix(placement)}")
+        subprocess.run(numactl_prefix(placement) + ["cp", str(info["src"]), str(dst)], check=True)
+    digest = sha256_file(dst)
+    assert digest == info["sha256"], f"digest mismatch for {dst}: {digest}"
+    loc = map_locality(dst)
+    if placement == "inter":
+        assert 0.48 <= inter_frac0(loc) <= 0.52, f"interleave staging off: {loc}"
+    log(f"stage {dst}: digest OK, page placement {loc}")
+    att = SHM / f"staging-{model}-{placement}.json"
+    att.write_text(json.dumps({"path": str(dst), "sha256": digest,
+                               "placement": str(placement), "pages": loc}))
+
 def cmd_stage(_args):
+    balloon_node8()
+    for placement in (0, 8, "inter"):
+        for model, info in MODELS.items():
+            stage_one(model, info, placement)
+    log("staging complete")
+
+def verify_staging():
     for placement in (0, 8, "inter"):
         for model, info in MODELS.items():
             dst = staging_path(model, placement)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            if dst.exists() and sha256_file(dst) == info["sha256"]:
-                log(f"stage {dst}: already present, digest OK")
-                continue
-            log(f"stage {dst} <- {info['src']} under {numactl_prefix(placement)}")
-            subprocess.run(numactl_prefix(placement) + ["cp", str(info["src"]), str(dst)], check=True)
-            digest = sha256_file(dst)
-            assert digest == info["sha256"], f"digest mismatch for {dst}: {digest}"
-            loc = map_locality(dst)
-            log(f"stage {dst}: digest OK, page placement {loc}")
-            att = SHM / f"staging-{model}-{placement}.json"
-            att.write_text(json.dumps({"path": str(dst), "sha256": digest,
-                                       "placement": str(placement), "pages": loc}))
-    log("staging complete")
+            assert dst.exists() and sha256_file(dst) == info["sha256"], \
+                f"staging invalid: {dst} (run stage first)"
+    log("staged digests verified")
 
 # ---------- preflight ----------
 
@@ -399,6 +466,8 @@ def cmd_run(args):
     out_root = Path(args.out).expanduser()
     out_root.mkdir(parents=True, exist_ok=True)
     env_manifest(out_root)
+    verify_staging()
+    balloon_node8()  # headroom for AX interleaved runtime allocations
     models = args.models.split(",")
     cells = args.cells.split(",") if args.cells else list(CELLS)
     data_files = {m: open(out_root / f"pilot-{m}.jsonl", "a") for m in models}
