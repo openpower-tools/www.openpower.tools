@@ -32,7 +32,8 @@
     "counter_layout": "TO BE DOCUMENTED WITH THE PATCH (private 128-byte lines)"
   },
   "analysis": {
-    "stack": "PyMC + ArviZ under uv run; versions and per-fit random_seed recorded in results artifacts",
-    "changepoint": "ruptures PELT, cost l2, min_size 3, BIC-style penalty fixed in committed analysis script"
+    "stack": "pymc 6.3.1, arviz 1.3.0, ruptures 1.1.10 under uv run (uv lock committed with analysis scripts); per-fit random_seed recorded in results artifacts",
+    "changepoint": "ruptures 1.1.10 PELT, cost l2, min_size 3, penalty 3*log(n); Kendall tau final-segment trend gate |tau| <= 0.4 (authoritative values live in benchmark-protocol.md)",
+    "scripts_rule": "docs/research/analysis/ committed BEFORE the first pilot run; append-only like all artifacts"
   }
 }

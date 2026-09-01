@@ -1,10 +1,12 @@
 # Pre-registered benchmark protocol: op-ask inference on POWER9 and in-browser wasm
 
-STATUS: REVISION 2 (2026-09-02) — round-1 panel findings (statistician,
-systems experimentalist, browser/VM engineer: three REQUEST REVISION
-verdicts) are addressed in this text. Awaiting panel sign-off; the
-registration line replaces this status in a subsequent commit, and data
-collection begins only after that commit. Artifact digests live in
+STATUS: REVISION 3 (2026-09-02) — round-2 residues resolved (TTFT defined
+as direct stage sums via a max_tokens=1 sub-repetition; PELT penalty and
+trend gate registered in text with analysis scripts committed before any
+data; analysis stack pinned; A32/AX given explicit attestable CPU lists;
+P4/P8 wired into D2 with the memory-channel caveat restored). Awaiting
+final scoped panel sign-off; the registration line replaces this status in
+a subsequent commit, and data collection begins only after that commit. Artifact digests live in
 docs/research/manifest.json (committed alongside; amendments to it are
 committed BEFORE first use of each artifact, never after).
 
@@ -41,9 +43,12 @@ in full; deviations during the campaign require amendment commits.
   tiered code). The decisional estimand is WARM steady state; the cold
   first-response (pre-changepoint) is reported descriptively per cell
   (median cold-vs-warm delta) but is not decisional.
-- TTFT := engine prompt_ms + first predicted token's per-token ms (engine
-  definition; comparable native vs browser). Streamed first-chunk arrival
-  and user-perceived wait (embed + scan + streamed TTFT) are reported
+- TTFT := engine prompt_ms + predicted_ms of a dedicated max_tokens=1
+  sub-repetition — both direct stage sums (a single decode step at
+  slow-mode rates is >= 100 ms, satisfying the timer-window rule; no
+  per-token value is ever derived). Native comparator: batched-bench T_PP
+  plus a one-token generation stage. Streamed first-chunk arrival and
+  user-perceived wait (embed + scan + streamed TTFT) are reported
   alongside, labelled, non-decisional.
 - Multiplicity posture: every D-sentence is evaluated and reported PER MODEL
   in G, for all of G — no existential quantification over hidden cells; the
@@ -58,9 +63,12 @@ in full; deviations during the campaign require amendment commits.
   (browser proxy, shipping tier, k=2), P(typical tg >= 4 tok/s) >= 0.95 AND
   P(fresh-session tg >= 3 tok/s) >= 0.90.
 - D2 (per model m in G): the native companion quotes X*(m) = the largest
-  integer X such that min over cells {N4, N8} of
-  P(fresh-run tg >= X) >= 0.90. Promises are quoted raw, with achieved MHz
-  published beside them (frequency-annotation choice registered here).
+  integer X such that min over cells {N4, N8, P4, P8} of
+  P(fresh-run tg >= X) >= 0.90 — the packed-pair cells bound the promise
+  from below. Promises are quoted raw, with achieved MHz published beside
+  them (frequency-annotation choice registered here), and always with the
+  registered caveat that desktop boards populating fewer DDR4 channels
+  than this 8-channel host may see lower generation rates.
 - D3 (AMO adoption; model m1, joint paired model with shared block effects,
   runtime-toggle single binary): adopt iff
   P(log ratio(on/off) > log 1.02) >= 0.95 for tg in ANY of cells
@@ -96,12 +104,13 @@ Native cells (node 0 unless stated; every-8 = distinct core pairs):
 | S4x4 | 72,73,74,75,...,96..99 | 16 | 4 cores x SMT4 |
 | S8x2 | N8 cores x SMT2 | 16 | vs S4x4: SMT de-conflation |
 | N8b | 0,8,16,24,32,40,48,56 (node 8) | 8 | socket sanity, baseline rows |
-| AX | --interleave=0,8, distribute | 36 | cross-socket; gate 45-55%/node |
+| AX | 0,4,8,...,68 + 72,76,...,140 (36 cores, 1 thread/core) under numactl --interleave=0,8 --physcpubind=<that list>; NO --numa distribute (matmul-chunking parity with plain cells) | 36 | cross-socket; interleave gate 45-55%/node; thread gate = the explicit list |
 
-AMO cells (model m1, baseline rows pp512+tg128 only): A4, A8, A16, A32 on
-the N4/N8/S8x2/(N18+SMT2 = 32-thread list 72,73,76,77,...) lists, plus AX36
-= the AX cell; each run twice with the runtime toggle off/on inside the same
-block round (paired).
+AMO cells (model m1, baseline rows pp512+tg128 only): A4 = N4 list; A8 =
+N8 list; A16 = S8x2 list; A32 = 16 cores x SMT2, explicit list
+72,73,76,77,80,81,84,85,88,89,92,93,96,97,100,101,104,105,108,109,112,113,
+116,117,120,121,124,125,128,129,132,133; AX36 = the AX cell above; each run
+twice with the runtime toggle off/on inside the same block round (paired).
 
 Browser cells: BPX = Chromium pinned via taskset to CPUs 72,80,88,96 with
 membind node 0 (browser-process pinning; the wasm engine itself is
@@ -125,7 +134,9 @@ Browser factors: tier in {shipping (default flags), liftoff =
 by capturing the renderer's /proc/<pid>/cmdline; k in {0,2,4,8} with ONE
 n_ctx per model across all k (sized for k=8; KV size must not confound k);
 generation: greedy (temp=0, seed inert and stated), max_tokens=64,
-cache_prompt=false, n_gpu_layers=0. Default-tier cells: >= 20 recorded
+cache_prompt=false, n_gpu_layers=0. Each repetition set includes one
+dedicated TTFT sub-repetition (max_tokens=1, cache_prompt=false) whose
+prompt_ms and predicted_ms feed the D4 metric. Default-tier cells: >= 20 recorded
 iterations (changepoint power); other tiers >= 10. 25 invocations per cell.
 Embedder/generator procedure (registered): two wllama instances — embedder
 loaded, used for the query, fully unloaded BEFORE the generator loads; load
@@ -231,12 +242,18 @@ Browser:
   base-n plus a capped, decision-blind precision-extension schedule (not
   fixed-n; named accurately).
 - Warm-up / steady state (browser): per invocation, PELT changepoint
-  segmentation on log per-iteration times (ruptures, cost l2, min_size=3,
-  BIC-style penalty fixed in the analysis script); steady state = final
-  segment, required >= 5 iterations with no monotone trend; otherwise the
-  invocation is marked no-steady-state, recorded, and re-run. Only
-  pre-final-segment iterations are discarded. Native needs no equivalent
-  (untimed warmup by tool construction).
+  segmentation on log per-iteration times (ruptures 1.1.10, cost l2,
+  min_size=3, penalty = 3*log(n) with n the invocation's recorded
+  iteration count); steady state = final segment, required >= 5 iterations
+  with |Kendall tau| <= 0.4 on that segment (the registered trend gate);
+  otherwise the invocation is marked no-steady-state, recorded, and re-run.
+  Only pre-final-segment iterations are discarded. Native needs no
+  equivalent (untimed warmup by tool construction).
+- All analysis scripts (changepoint, Bayesian fits, A/A) are committed
+  under docs/research/analysis/ together with a uv lock BEFORE the first
+  pilot run; the parameters registered in this document are authoritative
+  and the scripts must match them (closing the deferred-parameter
+  loophole).
 
 ## 5. Statistical model, checks, reporting
 
@@ -255,8 +272,9 @@ mu sd 2.0, and nu ~ 1 + Exponential(1/29); every D-verdict must be invariant
 across the suite; any flip => the sentence is undecided, both fits are
 reported, and the precision-extension rule applies.
 
-Inference: PyMC + ArviZ under uv run, 4 chains, target_accept 0.95,
-random_seed recorded per fit. Gates (numeric): R-hat <= 1.01; bulk ESS >=
+Inference: PyMC 6.3.1 + ArviZ 1.3.0 under uv run (solve verified
+2026-09-02; uv lock committed with the analysis scripts), 4 chains,
+target_accept 0.95, random_seed recorded per fit. Gates (numeric): R-hat <= 1.01; bulk ESS >=
 1000 and tail ESS >= 400 per parameter; MCSE of every decision probability
 <= 0.005; zero divergences; prior- and posterior-predictive checks with
 registered criteria (posterior-predictive p-values for the median and IQR
