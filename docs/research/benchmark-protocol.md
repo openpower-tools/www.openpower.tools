@@ -1,12 +1,13 @@
 # Pre-registered benchmark protocol: op-ask inference on POWER9 and in-browser wasm
 
-STATUS: REVISION 3 (2026-09-02) — round-2 residues resolved (TTFT defined
-as direct stage sums via a max_tokens=1 sub-repetition; PELT penalty and
-trend gate registered in text with analysis scripts committed before any
-data; analysis stack pinned; A32/AX given explicit attestable CPU lists;
-P4/P8 wired into D2 with the memory-channel caveat restored). Awaiting
-final scoped panel sign-off; the registration line replaces this status in
-a subsequent commit, and data collection begins only after that commit. Artifact digests live in
+STATUS: REGISTERED 2026-09-02, at revision 3, on unanimous panel sign-off
+(statistician, systems experimentalist, browser/VM engineer — three rounds:
+REQUEST REVISION x3 on the draft, REQUEST FURTHER REVISION x3 on narrow
+residues, SIGN-OFF x3 on this text). From this commit the document is
+binding: deviations require amendment commits, and the registered order of
+work is (1) analysis scripts + uv lock committed under
+docs/research/analysis/, (2) pilot (dimensioning only, excluded from
+decision posteriors), (3) A/A calibration per pipeline, (4) campaign. Artifact digests live in
 docs/research/manifest.json (committed alongside; amendments to it are
 committed BEFORE first use of each artifact, never after).
 
