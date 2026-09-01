@@ -356,9 +356,21 @@ class Watcher(threading.Thread):
         self.snapshot("b")  # best effort; rolling copy above is the fallback
         self.stop_flag = True
 
-def parse_numa_maps(text):
+def parse_numa_maps(text, measurement_only=False):
+    """Page counts per node. measurement_only=True restricts to the pages
+    membind/interleave actually governs and the workload actually streams:
+    anonymous mappings (heap/stack/anon) and the tmpfs model file. File-backed
+    executable/library mappings (bench binary + shared libs, ~10 MB) are
+    node-fixed by page cache regardless of policy — the unfiltered gate
+    structurally fails any cell bound away from the node caching them
+    (observed: constant 162 foreign pages failing every N8b invocation)."""
     counts = {}
     for line in text.splitlines():
+        if measurement_only:
+            relevant = ("/dev/shm/opb" in line or "anon=" in line
+                        or " heap" in line or " stack" in line)
+            if not relevant:
+                continue
         for tok in line.split():
             if tok.startswith("N") and "=" in tok:
                 node, pages = tok[1:].split("=")
@@ -401,6 +413,11 @@ def invoke(cell, model, row, rnd, out_root):
                "-t", str(t), "-C", cpu_mask(cpus), "--cpu-strict", "1",
                "--delay", "3", "-r", str(r), "-o", "json",
                "-p", p_n[0], "-n", p_n[1]])
+    if placement == "inter":
+        # ARC regrows onto node 8 between rounds (evidence writes hit ZFS),
+        # and --interleave silently falls back for anon allocations (KV,
+        # compute buffers) — observed 60/40 measurement pages in AX round 2.
+        balloon_node8(4)
     log(f"round {rnd} {cell} {model} {row} r={r}: {' '.join(argv)}")
     t_start = time.time()
     proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -423,21 +440,27 @@ def invoke(cell, model, row, rnd, out_root):
 
     # gates
     gates = {"cmd": argv, "wall_s": round(wall, 1), "exit": proc.returncode}
-    locality, src_used = {}, None
+    locality, full_loc, src_used = {}, {}, None
     for tag in ("b", "a"):
         snap = evdir / f"numa_maps.{row}.{tag}"
         if snap.exists() and snap.read_text().strip():
-            locality, src_used = parse_numa_maps(snap.read_text()), tag
+            text = snap.read_text()
+            locality = parse_numa_maps(text, measurement_only=True)
+            full_loc = parse_numa_maps(text)
+            src_used = tag
             break
     gates["numa_snapshot_used"] = src_used
     total = sum(locality.values()) or 1
+    excluded = {n: full_loc.get(n, 0) - locality.get(n, 0) for n in full_loc}
     if placement == "inter":
         frac0 = locality.get(0, 0) / total
         gates["numa"] = {"pages": locality, "node0_frac": round(frac0, 4),
+                         "excluded_file_backed": excluded,
                          "ok": 0.45 <= frac0 <= 0.55}
     else:
         frac = locality.get(placement, 0) / total
         gates["numa"] = {"pages": locality, "bound_frac": round(frac, 4),
+                         "excluded_file_backed": excluded,
                          "ok": frac >= 0.99}
     on_cpu = {c for _, _, c in watcher.stat39}
     gates["stat39"] = {"observed": sorted(on_cpu), "n_samples": len(watcher.stat39),
