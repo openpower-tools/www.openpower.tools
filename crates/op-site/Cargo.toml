@@ -19,6 +19,8 @@ web-sys = { workspace = true, features = [
   "CacheStorage",
   "Clipboard",
   "CssStyleDeclaration",
+  "CustomEvent",
+  "CustomEventInit",
   "Document",
   "Element",
   "Event",

@@ -498,6 +498,95 @@ op-pagination [aria-current="page"] {
   border-color: var(--op-border-strong);
 }
 
+/* Numbered procedure steps (op-steps): CSS counters draw the bubbles,
+   data-state colours them with the status tokens; the text carries the
+   meaning in words. */
+
+op-steps ol {
+  counter-reset: op-step;
+}
+
+op-steps li {
+  counter-increment: op-step;
+  position: relative;
+  margin: 0.9rem 0;
+  padding-left: 2.5rem;
+}
+
+op-steps li::before {
+  content: counter(op-step);
+  position: absolute;
+  left: 0;
+  top: -0.1rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--op-border-strong);
+  border-radius: 50%;
+  font-family: var(--op-font-mono);
+  font-size: 0.85rem;
+  color: var(--op-muted);
+}
+
+op-steps li:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 0.8rem;
+  top: 1.7rem;
+  bottom: -1.05rem;
+  width: 1px;
+  background: var(--op-border);
+}
+
+op-steps li[data-state="done"]::before {
+  border-color: var(--op-status-ok);
+  color: var(--op-status-ok);
+}
+
+op-steps li[data-state="current"]::before {
+  border-color: var(--op-status-info);
+  color: var(--op-status-info);
+  background: var(--op-raised);
+}
+
+op-steps li[data-state="error"]::before {
+  border-color: var(--op-status-danger);
+  color: var(--op-status-danger);
+}
+
+/* Collapsible hierarchies (op-tree): native details/summary branches with
+   guide lines; the marker turns with the open state. */
+
+op-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+op-tree ul ul {
+  margin-left: 0.4rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--op-border);
+}
+
+op-tree li {
+  margin: 0.2rem 0;
+}
+
+op-tree summary {
+  cursor: pointer;
+  list-style-type: "\25B8  ";
+}
+
+op-tree details[open] > summary {
+  list-style-type: "\25BE  ";
+}
+
+op-tree summary::marker {
+  color: var(--op-muted);
+}
+
 /* The A-Frame scene owns its light-DOM subtree (see op-site scene.rs). */
 op-scene {
   display: block;

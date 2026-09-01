@@ -157,6 +157,36 @@ pub const PAGES: &[Page] = &[
         "Embedded A-Frame scenes with Rust-driven behaviour.",
         "components/scene/index.html"
     ),
+    page!(
+        "components/kpi",
+        "KPI",
+        "Single measurements: big value, small label, status colour.",
+        "components/kpi/index.html"
+    ),
+    page!(
+        "components/steps",
+        "Steps",
+        "Numbered procedures with done, current and error states.",
+        "components/steps/index.html"
+    ),
+    page!(
+        "components/tree",
+        "Tree",
+        "Collapsible hierarchies on native details elements.",
+        "components/tree/index.html"
+    ),
+    page!(
+        "components/chip",
+        "Chip",
+        "Interactive filter tokens: toggleable and removable.",
+        "components/chip/index.html"
+    ),
+    page!(
+        "components/progress",
+        "Progress",
+        "Determinate and indeterminate progress bars.",
+        "components/progress/index.html"
+    ),
 ];
 
 /// The shared site navigation, used verbatim on generated pages and mirrored

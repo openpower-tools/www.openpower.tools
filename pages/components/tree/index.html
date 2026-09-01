@@ -1,0 +1,34 @@
+      <p>A collapsible hierarchy for partition layouts and device trees. Branches are
+      native details and summary pairs, so collapsing works without wasm and stays
+      keyboard-accessible; leaves are plain list items.</p>
+      <h2>Example</h2>
+      <op-tree>
+        <ul>
+          <li>
+            <details open>
+              <summary>PNOR flash layout</summary>
+              <ul>
+                <li><code>HBB</code> Hostboot base, 512 KiB</li>
+                <li><code>HBI</code> Hostboot extended image</li>
+                <li>
+                  <details>
+                    <summary><code>PAYLOAD</code> Skiboot</summary>
+                    <ul>
+                      <li><code>skiboot.lid</code> OPAL runtime services</li>
+                    </ul>
+                  </details>
+                </li>
+                <li><code>BOOTKERNFW</code> Petitboot kernel, 16 MiB</li>
+              </ul>
+            </details>
+          </li>
+        </ul>
+      </op-tree>
+      <h2>Markup</h2>
+      <pre>&lt;op-tree&gt;
+  &lt;ul&gt;
+    &lt;li&gt;&lt;details open&gt;&lt;summary&gt;PNOR&lt;/summary&gt;
+      &lt;ul&gt;&lt;li&gt;&lt;code&gt;HBB&lt;/code&gt; 512 KiB&lt;/li&gt;&lt;/ul&gt;
+    &lt;/details&gt;&lt;/li&gt;
+  &lt;/ul&gt;
+&lt;/op-tree&gt;</pre>

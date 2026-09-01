@@ -1,0 +1,19 @@
+      <p>The interactive sibling of the badge: filter tokens that can toggle their
+      pressed state (mirrored as aria-pressed) and be removed. Removing dispatches a
+      composed op-chip-remove event before the chip leaves the DOM.</p>
+      <h2>Toggleable</h2>
+      <p>
+        <op-chip toggle pressed variant="info">POWER9</op-chip>
+        <op-chip toggle variant="info">POWER8</op-chip>
+        <op-chip toggle variant="ok">verified only</op-chip>
+      </p>
+      <h2>Removable</h2>
+      <p>
+        <op-chip removable variant="neutral">talos-ii</op-chip>
+        <op-chip removable variant="warning">draft</op-chip>
+      </p>
+      <h2>Static</h2>
+      <p><op-chip variant="danger">deprecated</op-chip></p>
+      <h2>Markup</h2>
+      <pre>&lt;op-chip toggle pressed variant="info"&gt;POWER9&lt;/op-chip&gt;
+&lt;op-chip removable&gt;talos-ii&lt;/op-chip&gt;</pre>

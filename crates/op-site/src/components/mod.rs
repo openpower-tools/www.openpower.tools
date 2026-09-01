@@ -8,13 +8,16 @@ mod button;
 mod callout;
 mod card;
 mod checkbox;
+mod chip;
 mod details;
 mod empty_state;
 mod input;
 mod iso;
 mod key_value;
+mod kpi;
 mod pagination;
 mod palette_specimen;
+mod progress;
 mod scene;
 mod select_field;
 mod site_footer;
@@ -22,12 +25,14 @@ mod site_header;
 mod site_nav;
 mod source;
 mod starting_points;
+mod steps;
 mod switch;
 mod table;
 mod tabs;
 mod theme_toggle;
 mod timeline;
 mod tooltip;
+mod tree;
 
 use op_webc::ElementDefinition;
 use web_sys::{HtmlElement, ShadowRoot, ShadowRootInit, ShadowRootMode};
@@ -61,6 +66,11 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     pagination::DEFINITION,
     tooltip::DEFINITION,
     scene::DEFINITION,
+    kpi::DEFINITION,
+    steps::DEFINITION,
+    tree::DEFINITION,
+    chip::DEFINITION,
+    progress::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom
