@@ -1,0 +1,14 @@
+=== kernel-efficiency test 2026-09-02T04:01:02+10:00 ===
+m1 Q4_0 t=1 bytes=229118880 tg=5.91 tok/s -> 1.35 GB/s
+m1 Q4_0 t=8 bytes=229118880 tg=40.76 tok/s -> 9.34 GB/s
+m1 Q5_0 t=1 bytes=268440480 tg=4.77 tok/s -> 1.28 GB/s
+m1 Q5_0 t=8 bytes=268440480 tg=33.81 tok/s -> 9.08 GB/s
+m1 Q8_0 t=1 bytes=386405280 tg=6.66 tok/s -> 2.57 GB/s
+m1 Q8_0 t=8 bytes=386405280 tg=44.59 tok/s -> 17.23 GB/s
+m2 Q4_0 t=1 bytes=469081504 tg=3.94 tok/s -> 1.85 GB/s
+m2 Q4_0 t=8 bytes=469081504 tg=28.23 tok/s -> 13.24 GB/s
+m2 Q5_0 t=1 bytes=543579552 tg=3.23 tok/s -> 1.76 GB/s
+m2 Q5_0 t=8 bytes=543579552 tg=23.71 tok/s -> 12.89 GB/s
+m2 Q8_0 t=1 bytes=804753824 tg=4.01 tok/s -> 3.23 GB/s
+m2 Q8_0 t=8 bytes=804753824 tg=28.96 tok/s -> 23.30 GB/s
+=== kernel test done 2026-09-02T04:11:15+10:00 ===
