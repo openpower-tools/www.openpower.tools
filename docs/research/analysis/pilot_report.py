@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Pilot dimensioning report for benchmark-protocol.md (section 4: pilot).
+
+The pilot is EXCLUDED from decision posteriors; this report is
+dimensioning only — between-round CV per cell x model x metric, raw
+distributions, and per-invocation wall times to project the campaign
+budget. Nothing here feeds a D-sentence.
+
+Usage:
+  uv run pilot_report.py <data-dir> [--plots <out-dir>]
+where <data-dir> holds pilot-m1.jsonl / pilot-m2.jsonl (and optionally
+discards.json) as produced by the harness. Emits a markdown summary to
+stdout and writes plots (Okabe-Ito palette, per the house diagram
+directive) as SVG.
+"""
+
+import argparse
+import json
+import math
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# Okabe-Ito (colorblind-safe), house style
+OKABE_ITO = ["#0072B2", "#E69F00", "#009E73", "#D55E00",
+             "#CC79A7", "#56B4E9", "#F0E442", "#000000"]
+
+CELL_ORDER = ["N1", "N2", "N4", "N8", "N12", "N18", "P4", "P8",
+              "S4x2", "S4x4", "S8x2", "N8b", "AX"]
+
+
+def load(data_dir):
+    data = defaultdict(lambda: defaultdict(list))  # (model,metric) -> cell -> [(round, value)]
+    for f in sorted(Path(data_dir).glob("pilot-*.jsonl")):
+        model = f.stem.split("-", 1)[1]
+        for line in f.read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            data[(model, row["metric"])][row["cell"]].append((row["block"], row["value"]))
+    return data
+
+
+def stats_for(pairs):
+    rounds = defaultdict(list)
+    for rnd, val in pairs:
+        rounds[rnd].append(val)
+    round_means = {r: sum(v) / len(v) for r, v in rounds.items()}
+    all_vals = [v for _, v in pairs]
+    n = len(all_vals)
+    grand = sum(all_vals) / n
+    rm = list(round_means.values())
+    between_cv = (math.sqrt(sum((x - grand) ** 2 for x in rm) / max(len(rm) - 1, 1)) / grand
+                  if len(rm) > 1 else float("nan"))
+    within_cvs = []
+    for r, vals in rounds.items():
+        if len(vals) > 1:
+            m = sum(vals) / len(vals)
+            sd = math.sqrt(sum((x - m) ** 2 for x in vals) / (len(vals) - 1))
+            within_cvs.append(sd / m)
+    within_cv = sum(within_cvs) / len(within_cvs) if within_cvs else float("nan")
+    return {
+        "n": n, "rounds": len(rounds), "median": sorted(all_vals)[n // 2],
+        "grand_mean": grand, "between_round_cv": between_cv,
+        "within_round_cv": within_cv, "round_means": round_means,
+    }
+
+
+def report(data, plot_dir):
+    print("# Pilot dimensioning report (non-decisional)\n")
+    for (model, metric), cells in sorted(data.items()):
+        print(f"## {model} {metric}\n")
+        print("| cell | n | rounds | median tok/s | between-round CV | within-round CV |")
+        print("|---|---|---|---|---|---|")
+        for cell in CELL_ORDER:
+            if cell not in cells:
+                continue
+            s = stats_for(cells[cell])
+            print(f"| {cell} | {s['n']} | {s['rounds']} | {s['median']:.2f} "
+                  f"| {s['between_round_cv']*100:.2f}% | {s['within_round_cv']*100:.2f}% |")
+        print()
+        if plot_dir:
+            plot_dir.mkdir(parents=True, exist_ok=True)
+            fig, ax = plt.subplots(figsize=(10, 4.2))
+            present = [c for c in CELL_ORDER if c in cells]
+            for i, cell in enumerate(present):
+                pairs = cells[cell]
+                xs = [i + (rnd - 2) * 0.09 for rnd, _ in pairs]
+                ys = [v for _, v in pairs]
+                colours = [OKABE_ITO[rnd % len(OKABE_ITO)] for rnd, _ in pairs]
+                ax.scatter(xs, ys, s=9, c=colours, alpha=0.75, linewidths=0)
+            ax.set_xticks(range(len(present)), present)
+            ax.set_ylabel("tok/s (per repetition)")
+            ax.set_title(f"pilot raw distributions: {model} {metric} "
+                         "(colour = round; non-decisional)")
+            ax.margins(x=0.02)
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+            fig.tight_layout()
+            out = plot_dir / f"pilot-{model}-{metric}.svg"
+            fig.savefig(out)
+            plt.close(fig)
+            print(f"plot: {out}\n")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("data_dir")
+    ap.add_argument("--plots", default="")
+    args = ap.parse_args()
+    data = load(args.data_dir)
+    if not data:
+        sys.exit(f"no pilot JSONL found under {args.data_dir}")
+    report(data, Path(args.plots) if args.plots else None)
+
+
+if __name__ == "__main__":
+    main()
