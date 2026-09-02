@@ -23,9 +23,13 @@ docs/research/manifest.json.
 
 ## Dimensioning findings
 
-1. **The isolation controls work.** Within-round CV is 0.01-0.2%;
-   between-round CV 0.01-0.2% on single-node cells (verified against raw
-   distinct samples_ns). The registered variance priors
+1. **The isolation controls work.** Within-round and between-round CV
+   are 0.01-0.3% for almost every single-node cell (verified against raw
+   distinct samples_ns). Worst cases, named: m1 pp512 at N18 shows 1.89%
+   between-round CV driven by one slow round (round-mean dip ~3%, with
+   elevated within-round spread in the same round — the full-socket cell
+   is the most thermally/WOF-exposed), and m2 pp512 at N2 shows 1.16%.
+   The registered variance priors
    (tau ~ HN(0.10), sigma_w ~ HN(0.05)) are 50-100x wider than observed
    variation — harmlessly weakly-informative — and the +/-2% HDI
    precision-extension rule will never trigger at base n.
