@@ -433,13 +433,22 @@ fn emit_sourcemap(staging: &Path) {
         );
     }
 
-    let mut wasm = std::fs::read(&wasm_path).expect("read staged wasm");
+    let wasm = std::fs::read(&wasm_path).expect("read staged wasm");
     assert!(
         !wasm
             .windows(b"sourceMappingURL".len())
             .any(|w| w == b"sourceMappingURL"),
         "wasm already carries a sourceMappingURL section"
     );
+    // The map is generated; the DWARF has done its job. Strip it so the
+    // only debug channel is the map (whose URLs stay under /src/) and
+    // visitors stop paying for the debug bytes. OP_ASSETS_KEEP_DWARF=1
+    // keeps it for local extension-based debugging sessions.
+    let mut wasm = if std::env::var_os("OP_ASSETS_KEEP_DWARF").is_some() {
+        wasm
+    } else {
+        sourcemap::strip_debug_sections(&wasm)
+    };
     wasm.extend_from_slice(&sourcemap::source_mapping_section(&format!("/{map_name}")));
     std::fs::write(&wasm_path, &wasm).expect("write patched wasm");
 
@@ -452,7 +461,7 @@ fn emit_sourcemap(staging: &Path) {
     std::fs::write(&index, html).expect("write staged index.html");
 
     println!(
-        "op-assets: source map {map_name}, {served} sources served under /src/, wasm integrity refreshed"
+        "op-assets: source map {map_name}, {served} sources under /src/, DWARF stripped, integrity refreshed"
     );
 }
 

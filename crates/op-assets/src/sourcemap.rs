@@ -3,21 +3,38 @@
 //!
 //! The release profile emits line-table DWARF (`debug =
 //! "line-tables-only"` with `trim-paths = "all"`, so no build-machine
-//! paths leak), `data-keep-debug` carries it through wasm-bindgen, and
-//! wasm-opt runs with `-g` (`data-wasm-opt-params`) so `-Oz` updates
-//! the line info instead of discarding it. This module then turns the
-//! embedded DWARF into a standard source map (via the `wasm2map`
-//! crate), serves every workspace source file it references under
-//! `/src/`, appends the `sourceMappingURL` custom section itself (the
-//! URL must be the absolute final one, so the patching is done here,
-//! not by wasm2map), and recomputes the subresource-integrity digest
-//! Trunk stamped on the wasm preload, which the appended section would
-//! otherwise invalidate.
+//! paths leak) and `data-keep-debug` carries it through wasm-bindgen.
+//! This module turns the embedded DWARF into a standard source map
+//! (via the `wasm2map` crate), appends the `sourceMappingURL` custom
+//! section itself (the URL must be the absolute final one), and
+//! recomputes the subresource-integrity digest Trunk stamped on the
+//! wasm preload, which the appended section would otherwise
+//! invalidate.
 //!
-//! DevTools fetches the map (and then the sources) only while the
-//! inspector is open: regular visitors pay only for the DWARF bytes in
-//! the wasm itself. Registry and rustc sources stay as bare paths in
-//! the map; they are visible but not browsable, which is honest.
+//! Inspectors would otherwise consume TWO debug channels: the source
+//! map, whose `sources` URLs we control, and the embedded DWARF itself
+//! (Chrome's DWARF support and the C/C++ debugging extension), which
+//! fetches raw compilation paths resolved against the origin -
+//! `crates/...`, `/rustc/<hash>/...`, `/cargo/registry/...` - claiming
+//! half a dozen top-level URL directories. The DWARF paths cannot be
+//! rewritten in place cheaply (the stdlib's are baked into the
+//! prebuilt std rlibs, and re-serialising every debug section means
+//! rebuilding all their internal offsets), so the shipped wasm keeps
+//! ONE channel: the map is generated from the DWARF, then the
+//! `.debug_*` sections are STRIPPED (set `OP_ASSETS_KEEP_DWARF=1` to
+//! keep them for local extension-based debugging). Stripping is safe
+//! for the map because the debug sections sit after the code section,
+//! which the strip asserts, so no mapped offset moves.
+//!
+//! Everything the map references is served under the single `/src/`
+//! prefix: workspace crates at `/src/crates/...` (their text also
+//! embedded as `sourcesContent`, so our own code resolves even where
+//! the site is not being served), the stdlib at `/src/rust/library/...`
+//! (both its DWARF shapes fold to one file), std's vendored deps under
+//! `/src/rust/library/vendor/`, and registry crates at
+//! `/src/vendor/<crate>-<version>/`. Licence files travel with every
+//! served crate root. DevTools fetches the map and the sources only
+//! while the inspector is open; regular visitors pay for none of it.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -40,26 +57,25 @@ pub struct Resolved {
     pub unresolved: Vec<String>,
 }
 
-/// Rewrites every resolvable `sources` entry to a served `/src/...`
-/// URL and collects the copy instructions, so the inspector can browse
-/// everything the wasm's line tables reference:
-///
-/// - workspace files -> `/src/<relative>`, with the text additionally
-///   embedded in `sourcesContent` (our own code resolves even where
-///   the site is not being served);
-/// - stdlib paths (`library/...`, also in their `/rustc/<hash>/...`
-///   form) -> `/src/rust/library/...` from the rust-src component;
-/// - std's vendored deps (`/rust/deps/<crate>/...`) ->
-///   `/src/rust/library/vendor/<crate>/...`, same component;
-/// - locked registry crates (`/cargo/registry/src/<index>/<crate>/...`)
-///   -> `/src/vendor/<crate>-<version>/...` from the local registry.
-///
-/// Licence files at each copied crate root travel along. A stdlib,
-/// vendored or registry path that cannot be found is a build error
-/// (the classes are deterministic; missing means the rust-src
-/// component or the registry cache is absent). Anything else - in
+/// A source path located on disk: where it comes from, the
+/// staging-relative path it is served at (its normalised literal DWARF
+/// path), the crate root its licences travel from, and whether its
+/// text is embedded in the map.
+struct Located {
+    from: PathBuf,
+    dest: String,
+    licence_root: Option<(PathBuf, String)>,
+    embed: bool,
+}
+
+/// Rewrites every resolvable `sources` entry to its served URL and
+/// collects the copy instructions (see the module docs for the URL
+/// scheme and why it mirrors the DWARF paths verbatim). A stdlib,
+/// std-vendored or registry path that cannot be found fails the build:
+/// those classes are deterministic, so missing means the rust-src
+/// component or the registry cache is absent. Anything else (in
 /// practice a handful of units whose crate roots `trim-paths` erased
-/// to bare `src/...` - is left untouched: a visible, honest label.
+/// to bare `src/...`) is left untouched: a visible, honest label.
 pub fn resolve_sources(map_json: &str, roots: &Roots) -> Resolved {
     let mut map: serde_json::Value = serde_json::from_str(map_json).expect("source map is JSON");
     let mut copies: Vec<(PathBuf, String)> = Vec::new();
@@ -78,48 +94,21 @@ pub fn resolve_sources(map_json: &str, roots: &Roots) -> Resolved {
             continue;
         };
         let mut content = serde_json::Value::Null;
-        let resolved = if let Some(relative) = workspace_relative(&original, roots.workspace) {
-            let from = roots.workspace.join(&relative);
-            content = std::fs::read_to_string(&from)
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null);
-            copies.push((from, format!("src/{relative}")));
-            Some(format!("/src/{relative}"))
-        } else if let Some(stdlib) = stdlib_relative(&original) {
-            let from = roots.rust_src.join(&stdlib);
-            if from.is_file() {
-                if let Some(root) = crate_root(&stdlib, "library/vendor/") {
-                    licence_roots.push((roots.rust_src.join(&root), format!("src/rust/{root}")));
-                } else {
-                    licence_roots.push((roots.rust_src.to_owned(), "src/rust".to_owned()));
+        match locate(&original, roots) {
+            Ok(Some(located)) => {
+                if located.embed {
+                    content = std::fs::read_to_string(&located.from)
+                        .map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null);
                 }
-                copies.push((from, format!("src/rust/{stdlib}")));
-                Some(format!("/src/rust/{stdlib}"))
-            } else {
-                missing.push(original.clone());
-                None
-            }
-        } else if let Some((crate_dir, rest)) = registry_relative(&original) {
-            if let Some(root) = find_registry_crate(roots.registry_src, &crate_dir) {
-                let from = root.join(&rest);
-                if from.is_file() {
-                    licence_roots.push((root, format!("src/vendor/{crate_dir}")));
-                    copies.push((from, format!("src/vendor/{crate_dir}/{rest}")));
-                    Some(format!("/src/vendor/{crate_dir}/{rest}"))
-                } else {
-                    missing.push(original.clone());
-                    None
+                if let Some(root) = located.licence_root {
+                    licence_roots.push(root);
                 }
-            } else {
-                missing.push(original.clone());
-                None
+                *entry = serde_json::Value::String(format!("/{}", located.dest));
+                copies.push((located.from, located.dest));
             }
-        } else {
-            unresolved.push(original.clone());
-            None
-        };
-        if let Some(url) = resolved {
-            *entry = serde_json::Value::String(url);
+            Ok(None) => unresolved.push(original),
+            Err(()) => missing.push(original),
         }
         contents.push(content);
     }
@@ -148,47 +137,105 @@ pub fn resolve_sources(map_json: &str, roots: &Roots) -> Resolved {
     }
 }
 
-/// rust-src-relative path for stdlib forms: `library/...` directly,
-/// the same behind a `/rustc/<hash>/` prefix, and std's vendored deps
-/// `/rust/deps/<crate>/...` (shipped under `library/vendor/`). Paths
-/// may contain `..` hops (stdarch is reached that way); they are
-/// folded before the `library/` check so the result is join-safe.
-fn stdlib_relative(path: &str) -> Option<String> {
-    let library = if let Some(rest) = path.strip_prefix("/rustc/") {
-        let (_hash, rest) = rest.split_once('/')?;
-        rest
-    } else {
-        path
-    };
-    if let Some(rest) = library.strip_prefix("/rust/deps/") {
-        return Some(format!("library/vendor/{}", normalize(rest)?));
+/// Classifies one DWARF path. `Ok(Some)` = serve it; `Ok(None)` = bare
+/// label; `Err` = a deterministic class whose file is missing.
+fn locate(original: &str, roots: &Roots) -> Result<Option<Located>, ()> {
+    if let Some(relative) = workspace_relative(original, roots.workspace) {
+        return Ok(Some(Located {
+            from: roots.workspace.join(&relative),
+            dest: format!("src/{relative}"),
+            licence_root: Some((roots.workspace.to_owned(), "src/crates".to_owned())),
+            embed: true,
+        }));
     }
-    let library = normalize(library)?;
-    library.starts_with("library/").then_some(library)
+    if let Some(rest) = original.strip_prefix("/rust/deps/") {
+        let Some(rest) = normalize(rest) else {
+            return Ok(None);
+        };
+        let from = roots.rust_src.join("library/vendor").join(&rest);
+        if !from.is_file() {
+            return Err(());
+        }
+        let crate_dir = rest.split('/').next().expect("vendored crate dir");
+        return Ok(Some(Located {
+            from,
+            licence_root: Some((
+                roots.rust_src.join("library/vendor").join(crate_dir),
+                format!("src/rust/library/vendor/{crate_dir}"),
+            )),
+            dest: format!("src/rust/library/vendor/{rest}"),
+            embed: false,
+        }));
+    }
+    if let Some(library) = stdlib_form(original) {
+        let Some(library) = normalize(&library) else {
+            return Ok(None);
+        };
+        if !library.starts_with("library/") {
+            return Ok(None);
+        }
+        let from = roots.rust_src.join(&library);
+        if !from.is_file() {
+            return Err(());
+        }
+        return Ok(Some(Located {
+            from,
+            // both stdlib forms fold to one served file (the /rustc/
+            // hash carries no information the toolchain pin lacks)
+            dest: format!("src/rust/{library}"),
+            // the toolchain licence set is placed once, at /src/rust/
+            licence_root: None,
+            embed: false,
+        }));
+    }
+    if let Some(rest) = original.strip_prefix("/cargo/registry/") {
+        let Some(rest) = normalize(rest) else {
+            return Ok(None);
+        };
+        let mut parts = rest.splitn(3, '/');
+        let (Some(first), Some(second), Some(tail)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return Ok(None);
+        };
+        let (crate_dir, file) = if first == "src" {
+            let Some(split) = tail.split_once('/') else {
+                return Ok(None);
+            };
+            split
+        } else {
+            (second, tail)
+        };
+        let Some(root) = find_registry_crate(roots.registry_src, crate_dir) else {
+            return Err(());
+        };
+        let from = root.join(file);
+        if !from.is_file() {
+            return Err(());
+        }
+        return Ok(Some(Located {
+            from,
+            dest: format!("src/vendor/{crate_dir}/{file}"),
+            licence_root: Some((root, format!("src/vendor/{crate_dir}"))),
+            embed: false,
+        }));
+    }
+    Ok(None)
 }
 
-/// Splits a registry path into `(crate dir, file path)`. Two remap
-/// forms exist: the older `/cargo/registry/src/<index dir>/<crate>-
-/// <version>/...` and the newer `/cargo/registry/<hash>/<crate>-
-/// <version>/...`; both lose their machine-specific component in the
-/// served URL - a `<crate>-<version>` dirname is unambiguous under a
-/// lockfile.
-fn registry_relative(path: &str) -> Option<(String, String)> {
-    let rest = path.strip_prefix("/cargo/registry/")?;
-    let rest = normalize(rest)?;
-    let mut parts = rest.splitn(3, '/');
-    let (first, second, tail) = (parts.next()?, parts.next()?, parts.next()?);
-    if first == "src" {
-        let (crate_dir, file) = tail.split_once('/')?;
-        Some((crate_dir.to_owned(), file.to_owned()))
-    } else {
-        let _registry_hash = first;
-        Some((second.to_owned(), tail.to_owned()))
+/// The rust-src relative path of the two stdlib shapes: `library/...`
+/// directly, or the same behind `/rustc/<hash>/`. Paths may contain
+/// `..` hops - stdarch is reached that way - which the caller folds.
+fn stdlib_form(path: &str) -> Option<String> {
+    if let Some(rest) = path.strip_prefix("/rustc/") {
+        let (_hash, rest) = rest.split_once('/')?;
+        return Some(rest.to_owned());
     }
+    path.starts_with("library/").then(|| path.to_owned())
 }
 
 /// Locates `<crate>-<version>` under any index dir of the local
-/// registry cache.
+/// registry cache (the index dir named in the DWARF need not match the
+/// local one; the crate dirname is unambiguous under a lockfile).
 fn find_registry_crate(registry_src: &Path, crate_dir: &str) -> Option<PathBuf> {
     let entries = std::fs::read_dir(registry_src).ok()?;
     for index_dir in entries.filter_map(|e| e.ok()) {
@@ -215,16 +262,6 @@ fn normalize(path: &str) -> Option<String> {
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
-}
-
-/// First path component(s) identifying the crate a file belongs to:
-/// `<prefix><crate>-<version>` for prefixed layouts, or
-/// `<index>/<crate>` for the two-level registry layout.
-fn crate_root(relative: &str, prefix: &str) -> Option<String> {
-    let rest = relative.strip_prefix(prefix)?;
-    let depth = if prefix.is_empty() { 2 } else { 1 };
-    let parts: Vec<&str> = rest.splitn(depth + 1, '/').collect();
-    (parts.len() > depth).then(|| format!("{prefix}{}", parts[..depth].join("/")))
 }
 
 fn licence_files(root: &Path) -> Vec<String> {
@@ -318,6 +355,86 @@ pub fn rewrite_integrity(html: &str, href: &str, integrity: &str) -> String {
     format!("{}{integrity}{}", &html[..value_start], &html[value_end..])
 }
 
+/// One top-level section of a wasm binary.
+struct WasmSection {
+    id: u8,
+    name: Option<String>,
+    /// Byte range of the whole section (id byte through payload end).
+    range: std::ops::Range<usize>,
+}
+
+fn decode_uleb(bytes: &[u8], at: &mut usize) -> u64 {
+    let (mut value, mut shift) = (0u64, 0u32);
+    loop {
+        let byte = bytes[*at];
+        *at += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return value;
+        }
+        shift += 7;
+    }
+}
+
+fn wasm_sections(bytes: &[u8]) -> Vec<WasmSection> {
+    assert!(
+        bytes.len() >= 8 && &bytes[..4] == b"\0asm",
+        "not a wasm binary"
+    );
+    let mut sections = Vec::new();
+    let mut at = 8;
+    while at < bytes.len() {
+        let start = at;
+        let id = bytes[at];
+        at += 1;
+        let size = decode_uleb(bytes, &mut at) as usize;
+        let payload = at..at + size;
+        let name = (id == 0).then(|| {
+            let mut cursor = payload.start;
+            let len = decode_uleb(bytes, &mut cursor) as usize;
+            String::from_utf8_lossy(&bytes[cursor..cursor + len]).into_owned()
+        });
+        at = payload.end;
+        sections.push(WasmSection {
+            id,
+            name,
+            range: start..at,
+        });
+    }
+    assert_eq!(at, bytes.len(), "trailing garbage after last section");
+    sections
+}
+
+/// Removes every `.debug_*` custom section. The source map's offsets
+/// point into the code section, so this is only sound while the debug
+/// sections all sit behind it - asserted, so a layout change fails the
+/// build instead of silently skewing every mapping.
+pub fn strip_debug_sections(bytes: &[u8]) -> Vec<u8> {
+    let sections = wasm_sections(bytes);
+    let code_end = sections
+        .iter()
+        .find(|s| s.id == 10)
+        .map(|s| s.range.end)
+        .expect("wasm has a code section");
+    let mut out = bytes[..8].to_vec();
+    for section in &sections {
+        let debug = section
+            .name
+            .as_deref()
+            .is_some_and(|n| n.starts_with(".debug_"));
+        if debug {
+            assert!(
+                section.range.start >= code_end,
+                "{} precedes the code section; stripping would skew the source map",
+                section.name.as_deref().unwrap_or_default()
+            );
+            continue;
+        }
+        out.extend_from_slice(&bytes[section.range.clone()]);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,7 +487,6 @@ mod tests {
                 "library/stdarch/crates/core_arch/src/wasm32/memory.rs",
                 "// stdarch",
             ),
-            (&rust_src, "LICENSE-MIT", "mit"),
             (
                 &rust_src,
                 "library/vendor/dlmalloc-0.2.14/LICENSE-APACHE",
@@ -395,24 +511,25 @@ mod tests {
     }
 
     #[test]
-    fn every_deterministic_class_resolves_and_licences_travel() {
+    fn every_source_serves_at_its_literal_dwarf_path() {
         let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()
             .expect("workspace");
         let (rust_src, registry) = fake_roots("resolve");
         let ours = "crates/op-assets/src/sourcemap.rs";
+        let rustc_hash = "0123456789abcdef0123456789abcdef01234567";
         let map = serde_json::json!({
             "version": 3,
             "sources": [
                 ours,
                 workspace.join(ours).to_str().expect("utf8"),
                 "library/core/src/x.rs",
-                "/rustc/0123456789abcdef0123456789abcdef01234567/library/core/src/x.rs",
+                format!("/rustc/{rustc_hash}/library/core/src/x.rs"),
+                "library/core/src/../../stdarch/crates/core_arch/src/wasm32/memory.rs",
                 "/rust/deps/dlmalloc-0.2.14/src/d.rs",
                 "/cargo/registry/src/index.crates.io-abc/wasm-bindgen-0.2.127/src/lib.rs",
                 "/cargo/registry/25cdd57fae9f0462/wasm-bindgen-0.2.127/src/lib.rs",
-                "library/core/src/../../stdarch/crates/core_arch/src/wasm32/memory.rs",
                 "src/lib.rs",
                 "../outside/escape.rs",
             ],
@@ -440,14 +557,15 @@ mod tests {
                 format!("/src/{ours}"),
                 "/src/rust/library/core/src/x.rs".to_owned(),
                 "/src/rust/library/core/src/x.rs".to_owned(),
+                "/src/rust/library/stdarch/crates/core_arch/src/wasm32/memory.rs".to_owned(),
                 "/src/rust/library/vendor/dlmalloc-0.2.14/src/d.rs".to_owned(),
                 "/src/vendor/wasm-bindgen-0.2.127/src/lib.rs".to_owned(),
                 "/src/vendor/wasm-bindgen-0.2.127/src/lib.rs".to_owned(),
-                "/src/rust/library/stdarch/crates/core_arch/src/wasm32/memory.rs".to_owned(),
                 "src/lib.rs".to_owned(),
                 "../outside/escape.rs".to_owned(),
             ]
         );
+        let _ = rustc_hash;
         assert_eq!(
             resolved.unresolved,
             vec!["src/lib.rs", "../outside/escape.rs"]
@@ -461,12 +579,16 @@ mod tests {
         assert!(contents[2..].iter().all(|c| c.is_null()));
 
         let dests: Vec<&str> = resolved.copies.iter().map(|(_, to)| to.as_str()).collect();
+        let ours_dest = format!("src/{ours}");
         for expected in [
-            format!("src/{ours}").as_str(),
+            ours_dest.as_str(),
             "src/rust/library/core/src/x.rs",
+            "src/rust/library/stdarch/crates/core_arch/src/wasm32/memory.rs",
             "src/rust/library/vendor/dlmalloc-0.2.14/src/d.rs",
             "src/vendor/wasm-bindgen-0.2.127/src/lib.rs",
-            "src/rust/LICENSE-MIT",
+            // licences travel to every served crate root, and the
+            // repo's own licences cover the /src/crates/ tree
+            "src/crates/LICENSE.md",
             "src/rust/library/vendor/dlmalloc-0.2.14/LICENSE-APACHE",
             "src/vendor/wasm-bindgen-0.2.127/LICENSE-MIT",
         ] {
@@ -475,6 +597,10 @@ mod tests {
                 "missing copy {expected}: {dests:?}"
             );
         }
+        assert!(
+            dests.iter().all(|d| d.starts_with("src/")),
+            "everything serves under /src/: {dests:?}"
+        );
         let base = rust_src.parent().expect("base");
         std::fs::remove_dir_all(base).expect("cleanup");
     }
@@ -507,6 +633,70 @@ mod tests {
             Err(panic) => std::panic::resume_unwind(panic),
             Ok(_) => panic!("resolution unexpectedly succeeded"),
         }
+    }
+
+    fn leb(mut value: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        loop {
+            let byte = (value & 0x7f) as u8;
+            value >>= 7;
+            if value == 0 {
+                out.push(byte);
+                break;
+            }
+            out.push(byte | 0x80);
+        }
+        out
+    }
+
+    fn section(id: u8, name: Option<&str>, body: &[u8]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        if let Some(name) = name {
+            payload.extend(leb(name.len() as u64));
+            payload.extend_from_slice(name.as_bytes());
+        }
+        payload.extend_from_slice(body);
+        let mut out = vec![id];
+        out.extend(leb(payload.len() as u64));
+        out.extend(payload);
+        out
+    }
+
+    fn wasm_with(sections: &[Vec<u8>]) -> Vec<u8> {
+        let mut bytes = b"\0asm\x01\0\0\0".to_vec();
+        for s in sections {
+            bytes.extend_from_slice(s);
+        }
+        bytes
+    }
+
+    #[test]
+    fn stripping_removes_debug_sections_and_nothing_else() {
+        let wasm = wasm_with(&[
+            section(1, None, &[0]),
+            section(10, None, &[1, 2, 3]),
+            section(0, Some("name"), b"n"),
+            section(0, Some(".debug_line"), &vec![9u8; 300]),
+            section(0, Some(".debug_str"), b"s"),
+        ]);
+        let stripped = strip_debug_sections(&wasm);
+        let expected = wasm_with(&[
+            section(1, None, &[0]),
+            section(10, None, &[1, 2, 3]),
+            section(0, Some("name"), b"n"),
+        ]);
+        assert_eq!(stripped, expected);
+        assert_eq!(strip_debug_sections(&stripped), expected, "idempotent");
+    }
+
+    #[test]
+    #[should_panic(expected = "precedes the code section")]
+    fn a_debug_section_before_code_refuses_to_strip() {
+        let wasm = wasm_with(&[
+            section(0, Some(".debug_line"), b"x"),
+            section(10, None, &[1]),
+        ]);
+        strip_debug_sections(&wasm);
     }
 
     #[test]
