@@ -1,4 +1,4 @@
-//! `<op-site-nav>`: the site navigation. Links live in the light DOM (an
+//! `<opt-site-nav>`: the site navigation. Links live in the light DOM (an
 //! unordered list of anchors) so they exist without wasm; the element styles
 //! them and marks the link matching the current URL with `aria-current`.
 
@@ -9,7 +9,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-site-nav",
+    tag: "opt-site-nav",
     observed_attributes: &[],
     create: |host| Box::new(SiteNav { host }),
 };

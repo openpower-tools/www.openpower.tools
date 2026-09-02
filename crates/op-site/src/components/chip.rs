@@ -1,8 +1,8 @@
-//! `<op-chip variant="neutral|ok|warning|danger|info" toggle pressed removable>`:
-//! the interactive sibling of op-badge, for filters and selections. With
+//! `<opt-chip variant="neutral|ok|warning|danger|info" toggle pressed removable>`:
+//! the interactive sibling of opt-badge, for filters and selections. With
 //! `toggle`, clicking flips the pressed state (mirrored as aria-pressed);
 //! with `removable`, a close control dispatches a composed, bubbling
-//! `op-chip-remove` event and removes the chip. Without either, it renders
+//! `opt-chip-remove` event and removes the chip. Without either, it renders
 //! as a static token.
 
 use op_webc::{CustomElement, ElementDefinition};
@@ -13,7 +13,7 @@ use web_sys::{CustomEvent, CustomEventInit, HtmlElement};
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-chip",
+    tag: "opt-chip",
     observed_attributes: &["variant", "toggle", "pressed", "removable"],
     create: |host| {
         Box::new(Chip {
@@ -147,7 +147,7 @@ button.body {{ cursor: pointer; }}
                     init.set_bubbles(true);
                     init.set_composed(true);
                     if let Ok(event) =
-                        CustomEvent::new_with_event_init_dict("op-chip-remove", &init)
+                        CustomEvent::new_with_event_init_dict("opt-chip-remove", &init)
                     {
                         let _ = host.dispatch_event(&event);
                     }

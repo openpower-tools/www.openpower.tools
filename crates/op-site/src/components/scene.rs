@@ -1,4 +1,4 @@
-//! `<op-scene>`: an embedded A-Frame scene. The A-Frame runtime is vendored
+//! `<opt-scene>`: an embedded A-Frame scene. The A-Frame runtime is vendored
 //! (vendor/aframe-1.8.0.min.js, copied unhashed into the site root) and
 //! loaded lazily on PROXIMITY, not presence: an IntersectionObserver with a
 //! 50% root margin injects the script only when the scene is within half a
@@ -23,7 +23,7 @@ use web_sys::{
 };
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-scene",
+    tag: "opt-scene",
     observed_attributes: &[],
     create: |host| {
         Box::new(Scene {
@@ -37,8 +37,8 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
 };
 
 #[wasm_bindgen(inline_js = "export function register_op_spin(tick) {
-  if (!window.AFRAME || window.AFRAME.components['op-spin']) { return; }
-  window.AFRAME.registerComponent('op-spin', {
+  if (!window.AFRAME || window.AFRAME.components['opt-spin']) { return; }
+  window.AFRAME.registerComponent('opt-spin', {
     tick: function (time, delta) { tick(this.el, time, delta); },
   });
 }")]
@@ -82,7 +82,7 @@ fn build(window: &Window, document: &Document, host: &HtmlElement, tick: &js_sys
         "<a-scene embedded style=\"height: 320px; width: 100%;\">\
 <a-sky color=\"{bg}\"></a-sky>\
 <a-plane position=\"0 0 -4\" rotation=\"-90 0 0\" width=\"14\" height=\"14\" color=\"{surface}\"></a-plane>\
-<a-box op-spin position=\"-1.2 1.1 -3.5\" color=\"{accent}\"></a-box>\
+<a-box opt-spin position=\"-1.2 1.1 -3.5\" color=\"{accent}\"></a-box>\
 <a-sphere position=\"0 1.25 -5.5\" radius=\"1.25\" color=\"{info}\"></a-sphere>\
 <a-cylinder position=\"1.4 0.75 -3\" radius=\"0.5\" height=\"1.5\" color=\"{ok}\"></a-cylinder>\
 </a-scene>"
@@ -105,16 +105,16 @@ fn start_loading(
         build(window, document, host, tick_fn);
         return;
     }
-    // Load the vendored runtime once; further op-scene elements attach to
+    // Load the vendored runtime once; further opt-scene elements attach to
     // the same script's load event.
-    let script = match document.query_selector("script[data-op-aframe]") {
+    let script = match document.query_selector("script[data-opt-aframe]") {
         Ok(Some(existing)) => existing,
         _ => {
             let Ok(script) = document.create_element("script") else {
                 return;
             };
             let _ = script.set_attribute("src", "/aframe-1.8.0.min.js");
-            let _ = script.set_attribute("data-op-aframe", "");
+            let _ = script.set_attribute("data-opt-aframe", "");
             if let Some(body) = document.body() {
                 let _ = body.append_child(&script);
             }
@@ -135,7 +135,7 @@ impl CustomElement for Scene {
         self.host
             .set_inner_html("<p class=\"loading\">Loading the scene\u{2026}</p>");
 
-        // The Rust-side tick: spin the box that carries op-spin.
+        // The Rust-side tick: spin the box that carries opt-spin.
         let tick = TickClosure::new(move |el: JsValue, time: f64, _delta: f64| {
             if let Some(el) = el.dyn_ref::<Element>() {
                 let yaw = (time * 0.03) % 360.0;

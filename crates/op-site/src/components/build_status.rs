@@ -1,4 +1,4 @@
-//! `<op-build-status>`: what is running, straight from the wasm module.
+//! `<opt-build-status>`: what is running, straight from the wasm module.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -6,7 +6,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, DEFINITIONS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-build-status",
+    tag: "opt-build-status",
     observed_attributes: &[],
     create: |host| Box::new(BuildStatus { host }),
 };
@@ -68,7 +68,10 @@ mod tests {
     fn every_definition_has_a_unique_hyphenated_tag() {
         let mut tags: Vec<&str> = DEFINITIONS.iter().map(|d| d.tag).collect();
         for tag in &tags {
-            assert!(tag.contains('-') && tag.starts_with("op-"), "bad tag {tag}");
+            assert!(
+                tag.contains('-') && tag.starts_with("opt-"),
+                "bad tag {tag}"
+            );
         }
         tags.sort_unstable();
         tags.dedup();
@@ -97,12 +100,12 @@ mod tests {
         for (page, html) in &pages {
             for tag in html
                 .split('<')
-                .filter_map(|s| s.strip_prefix("op-"))
+                .filter_map(|s| s.strip_prefix("opt-"))
                 .map(|s| {
                     let end = s
                         .find(|c: char| c.is_whitespace() || c == '>')
                         .unwrap_or(s.len());
-                    format!("op-{}", &s[..end])
+                    format!("opt-{}", &s[..end])
                 })
             {
                 assert!(

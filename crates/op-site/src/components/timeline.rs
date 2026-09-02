@@ -1,4 +1,4 @@
-//! `<op-timeline>`: dated events on a vertical line. The `<ol>` lives in the
+//! `<opt-timeline>`: dated events on a vertical line. The `<ol>` lives in the
 //! light DOM; the line and inset are drawn here, while the per-item status
 //! dots (which shadow CSS cannot reach) come from `styles/theme.css`, keyed
 //! on each item's `data-status` attribute.
@@ -9,7 +9,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-timeline",
+    tag: "opt-timeline",
     observed_attributes: &[],
     create: |host| Box::new(Timeline { host }),
 };

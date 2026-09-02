@@ -1,4 +1,4 @@
-//! `<op-callout variant="note|tip|warning|danger" heading="...">`: a
+//! `<opt-callout variant="note|tip|warning|danger" heading="...">`: a
 //! highlighted block for notes, tips and warnings. Content is light-DOM.
 //!
 //! Severity is signalled by the heading, set in small caps in the
@@ -28,7 +28,7 @@ use super::{BASE_CSS, iso, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-callout",
+    tag: "opt-callout",
     observed_attributes: &["variant", "heading"],
     create: |host| Box::new(Callout { host }),
 };

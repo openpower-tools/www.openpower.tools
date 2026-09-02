@@ -1,4 +1,4 @@
-//! `<op-theme-toggle>`: a fixed-position button cycling Auto, Light and Dark.
+//! `<opt-theme-toggle>`: a fixed-position button cycling Auto, Light and Dark.
 //! The choice is remembered across visits (see `crate::theme`).
 
 use op_webc::{CustomElement, ElementDefinition};
@@ -9,7 +9,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::theme::{self, Mode};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-theme-toggle",
+    tag: "opt-theme-toggle",
     observed_attributes: &[],
     create: |host| {
         Box::new(ThemeToggle {

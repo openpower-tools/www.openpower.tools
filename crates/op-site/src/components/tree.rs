@@ -1,4 +1,4 @@
-//! `<op-tree>`: a collapsible hierarchy - partition layouts, device trees.
+//! `<opt-tree>`: a collapsible hierarchy - partition layouts, device trees.
 //! The content is light-DOM nested lists; branch nodes are native
 //! `<details>/<summary>` pairs, so collapsing works without wasm and stays
 //! keyboard-accessible for free. Guide lines and markers come from
@@ -10,7 +10,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-tree",
+    tag: "opt-tree",
     observed_attributes: &[],
     create: |host| Box::new(Tree { host }),
 };

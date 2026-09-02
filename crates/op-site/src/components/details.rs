@@ -1,4 +1,4 @@
-//! `<op-details summary="..." open>`: a collapsible section built on the
+//! `<opt-details summary="..." open>`: a collapsible section built on the
 //! native `<details>` element, so the behaviour is free and accessible.
 
 use op_webc::{CustomElement, ElementDefinition};
@@ -8,7 +8,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-details",
+    tag: "opt-details",
     observed_attributes: &["summary", "open"],
     create: |host| Box::new(Details { host }),
 };

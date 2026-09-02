@@ -1,4 +1,4 @@
-//! `<op-badge variant="neutral|ok|warning|danger|info">`: a compact status
+//! `<opt-badge variant="neutral|ok|warning|danger|info">`: a compact status
 //! marker. The label is light-DOM text.
 
 use op_webc::{CustomElement, ElementDefinition};
@@ -7,7 +7,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-badge",
+    tag: "opt-badge",
     observed_attributes: &["variant"],
     create: |host| Box::new(Badge { host }),
 };

@@ -1,4 +1,4 @@
-//! `<op-checkbox>`: a native checkbox with its label. The control is light-DOM
+//! `<opt-checkbox>`: a native checkbox with its label. The control is light-DOM
 //! markup (a label wrapping its input keeps the association without ids), so
 //! it works without wasm and submits in forms; the styling lives in
 //! `styles/theme.css` because shadow CSS cannot reach nested slotted
@@ -10,7 +10,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-checkbox",
+    tag: "opt-checkbox",
     observed_attributes: &[],
     create: |host| Box::new(Checkbox { host }),
 };

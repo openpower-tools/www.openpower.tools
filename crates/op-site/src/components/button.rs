@@ -1,7 +1,7 @@
-//! `<op-button variant="default|primary|danger" disabled>`: an action
+//! `<opt-button variant="default|primary|danger" disabled>`: an action
 //! button. The label is light-DOM text; the button itself is shadow DOM, so
 //! it does not participate in forms - it is for actions wired in script,
-//! like the copy control on op-source. Clicks bubble out composed.
+//! like the copy control on opt-source. Clicks bubble out composed.
 //!
 //! Primary weight comes from a heavier accent border, not a fill: the accent
 //! hues only reach 3:1 against the light background, so they may border text
@@ -13,7 +13,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-button",
+    tag: "opt-button",
     observed_attributes: &["variant", "disabled"],
     create: |host| Box::new(Button { host }),
 };

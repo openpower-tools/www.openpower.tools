@@ -1,4 +1,4 @@
-//! `<op-breadcrumb>`: where-am-I navigation. The trail is a light-DOM `<ol>`
+//! `<opt-breadcrumb>`: where-am-I navigation. The trail is a light-DOM `<ol>`
 //! of links, the last carrying `aria-current="page"`; separators come from
 //! `styles/theme.css` so they stay out of the accessible name.
 
@@ -8,7 +8,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-breadcrumb",
+    tag: "opt-breadcrumb",
     observed_attributes: &[],
     create: |host| Box::new(Breadcrumb { host }),
 };

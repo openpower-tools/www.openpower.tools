@@ -28,13 +28,13 @@
  *
  * With no stored choice the theme follows the system preference; the toggle
  * flips dark and light and stores the choice, mirrored as
- * <html data-theme="dark"> or "light". The .op-theme-dark and .op-theme-light
+ * <html data-theme="dark"> or "light". The .opt-theme-dark and .opt-theme-light
  * classes scope a token set to a subtree, which the specimen uses to show
  * both themes side by side.
  */
 
 :root,
-.op-theme-dark {
+.opt-theme-dark {
   color-scheme: dark;
 
   --op-bg: #020202;
@@ -90,7 +90,7 @@
 }
 
 :root[data-theme="light"],
-.op-theme-light {
+.opt-theme-light {
   color-scheme: light;
 
   --op-bg: #E9F0F8;
@@ -127,13 +127,13 @@
   /* Order: the embedded faces (registered from the font pack), then the
      metric-fitted local() fallbacks, then a generic tail. Locally installed
      fonts are deliberately absent: everyone gets the same rendering. */
-  --op-font-sans: "IBM Plex Sans", "op-body-fallback", system-ui, sans-serif;
-  --op-font-heading: "Barlow Semi Condensed", "op-heading-fallback", system-ui, sans-serif;
-  --op-font-mono: "Iosevka SS08", "op-mono-fallback", ui-monospace, monospace;
+  --op-font-sans: "IBM Plex Sans", "opt-body-fallback", system-ui, sans-serif;
+  --op-font-heading: "Barlow Semi Condensed", "opt-heading-fallback", system-ui, sans-serif;
+  --op-font-mono: "Iosevka SS08", "opt-mono-fallback", ui-monospace, monospace;
 }
 
-/* The metric-fitted local() fallback faces (op-heading-fallback,
-   op-body-fallback, op-mono-fallback) live in a stylesheet generated at build
+/* The metric-fitted local() fallback faces (opt-heading-fallback,
+   opt-body-fallback, opt-mono-fallback) live in a stylesheet generated at build
    time by crates/op-assets, which computes every size-adjust and box override
    from the actual font tables so the numbers can never go stale. */
 
@@ -194,21 +194,21 @@ pre {
    directly slotted element (::slotted), so what sits inside a slotted list or
    table is styled here, with the same tokens. */
 
-op-key-value dt {
+opt-key-value dt {
   color: var(--op-muted);
 }
 
-op-key-value dd {
+opt-key-value dd {
   margin: 0;
 }
 
-op-table th,
-op-table td {
+opt-table th,
+opt-table td {
   padding: 0.4rem 0.75rem;
   text-align: left;
 }
 
-op-table th {
+opt-table th {
   color: var(--op-muted);
   font-weight: 600;
   border-bottom: 1px solid var(--op-border-strong);
@@ -216,29 +216,29 @@ op-table th {
 
 /* Row rules are opt-in: alignment and spacing carry an airy table on their
    own; lined earns its ink on long or dense reference tables. */
-op-table[lined] td {
+opt-table[lined] td {
   border-bottom: 1px solid var(--op-border);
 }
 
-op-table caption {
+opt-table caption {
   text-align: left;
   color: var(--op-muted);
   font-size: 0.85rem;
   padding-bottom: 0.5rem;
 }
 
-op-table[dense] th,
-op-table[dense] td {
+opt-table[dense] th,
+opt-table[dense] td {
   padding: 0.15rem 0.5rem;
 }
 
-/* The dots sit on the line drawn by op-timeline's shadow at 1.25rem inset. */
-op-timeline li {
+/* The dots sit on the line drawn by opt-timeline's shadow at 1.25rem inset. */
+opt-timeline li {
   position: relative;
   margin: 0.75rem 0;
 }
 
-op-timeline li::before {
+opt-timeline li::before {
   content: "";
   position: absolute;
   left: -1.25rem;
@@ -250,23 +250,23 @@ op-timeline li::before {
   background: var(--op-status-neutral);
 }
 
-op-timeline li[data-status="info"]::before {
+opt-timeline li[data-status="info"]::before {
   background: var(--op-status-info);
 }
 
-op-timeline li[data-status="ok"]::before {
+opt-timeline li[data-status="ok"]::before {
   background: var(--op-status-ok);
 }
 
-op-timeline li[data-status="warning"]::before {
+opt-timeline li[data-status="warning"]::before {
   background: var(--op-status-warning);
 }
 
-op-timeline li[data-status="danger"]::before {
+opt-timeline li[data-status="danger"]::before {
   background: var(--op-status-danger);
 }
 
-op-timeline time {
+opt-timeline time {
   display: block;
   font-size: 0.8rem;
   font-family: var(--op-font-mono);
@@ -276,16 +276,16 @@ op-timeline time {
 /* Form controls: light-DOM labels wrap their native controls (no ids needed),
    the elements provide the box and the selector scope. */
 
-op-input label,
-op-select label {
+opt-input label,
+opt-select label {
   display: block;
   color: var(--op-muted);
   font-size: 0.9rem;
 }
 
-op-input input,
-op-input textarea,
-op-select select {
+opt-input input,
+opt-input textarea,
+opt-select select {
   display: block;
   box-sizing: border-box;
   width: 100%;
@@ -298,19 +298,19 @@ op-select select {
   padding: 0.3rem 0.6rem;
 }
 
-op-input ::placeholder {
+opt-input ::placeholder {
   color: var(--op-muted);
   opacity: 1;
 }
 
-op-checkbox label,
-op-switch label {
+opt-checkbox label,
+opt-switch label {
   display: inline-flex;
   align-items: center;
   gap: 0.5em;
 }
 
-op-checkbox input {
+opt-checkbox input {
   accent-color: var(--op-accent);
   width: 1em;
   height: 1em;
@@ -324,7 +324,7 @@ op-checkbox input {
    state a click would set, fading out before it ever looks real. The pseudo
    elements set their own font-size, so their geometry is written in their
    own em scale: 1em there is 0.6em of the input. */
-op-switch input {
+opt-switch input {
   appearance: none;
   width: 2.6em;
   height: 1.4em;
@@ -335,7 +335,7 @@ op-switch input {
   cursor: pointer;
 }
 
-op-switch input::before {
+opt-switch input::before {
   content: "0";
   position: absolute;
   z-index: 1;
@@ -359,7 +359,7 @@ op-switch input::before {
 }
 
 /* The hover ghost: hidden until hover, always behind the real thumb. */
-op-switch input::after {
+opt-switch input::after {
   content: "1";
   position: absolute;
   z-index: 0;
@@ -379,11 +379,11 @@ op-switch input::after {
   justify-content: center;
 }
 
-op-switch input:checked {
+opt-switch input:checked {
   border-color: var(--op-accent);
 }
 
-op-switch input:checked::before {
+opt-switch input:checked::before {
   content: "1";
   left: 2.33em;
   background: var(--op-accent);
@@ -392,20 +392,20 @@ op-switch input:checked::before {
 /* Hover previews the click, slowly and on repeat, without touching the
    solid thumb: the dimmed ghost carries the numeral a click would set. */
 @media (prefers-reduced-motion: no-preference) {
-  op-switch input:hover:not(:checked)::after {
+  opt-switch input:hover:not(:checked)::after {
     display: flex;
-    animation: op-switch-preview-on 1.8s ease-in-out infinite;
+    animation: opt-switch-preview-on 1.8s ease-in-out infinite;
   }
 
-  op-switch input:checked:hover::after {
+  opt-switch input:checked:hover::after {
     content: "0";
     background: var(--op-border-strong);
     display: flex;
-    animation: op-switch-preview-off 1.8s ease-in-out infinite;
+    animation: opt-switch-preview-off 1.8s ease-in-out infinite;
   }
 }
 
-@keyframes op-switch-preview-on {
+@keyframes opt-switch-preview-on {
   0% {
     left: 0.3em;
     opacity: 0;
@@ -426,7 +426,7 @@ op-switch input:checked::before {
   }
 }
 
-@keyframes op-switch-preview-off {
+@keyframes opt-switch-preview-off {
   0% {
     left: 2.33em;
     opacity: 0;
@@ -449,7 +449,7 @@ op-switch input:checked::before {
 
 /* Breadcrumb and pagination trails are light-DOM lists of links. */
 
-op-breadcrumb ol {
+opt-breadcrumb ol {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
@@ -460,17 +460,17 @@ op-breadcrumb ol {
 }
 
 /* Separators drawn here stay out of the accessible name. */
-op-breadcrumb li + li::before {
+opt-breadcrumb li + li::before {
   content: "/";
   color: var(--op-muted);
   margin-right: 0.35rem;
 }
 
-op-breadcrumb [aria-current="page"] {
+opt-breadcrumb [aria-current="page"] {
   color: var(--op-muted);
 }
 
-op-pagination ol {
+opt-pagination ol {
   list-style: none;
   display: flex;
   flex-wrap: wrap;
@@ -479,8 +479,8 @@ op-pagination ol {
   padding: 0;
 }
 
-op-pagination a,
-op-pagination .gap {
+opt-pagination a,
+opt-pagination .gap {
   display: inline-block;
   min-width: 1.4rem;
   text-align: center;
@@ -490,31 +490,31 @@ op-pagination .gap {
   text-decoration: none;
 }
 
-op-pagination a:hover {
+opt-pagination a:hover {
   border-color: var(--op-accent);
 }
 
-op-pagination [aria-current="page"] {
+opt-pagination [aria-current="page"] {
   border-color: var(--op-border-strong);
 }
 
-/* Numbered procedure steps (op-steps): CSS counters draw the bubbles,
+/* Numbered procedure steps (opt-steps): CSS counters draw the bubbles,
    data-state colours them with the status tokens; the text carries the
    meaning in words. */
 
-op-steps ol {
-  counter-reset: op-step;
+opt-steps ol {
+  counter-reset: opt-step;
 }
 
-op-steps li {
-  counter-increment: op-step;
+opt-steps li {
+  counter-increment: opt-step;
   position: relative;
   margin: 0.9rem 0;
   padding-left: 2.5rem;
 }
 
-op-steps li::before {
-  content: counter(op-step);
+opt-steps li::before {
+  content: counter(opt-step);
   position: absolute;
   left: 0;
   top: -0.1rem;
@@ -529,7 +529,7 @@ op-steps li::before {
   color: var(--op-muted);
 }
 
-op-steps li:not(:last-child)::after {
+opt-steps li:not(:last-child)::after {
   content: "";
   position: absolute;
   left: 0.8rem;
@@ -539,51 +539,51 @@ op-steps li:not(:last-child)::after {
   background: var(--op-border);
 }
 
-op-steps li[data-state="done"]::before {
+opt-steps li[data-state="done"]::before {
   border-color: var(--op-status-ok);
   color: var(--op-status-ok);
 }
 
-op-steps li[data-state="current"]::before {
+opt-steps li[data-state="current"]::before {
   border-color: var(--op-status-info);
   color: var(--op-status-info);
   background: var(--op-raised);
 }
 
-op-steps li[data-state="error"]::before {
+opt-steps li[data-state="error"]::before {
   border-color: var(--op-status-danger);
   color: var(--op-status-danger);
 }
 
-/* Collapsible hierarchies (op-tree): native details/summary branches with
+/* Collapsible hierarchies (opt-tree): native details/summary branches with
    guide lines; the marker turns with the open state. */
 
-op-tree ul {
+opt-tree ul {
   list-style: none;
   margin: 0;
   padding: 0;
 }
 
-op-tree ul ul {
+opt-tree ul ul {
   margin-left: 0.4rem;
   padding-left: 1rem;
   border-left: 1px solid var(--op-border);
 }
 
-op-tree li {
+opt-tree li {
   margin: 0.2rem 0;
 }
 
-op-tree summary {
+opt-tree summary {
   cursor: pointer;
   list-style-type: "\25B8  ";
 }
 
-op-tree details[open] > summary {
+opt-tree details[open] > summary {
   list-style-type: "\25BE  ";
 }
 
-op-tree summary::marker {
+opt-tree summary::marker {
   color: var(--op-muted);
 }
 
@@ -598,13 +598,13 @@ op-tree summary::marker {
 }
 
 /* The A-Frame scene owns its light-DOM subtree (see op-site scene.rs). */
-op-scene {
+opt-scene {
   display: block;
   margin: 1rem 0;
   border: 1px solid var(--op-border);
 }
 
-op-scene .loading {
+opt-scene .loading {
   color: var(--op-muted);
   margin: 1rem;
 }

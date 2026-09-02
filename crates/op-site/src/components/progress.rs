@@ -1,4 +1,4 @@
-//! `<op-progress value="0..100" label="..." state="ok|warning|danger">`: a
+//! `<opt-progress value="0..100" label="..." state="ok|warning|danger">`: a
 //! progress bar. With no `value` it renders indeterminate (a sweeping band,
 //! stilled under prefers-reduced-motion). The fill takes the accent, or a
 //! status token when `state` is set; the element carries the progressbar
@@ -11,7 +11,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-progress",
+    tag: "opt-progress",
     observed_attributes: &["value", "label", "state"],
     create: |host| Box::new(Progress { host }),
 };
@@ -87,9 +87,9 @@ impl Progress {
 }}
 .sweep {{ width: 30%; }}
 @media (prefers-reduced-motion: no-preference) {{
-  .sweep {{ animation: op-progress-sweep 1.6s ease-in-out infinite; }}
+  .sweep {{ animation: opt-progress-sweep 1.6s ease-in-out infinite; }}
 }}
-@keyframes op-progress-sweep {{
+@keyframes opt-progress-sweep {{
   0% {{ margin-left: -30%; }}
   100% {{ margin-left: 100%; }}
 }}

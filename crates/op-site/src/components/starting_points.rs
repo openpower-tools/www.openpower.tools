@@ -1,4 +1,4 @@
-//! `<op-starting-points heading="...">`: a titled list. The list itself is
+//! `<opt-starting-points heading="...">`: a titled list. The list itself is
 //! light-DOM content written in `index.html` and projected through a slot, so
 //! links can be edited without touching Rust.
 
@@ -9,7 +9,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-starting-points",
+    tag: "opt-starting-points",
     observed_attributes: &["heading"],
     create: |host| Box::new(StartingPoints { host }),
 };

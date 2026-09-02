@@ -1,4 +1,4 @@
-//! `<op-empty-state heading="...">`: a placeholder for content that does not
+//! `<opt-empty-state heading="...">`: a placeholder for content that does not
 //! exist yet. The explanation (and usually a link to change that) is
 //! light-DOM content.
 
@@ -9,7 +9,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-empty-state",
+    tag: "opt-empty-state",
     observed_attributes: &["heading"],
     create: |host| Box::new(EmptyState { host }),
 };

@@ -1,4 +1,4 @@
-//! `<op-input>`: a labelled text input or textarea. The control is light-DOM
+//! `<opt-input>`: a labelled text input or textarea. The control is light-DOM
 //! markup (a label wrapping its input keeps the association without ids), so
 //! it works without wasm and submits in forms; the styling lives in
 //! `styles/theme.css` because shadow CSS cannot reach nested slotted
@@ -10,7 +10,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-input",
+    tag: "opt-input",
     observed_attributes: &[],
     create: |host| Box::new(Input { host }),
 };

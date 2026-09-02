@@ -1,4 +1,4 @@
-//! `<op-card heading="..." href="...">`: a titled content container; with
+//! `<opt-card heading="..." href="...">`: a titled content container; with
 //! `href` the heading becomes a link. Body and an optional `footer` slot are
 //! light-DOM.
 
@@ -9,7 +9,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-card",
+    tag: "opt-card",
     observed_attributes: &["heading", "href"],
     create: |host| Box::new(Card { host }),
 };

@@ -2,25 +2,25 @@
       marks steps done, current or error, colouring the number bubble with the status
       tokens while the wording carries the meaning.</p>
       <h2>Example</h2>
-      <op-steps>
+      <opt-steps>
         <ol>
           <li data-state="done"><strong>Back up the current PNOR.</strong> Read the flash to a file with pflash before touching anything.</li>
           <li data-state="done"><strong>Verify the new image.</strong> Check the sha256 against the release notes.</li>
           <li data-state="current"><strong>Flash the image.</strong> Write the new PNOR from the BMC and wait for completion.</li>
           <li><strong>Reboot and confirm.</strong> Watch the serial console for the new firmware banner.</li>
         </ol>
-      </op-steps>
+      </opt-steps>
       <h2>With an error</h2>
-      <op-steps>
+      <opt-steps>
         <ol>
           <li data-state="done"><strong>Verify the image.</strong> The sha256 matches.</li>
           <li data-state="error"><strong>Flash failed.</strong> The write stopped at 40%; do not power off - retry it.</li>
         </ol>
-      </op-steps>
+      </opt-steps>
       <h2>Markup</h2>
-      <pre>&lt;op-steps&gt;
+      <pre>&lt;opt-steps&gt;
   &lt;ol&gt;
     &lt;li data-state="done"&gt;Back up the current PNOR.&lt;/li&gt;
     &lt;li data-state="current"&gt;Flash the image.&lt;/li&gt;
   &lt;/ol&gt;
-&lt;/op-steps&gt;</pre>
+&lt;/opt-steps&gt;</pre>

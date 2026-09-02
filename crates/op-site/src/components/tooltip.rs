@@ -1,4 +1,4 @@
-//! `<op-tooltip text="...">`: a small hover/focus annotation on the slotted
+//! `<opt-tooltip text="...">`: a small hover/focus annotation on the slotted
 //! trigger. Shown on hover and focus-within; the text is also mirrored into
 //! the host's `title` attribute as the fallback for touch and assistive
 //! tech, since shadow ids cannot be referenced by light-DOM aria.
@@ -10,7 +10,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-tooltip",
+    tag: "opt-tooltip",
     observed_attributes: &["text"],
     create: |host| Box::new(Tooltip { host }),
 };

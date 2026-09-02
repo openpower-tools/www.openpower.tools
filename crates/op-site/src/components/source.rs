@@ -1,4 +1,4 @@
-//! `<op-source label="...">`: a labelled frame for a light-DOM `<pre>` block
+//! `<opt-source label="...">`: a labelled frame for a light-DOM `<pre>` block
 //! with a copy control. The label names the language, file or origin; the
 //! button copies the pre's text (clipboard access needs a secure context).
 
@@ -11,7 +11,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-source",
+    tag: "opt-source",
     observed_attributes: &["label"],
     create: |host| {
         Box::new(Source {

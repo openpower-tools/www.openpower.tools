@@ -1,4 +1,4 @@
-//! `<op-table>`: a scroll container and skin for a light-DOM `<table>`. The
+//! `<opt-table>`: a scroll container and skin for a light-DOM `<table>`. The
 //! cell and caption styles live in `styles/theme.css` (shadow CSS cannot
 //! reach inside the slotted table). Row rules are opt-in via a `lined`
 //! attribute and a `dense` attribute tightens the cell padding, both applied
@@ -10,7 +10,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-table",
+    tag: "opt-table",
     observed_attributes: &[],
     create: |host| Box::new(Table { host }),
 };

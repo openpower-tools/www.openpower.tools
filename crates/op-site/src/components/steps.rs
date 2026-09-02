@@ -1,4 +1,4 @@
-//! `<op-steps>`: a numbered procedure. The steps are a light-DOM `<ol>`;
+//! `<opt-steps>`: a numbered procedure. The steps are a light-DOM `<ol>`;
 //! each `<li>` may carry `data-state="done|current|error"` (unmarked steps
 //! read as upcoming). Numbering, bubbles and the connecting line are drawn
 //! from `styles/theme.css` with CSS counters, since shadow CSS cannot reach
@@ -11,7 +11,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-steps",
+    tag: "opt-steps",
     observed_attributes: &[],
     create: |host| Box::new(Steps { host }),
 };

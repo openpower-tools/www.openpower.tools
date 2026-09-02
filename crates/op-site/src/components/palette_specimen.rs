@@ -1,10 +1,10 @@
-//! `<op-palette-specimen>`: every palette token and the site's elements,
+//! `<opt-palette-specimen>`: every palette token and the site's elements,
 //! rendered in both themes side by side for design preview. It is the body
 //! of <https://www.openpower.tools/specimen/> (`specimen/index.html`, a
 //! second Trunk target).
 //!
 //! It renders into the light DOM rather than a shadow root so that the
-//! `.op-theme-dark` and `.op-theme-light` token scopes in `styles/theme.css`
+//! `.opt-theme-dark` and `.opt-theme-light` token scopes in `styles/theme.css`
 //! apply to its two columns; the real site elements placed inside each column
 //! pick up that column's tokens through inheritance.
 
@@ -15,7 +15,7 @@ use web_sys::{Element, HtmlElement};
 use crate::colour::{self, Rgb};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-palette-specimen",
+    tag: "opt-palette-specimen",
     observed_attributes: &[],
     create: |host| {
         Box::new(Specimen {
@@ -71,54 +71,54 @@ const TOKENS: &[(&str, &str, Role)] = &[
 ];
 
 const STYLE: &str = "
-op-palette-specimen { display: block; margin-top: 1.5rem; }
-op-palette-specimen .columns {
+opt-palette-specimen { display: block; margin-top: 1.5rem; }
+opt-palette-specimen .columns {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
   gap: 1rem;
 }
-op-palette-specimen .column {
+opt-palette-specimen .column {
   background: var(--op-bg);
   color: var(--op-text);
   padding: 1rem;
   border: 1px solid var(--op-border-strong);
   border-radius: 0.5rem;
 }
-op-palette-specimen h2 { margin: 0 0 0.25rem; font-size: 1.125rem; }
-op-palette-specimen .muted { color: var(--op-muted); }
-op-palette-specimen .swatches {
+opt-palette-specimen h2 { margin: 0 0 0.25rem; font-size: 1.125rem; }
+opt-palette-specimen .muted { color: var(--op-muted); }
+opt-palette-specimen .swatches {
   list-style: none;
   margin: 0.75rem 0 1rem;
   padding: 0;
   display: grid;
   gap: 0.45rem;
 }
-op-palette-specimen .swatch {
+opt-palette-specimen .swatch {
   display: flex;
   align-items: center;
   gap: 0.6rem;
   font-size: 0.8rem;
   line-height: 1.3;
 }
-op-palette-specimen .chip {
+opt-palette-specimen .chip {
   flex: none;
   width: 2.25rem;
   height: 2.25rem;
   border-radius: 0.3rem;
   border: 1px solid var(--op-border-strong);
 }
-op-palette-specimen .meta { display: grid; }
-op-palette-specimen .meta .role { color: var(--op-muted); }
-op-palette-specimen .meta .ratio { color: var(--op-muted); }
-op-palette-specimen pre,
-op-palette-specimen code {
+opt-palette-specimen .meta { display: grid; }
+opt-palette-specimen .meta .role { color: var(--op-muted); }
+opt-palette-specimen .meta .ratio { color: var(--op-muted); }
+opt-palette-specimen pre,
+opt-palette-specimen code {
   font-family: var(--op-font-mono);
   background: var(--op-code-bg);
   border-radius: 0.3rem;
 }
-op-palette-specimen code { padding: 0 0.25em; }
-op-palette-specimen pre { padding: 0.5rem 0.75rem; overflow-x: auto; }
-op-palette-specimen .sample-button {
+opt-palette-specimen code { padding: 0 0.25em; }
+opt-palette-specimen pre { padding: 0.5rem 0.75rem; overflow-x: auto; }
+opt-palette-specimen .sample-button {
   font: inherit;
   font-size: 0.875rem;
   color: var(--op-text);
@@ -128,19 +128,19 @@ op-palette-specimen .sample-button {
   padding: 0.35rem 0.7rem;
   cursor: pointer;
 }
-op-palette-specimen .sample-button:hover { border-color: var(--op-accent); }
-op-palette-specimen .focus-sample {
+opt-palette-specimen .sample-button:hover { border-color: var(--op-accent); }
+opt-palette-specimen .focus-sample {
   outline: 2px solid var(--op-focus);
   outline-offset: 2px;
   padding: 0 0.25rem;
 }
-op-palette-specimen .surface-sample {
+opt-palette-specimen .surface-sample {
   background: var(--op-surface);
   padding: 0.5rem 0.75rem;
   border-radius: 0.375rem;
 }
-op-palette-specimen hr.rule { border: 0; border-top: 1px solid var(--op-border); margin: 0.75rem 0; }
-op-palette-specimen hr.rule.strong { border-top-color: var(--op-border-strong); }
+opt-palette-specimen hr.rule { border: 0; border-top: 1px solid var(--op-border); margin: 0.75rem 0; }
+opt-palette-specimen hr.rule.strong { border-top-color: var(--op-border-strong); }
 ";
 
 fn column(class: &str, title: &str, source: &str) -> String {
@@ -160,7 +160,7 @@ fn column(class: &str, title: &str, source: &str) -> String {
 <h2>{title}</h2>
 <p class=\"muted\">{source}</p>
 <ul class=\"swatches\">{swatches}</ul>
-<op-site-header heading=\"Heading\" tagline=\"Tagline in secondary text under the title rule.\"></op-site-header>
+<opt-site-header heading=\"Heading\" tagline=\"Tagline in secondary text under the title rule.\"></opt-site-header>
 <p>Body text with a <a href=\"#\">link</a>, <code>inline code</code> and <span class=\"muted\">secondary text</span>.</p>
 <pre>preformatted block
 on the code background</pre>
@@ -230,12 +230,12 @@ fn render(host: &HtmlElement) {
         "<style>{STYLE}</style>
 <div class=\"columns\">{}{}</div>",
         column(
-            "op-theme-dark",
+            "opt-theme-dark",
             "Dark (default)",
             "Derived from the Worcester palette."
         ),
         column(
-            "op-theme-light",
+            "opt-theme-light",
             "Light",
             "Derived from the Nottingham palette."
         ),
@@ -301,29 +301,29 @@ const TYPE_OPTIONS: &[TypeOption] = &[
         id: "fallback",
         label: "Before the pack arrives, and wherever it never can",
         note: "Metric-fitted local() faces: the swap to the embedded faces changes letterforms without moving layout.",
-        heading: "'op-heading-fallback', system-ui, sans-serif",
-        body: "'op-body-fallback', system-ui, sans-serif",
-        mono: "'op-mono-fallback', ui-monospace, monospace",
+        heading: "'opt-heading-fallback', system-ui, sans-serif",
+        body: "'opt-body-fallback', system-ui, sans-serif",
+        mono: "'opt-mono-fallback', ui-monospace, monospace",
         check: &[],
     },
 ];
 
 const TYPE_STYLE: &str = "
-op-palette-specimen .type-option {
+opt-palette-specimen .type-option {
   background: var(--op-surface);
   border: 1px solid var(--op-border-strong);
   border-radius: 0.5rem;
   padding: 0.75rem 1rem;
   margin: 0.75rem 0;
 }
-op-palette-specimen .type-option h3 { margin: 0; font-size: 1rem; }
-op-palette-specimen .type-option .t-h {
+opt-palette-specimen .type-option h3 { margin: 0; font-size: 1rem; }
+opt-palette-specimen .type-option .t-h {
   font-size: 1.4rem;
   font-weight: 700;
   margin: 0.5rem 0 0.25rem;
 }
-op-palette-specimen .type-option .t-b { margin: 0.25rem 0; }
-op-palette-specimen .type-option .t-m {
+opt-palette-specimen .type-option .t-b { margin: 0.25rem 0; }
+opt-palette-specimen .type-option .t-m {
   font-variant-ligatures: contextual;
   margin: 0.25rem 0 0;
   background: var(--op-code-bg);
@@ -356,7 +356,7 @@ fn annotate_face_status() {
     let Some(document) = web_sys::window().and_then(|w| w.document()) else {
         return;
     };
-    let Ok(nodes) = document.query_selector_all("op-palette-specimen .face-status") else {
+    let Ok(nodes) = document.query_selector_all("opt-palette-specimen .face-status") else {
         return;
     };
     for index in 0..nodes.length() {
@@ -492,7 +492,7 @@ mod tests {
 
     #[test]
     fn columns_render_every_token_once() {
-        let markup = column("op-theme-dark", "Dark", "source");
+        let markup = column("opt-theme-dark", "Dark", "source");
         for (name, role, _) in TOKENS {
             assert_eq!(
                 markup.matches(&format!("data-token=\"{name}\"")).count(),
@@ -501,7 +501,7 @@ mod tests {
             );
             assert!(markup.contains(role), "{role}");
         }
-        assert!(markup.contains("<op-site-header"));
-        assert!(markup.starts_with("<section class=\"op-theme-dark column\">"));
+        assert!(markup.contains("<opt-site-header"));
+        assert!(markup.starts_with("<section class=\"opt-theme-dark column\">"));
     }
 }

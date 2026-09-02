@@ -206,7 +206,7 @@ pub fn nav_markup() -> String {
     ] {
         items.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>"));
     }
-    format!("<op-site-nav><ul>{items}</ul></op-site-nav>")
+    format!("<opt-site-nav><ul>{items}</ul></opt-site-nav>")
 }
 
 /// The home page's navigation: Home only. The section indexes
@@ -214,7 +214,7 @@ pub fn nav_markup() -> String {
 /// page; they remain reachable by URL and from the generated pages,
 /// which use the full [`nav_markup`].
 pub fn home_nav_markup() -> String {
-    "<op-site-nav><ul><li><a href=\"/\">Home</a></li></ul></op-site-nav>".to_string()
+    "<opt-site-nav><ul><li><a href=\"/\">Home</a></li></ul></opt-site-nav>".to_string()
 }
 
 #[cfg(test)]
@@ -245,8 +245,8 @@ mod tests {
     fn home_page_nav_matches_the_generated_nav() {
         let home = include_str!("../../../index.html");
         let nav = home_nav_markup();
-        let start = home.find("<op-site-nav>").expect("home nav");
-        let end = home.find("</op-site-nav>").expect("home nav end") + "</op-site-nav>".len();
+        let start = home.find("<opt-site-nav>").expect("home nav");
+        let end = home.find("</opt-site-nav>").expect("home nav end") + "</opt-site-nav>".len();
         assert_eq!(
             &home[start..end],
             nav,
@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn nav_links_cover_home_and_every_top_level_section() {
         let nav = nav_markup();
-        assert!(nav.starts_with("<op-site-nav>") && nav.ends_with("</op-site-nav>"));
+        assert!(nav.starts_with("<opt-site-nav>") && nav.ends_with("</opt-site-nav>"));
         for href in ["\"/\"", "\"/components/\"", "\"/specimen/\""] {
             assert!(nav.contains(href), "nav lacks {href}");
         }

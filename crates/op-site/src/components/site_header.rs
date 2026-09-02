@@ -1,4 +1,4 @@
-//! `<op-site-header heading="..." tagline="...">`: the page title. Both
+//! `<opt-site-header heading="..." tagline="...">`: the page title. Both
 //! attributes are observed, so changing them re-renders.
 
 use op_webc::{CustomElement, ElementDefinition};
@@ -8,7 +8,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-site-header",
+    tag: "opt-site-header",
     observed_attributes: &["heading", "tagline"],
     create: |host| Box::new(SiteHeader { host }),
 };

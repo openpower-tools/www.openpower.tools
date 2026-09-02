@@ -1,4 +1,4 @@
-//! `<op-key-value>`: label/value pairs for specs and metadata. The `<dl>`
+//! `<opt-key-value>`: label/value pairs for specs and metadata. The `<dl>`
 //! lives in the light DOM; the element lays it out as a two-column grid
 //! (grid placement reaches the real children of the slotted list). The
 //! dt/dd colours come from `styles/theme.css`, which shadow CSS cannot set.
@@ -9,7 +9,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-key-value",
+    tag: "opt-key-value",
     observed_attributes: &[],
     create: |host| Box::new(KeyValue { host }),
 };

@@ -1,7 +1,7 @@
-//! `<op-kpi label="..." value="..." unit="..." state="neutral|info|ok|warning|danger">`:
+//! `<opt-kpi label="..." value="..." unit="..." state="neutral|info|ok|warning|danger">`:
 //! a single measurement, data-forward: big value, small label, optional unit,
 //! the value coloured by an optional state (contrast-tested status tokens).
-//! Several op-kpi elements sit side by side in a row and wrap.
+//! Several opt-kpi elements sit side by side in a row and wrap.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -10,7 +10,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-kpi",
+    tag: "opt-kpi",
     observed_attributes: &["label", "value", "unit", "state"],
     create: |host| Box::new(Kpi { host }),
 };

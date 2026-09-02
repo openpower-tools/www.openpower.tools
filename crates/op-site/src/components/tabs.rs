@@ -1,5 +1,5 @@
-//! `<op-tabs>` and `<op-tab label="...">`: a tabbed region. The panels are
-//! light-DOM `<op-tab>` children; the tablist is rendered in shadow DOM from
+//! `<opt-tabs>` and `<opt-tab label="...">`: a tabbed region. The panels are
+//! light-DOM `<opt-tab>` children; the tablist is rendered in shadow DOM from
 //! their labels, with click and arrow-key activation. Shadow ids cannot be
 //! referenced from light DOM, so the panels carry `role="tabpanel"` without
 //! an `aria-controls` linkage; selection state still reads correctly.
@@ -13,7 +13,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-tabs",
+    tag: "opt-tabs",
     observed_attributes: &[],
     create: |host| {
         Box::new(Tabs {
@@ -24,7 +24,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
 };
 
 pub const TAB_DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-tab",
+    tag: "opt-tab",
     observed_attributes: &[],
     create: |host| Box::new(Tab { host }),
 };
@@ -54,7 +54,7 @@ fn activate(host: &HtmlElement, index: u32) {
             let _ = button.set_attribute("tabindex", if selected { "0" } else { "-1" });
         }
     }
-    if let Ok(panels) = host.query_selector_all(":scope > op-tab") {
+    if let Ok(panels) = host.query_selector_all(":scope > opt-tab") {
         for i in 0..panels.length() {
             let Some(panel) = panels.item(i).and_then(|n| n.dyn_into::<Element>().ok()) else {
                 continue;
@@ -92,7 +92,7 @@ fn focus_button(host: &HtmlElement, index: u32) {
 impl CustomElement for Tabs {
     fn connected(&mut self) {
         let mut labels = Vec::new();
-        if let Ok(panels) = self.host.query_selector_all(":scope > op-tab") {
+        if let Ok(panels) = self.host.query_selector_all(":scope > opt-tab") {
             for i in 0..panels.length() {
                 let label = panels
                     .item(i)

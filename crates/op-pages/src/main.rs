@@ -36,7 +36,7 @@ fn strip_page_specific(head: &str) -> String {
 
 fn render_page(shared_head: &str, nav: &str, page: &op_pages::Page) -> String {
     format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<title>{title}: openpower.tools</title>\n<meta name=\"description\" content=\"{description}\" />\n<link rel=\"canonical\" href=\"https://www.openpower.tools/{slug}/\" />{head}</head>\n<body>\n<op-theme-toggle></op-theme-toggle>\n{nav}\n<op-site-header heading=\"{title}\" tagline=\"{description}\"></op-site-header>\n<main>\n{body}</main>\n<op-site-footer></op-site-footer>\n<noscript><p>This page is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n",
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n<title>{title}: openpower.tools</title>\n<meta name=\"description\" content=\"{description}\" />\n<link rel=\"canonical\" href=\"https://www.openpower.tools/{slug}/\" />{head}</head>\n<body>\n<opt-theme-toggle></opt-theme-toggle>\n{nav}\n<opt-site-header heading=\"{title}\" tagline=\"{description}\"></opt-site-header>\n<main>\n{body}</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This page is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n",
         title = page.title,
         description = page.description,
         slug = page.slug,
@@ -55,7 +55,7 @@ fn main() {
     let shared_head = strip_page_specific(head_of(&home));
     let nav = op_pages::nav_markup();
     assert!(
-        home.contains("<op-site-nav>"),
+        home.contains("<opt-site-nav>"),
         "home page lacks the shared navigation; keep index.html in step with op_pages::nav_markup()"
     );
     for page in op_pages::PAGES {
@@ -95,7 +95,7 @@ mod tests {
         assert!(html.contains(&format!("<title>{}: openpower.tools</title>", page.title)));
         assert!(html.contains(&format!("https://www.openpower.tools/{}/", page.slug)));
         assert!(html.matches("<title>").count() == 1);
-        assert!(html.contains("op-site-nav"));
+        assert!(html.contains("opt-site-nav"));
         assert!(html.contains("theme-abc.css"));
         assert!(html.contains(page.body));
     }

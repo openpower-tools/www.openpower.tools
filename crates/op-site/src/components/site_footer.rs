@@ -1,4 +1,4 @@
-//! `<op-site-footer>`: independence statement, source and licence links.
+//! `<opt-site-footer>`: independence statement, source and licence links.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -6,7 +6,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
-    tag: "op-site-footer",
+    tag: "opt-site-footer",
     observed_attributes: &[],
     create: |host| Box::new(SiteFooter { host }),
 };
