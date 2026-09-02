@@ -3,8 +3,11 @@
 //! glyphs. The thumb carries the CURRENT theme's icon (moon for dark,
 //! sun for light) knocked out in the page background colour, exactly
 //! like opt-switch's numeral thumb; hovering plays the switch's slow
-//! ghost preview - a dimmed thumb bearing the OTHER icon slides toward
-//! the state a click would set, fading out before it ever looks real.
+//! ghost preview - a second thumb bearing the OTHER icon, in the same
+//! high-contrast pairing as the real one so the destination is
+//! legible, slides toward the state a click would set and fades out
+//! before it ever looks real. Under prefers-reduced-motion the ghost
+//! simply appears at the destination side instead of travelling.
 //! The action is named by a tooltip (title) and aria-label; role=switch
 //! with aria-checked (checked = dark) carries the semantics, and
 //! keyboard focus mirrors hover affordances with an accent outline.
@@ -156,17 +159,21 @@ button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
 .ghost {{
   z-index: 0;
   opacity: 0;
-  background: color-mix(in srgb, var(--op-text) 40%, transparent);
+  /* the same contrast pairing as the real thumb, only slightly
+     translucent, so the destination icon is legible mid-flight */
+  background: color-mix(in srgb, var(--op-text) 85%, transparent);
   color: var(--op-bg);
 }}
 @keyframes ghost-to-dark {{
   0% {{ left: 0.12rem; opacity: 0; }}
-  35% {{ opacity: 0.6; }}
+  22% {{ opacity: 0.9; }}
+  70% {{ opacity: 0.9; }}
   100% {{ left: calc(100% - 1.22rem); opacity: 0; }}
 }}
 @keyframes ghost-to-light {{
   0% {{ left: calc(100% - 1.22rem); opacity: 0; }}
-  35% {{ opacity: 0.6; }}
+  22% {{ opacity: 0.9; }}
+  70% {{ opacity: 0.9; }}
   100% {{ left: 0.12rem; opacity: 0; }}
 }}
 button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
@@ -178,6 +185,15 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
 @media (prefers-reduced-motion: reduce) {{
   .thumb {{ transition: none; }}
   .ghost {{ animation: none !important; }}
+  /* no travel: the preview simply appears at the destination side */
+  button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
+    opacity: 0.9;
+    left: calc(100% - 1.22rem);
+  }}
+  button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visible .ghost {{
+    opacity: 0.9;
+    left: 0.12rem;
+  }}
 }}
 </style>
 <button type=\"button\" role=\"switch\"><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>"
