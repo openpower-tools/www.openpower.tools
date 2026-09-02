@@ -17,13 +17,14 @@
   </head>
   <body>
     <opt-theme-toggle></opt-theme-toggle>
-    <opt-site-nav><ul><li><a href="/">Home</a></li></ul></opt-site-nav>
+    <opt-site-nav><ul><li><a href="/">Home</a></li><li><a href="/can-i-use/">Can I use</a></li><li><a href="/projects/">Projects</a></li></ul></opt-site-nav>
     <opt-site-header
       heading="openpower.tools"
       tagline="Community-driven support for OpenPOWER / Talos II firmware and software ports."
     ></opt-site-header>
     <main>
-      <p>This site is a skeleton; content is on its way.</p>
+      <h2>Sections</h2>
+      <div class="op-gallery"><opt-card heading="Can I use" href="/can-i-use/"><p>Evidence-backed support matrix for software on POWER, with live capability probes of your own browser.</p></opt-card><opt-card heading="Projects" href="/projects/"><p>Projects under the openpower.tools umbrella; each lives at /project/{name}/.</p></opt-card></div>
       <opt-starting-points heading="Starting points">
         <ul>
           <li><a href="https://openpowerfoundation.org/">OpenPOWER Foundation</a>: Power ISA specifications and working groups</li>

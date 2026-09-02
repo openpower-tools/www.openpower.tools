@@ -221,28 +221,82 @@ pub const PAGES: &[Page] = &[
     ),
 ];
 
-/// The shared site navigation, used verbatim on generated pages and mirrored
-/// by the home page (a test keeps them identical).
+/// One top-level section of the site.
+pub struct Section {
+    /// Absolute href of the section index (trailing slash).
+    pub href: &'static str,
+    /// Short name used in the navigation and on the home index.
+    pub label: &'static str,
+    /// One-line summary, shown on the home index; kept identical to the
+    /// section index page's own description (a test enforces it).
+    pub description: &'static str,
+    /// Whether the section appears in the shared navigation and, by
+    /// consequence, in the home index listing. Sections opt out
+    /// individually without overriding the navigation as a whole; they
+    /// stay reachable by URL and from in-page links.
+    pub in_nav: bool,
+}
+
+/// Every top-level section, nav-visible or not.
+pub const SECTIONS: &[Section] = &[
+    Section {
+        href: "/",
+        label: "Home",
+        description: "Community-driven support for OpenPOWER / Talos II firmware and software ports.",
+        in_nav: true,
+    },
+    Section {
+        href: "/can-i-use/",
+        label: "Can I use",
+        description: "Evidence-backed support matrix for software on POWER, with live capability probes of your own browser.",
+        in_nav: true,
+    },
+    Section {
+        href: "/projects/",
+        label: "Projects",
+        description: "Projects under the openpower.tools umbrella; each lives at /project/{name}/.",
+        in_nav: true,
+    },
+    Section {
+        href: "/components/",
+        label: "Components",
+        description: "The web components the site is built from, each with its states and variants.",
+        in_nav: false,
+    },
+    Section {
+        href: "/specimen/",
+        label: "Specimen",
+        description: "Every design token with its value and WCAG contrast, the site's elements in both themes, and the typography tiers.",
+        in_nav: false,
+    },
+];
+
+/// The shared site navigation: every nav-visible section, in registry
+/// order. Used verbatim on generated pages and mirrored by the home
+/// page (a test keeps them identical).
 pub fn nav_markup() -> String {
     let mut items = String::new();
-    for (href, label) in [
-        ("/", "Home"),
-        ("/can-i-use/", "Can I use"),
-        ("/projects/", "Projects"),
-        ("/components/", "Components"),
-        ("/specimen/", "Specimen"),
-    ] {
-        items.push_str(&format!("<li><a href=\"{href}\">{label}</a></li>"));
+    for section in SECTIONS.iter().filter(|s| s.in_nav) {
+        items.push_str(&format!(
+            "<li><a href=\"{}\">{}</a></li>",
+            section.href, section.label
+        ));
     }
     format!("<opt-site-nav><ul>{items}</ul></opt-site-nav>")
 }
 
-/// The home page's navigation: Home only. The section indexes
-/// (components, specimen) are deliberately not linked from the main
-/// page; they remain reachable by URL and from the generated pages,
-/// which use the full [`nav_markup`].
-pub fn home_nav_markup() -> String {
-    "<opt-site-nav><ul><li><a href=\"/\">Home</a></li></ul></opt-site-nav>".to_string()
+/// The home index's section listing: a card per nav-visible section
+/// other than home itself, carrying its one-line description. Mirrored
+/// verbatim by `index.html` (a test keeps them identical).
+pub fn home_sections_markup() -> String {
+    let mut cards = String::new();
+    for section in SECTIONS.iter().filter(|s| s.in_nav && s.href != "/") {
+        cards.push_str(&format!(
+            "<opt-card heading=\"{}\" href=\"{}\"><p>{}</p></opt-card>",
+            section.label, section.href, section.description
+        ));
+    }
+    format!("<div class=\"op-gallery\">{cards}</div>")
 }
 
 #[cfg(test)]
@@ -270,30 +324,71 @@ mod tests {
     }
 
     #[test]
+    fn nav_lists_exactly_the_nav_visible_sections() {
+        let nav = nav_markup();
+        assert!(nav.starts_with("<opt-site-nav>") && nav.ends_with("</opt-site-nav>"));
+        for section in SECTIONS {
+            let href = format!("\"{}\"", section.href);
+            assert_eq!(
+                nav.contains(&href),
+                section.in_nav,
+                "{} has in_nav={} but the nav is {nav}",
+                section.href,
+                section.in_nav
+            );
+        }
+    }
+
+    #[test]
     fn home_page_nav_matches_the_generated_nav() {
         let home = include_str!("../../../index.html");
-        let nav = home_nav_markup();
         let start = home.find("<opt-site-nav>").expect("home nav");
         let end = home.find("</opt-site-nav>").expect("home nav end") + "</opt-site-nav>".len();
         assert_eq!(
             &home[start..end],
-            nav,
-            "home nav drifted from op_pages::home_nav_markup()"
+            nav_markup(),
+            "home nav drifted from op_pages::nav_markup()"
         );
     }
 
     #[test]
-    fn nav_links_cover_home_and_every_top_level_section() {
-        let nav = nav_markup();
-        assert!(nav.starts_with("<opt-site-nav>") && nav.ends_with("</opt-site-nav>"));
-        for href in [
-            "\"/\"",
-            "\"/can-i-use/\"",
-            "\"/projects/\"",
-            "\"/components/\"",
-            "\"/specimen/\"",
-        ] {
-            assert!(nav.contains(href), "nav lacks {href}");
+    fn home_page_lists_the_nav_visible_sections_and_only_those() {
+        let home = include_str!("../../../index.html");
+        assert!(
+            home.contains(&home_sections_markup()),
+            "home index drifted from op_pages::home_sections_markup()"
+        );
+        for section in SECTIONS.iter().filter(|s| !s.in_nav) {
+            let link = format!("href=\"{}\"", section.href);
+            assert!(
+                !home.contains(&link),
+                "{} is hidden from the nav but linked from the home page",
+                section.href
+            );
+        }
+    }
+
+    #[test]
+    fn sections_describe_their_index_pages_and_have_them() {
+        let generated = generated_pages();
+        for section in SECTIONS.iter().filter(|s| s.href != "/") {
+            let slug = section.href.trim_matches('/');
+            let description = PAGES
+                .iter()
+                .find(|p| p.slug == slug)
+                .map(|p| p.description.to_owned())
+                .or_else(|| {
+                    generated
+                        .iter()
+                        .find(|p| p.slug == slug)
+                        .map(|p| p.description.clone())
+                })
+                .unwrap_or_else(|| panic!("section {} has no index page", section.href));
+            assert_eq!(
+                description, section.description,
+                "section {} description drifted from its index page",
+                section.href
+            );
         }
     }
 }

@@ -3,7 +3,8 @@
         Every web component the site is built from, shown with its states and variants so their look
         can be planned before content lands. Each entry links to a page with the full set, and the
         <a href="/components/palette/">component palette</a> renders a live example of
-        each, side by side.
+        each, side by side. The <a href="/specimen/">palette specimen</a> shows the
+        design tokens the components draw on, in both themes.
       </p>
       <opt:callout variant="note" heading="Catalogue complete for planning">
         Every component type the site plans to build with is now here, including the

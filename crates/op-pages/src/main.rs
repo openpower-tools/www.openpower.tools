@@ -72,7 +72,7 @@ fn main() {
     let nav = op_pages::nav_markup();
     assert!(
         home.contains("<opt-site-nav>"),
-        "home page lacks the shared navigation; keep index.html in step with op_pages::home_nav_markup()"
+        "home page lacks the shared navigation; keep index.html in step with op_pages::nav_markup()"
     );
     let mut emitted = 0usize;
     for page in op_pages::PAGES {
