@@ -50,148 +50,148 @@ pub const PAGES: &[Page] = &[
         "components/palette/index.html"
     ),
     page!(
-        "components/callout",
+        "component/callout",
         "Callout",
         "Highlighted blocks for notes, tips and warnings.",
-        "components/callout/index.html"
+        "component/callout/index.html"
     ),
     page!(
-        "components/badge",
+        "component/badge",
         "Badge",
         "Compact status markers with variant-coloured dots.",
-        "components/badge/index.html"
+        "component/badge/index.html"
     ),
     page!(
-        "components/card",
+        "component/card",
         "Card",
         "Titled content containers with optional link headings and footers.",
-        "components/card/index.html"
+        "component/card/index.html"
     ),
     page!(
-        "components/details",
+        "component/details",
         "Details",
         "Collapsible sections built on the native details element.",
-        "components/details/index.html"
+        "component/details/index.html"
     ),
     page!(
-        "components/key-value",
+        "component/key-value",
         "Key-value",
         "Label/value pairs for specs and metadata.",
-        "components/key-value/index.html"
+        "component/key-value/index.html"
     ),
     page!(
-        "components/table",
+        "component/table",
         "Table",
         "Tabular data in a scrollable, token-styled frame.",
-        "components/table/index.html"
+        "component/table/index.html"
     ),
     page!(
-        "components/source",
+        "component/source",
         "Source",
         "Labelled code blocks with a copy control.",
-        "components/source/index.html"
+        "component/source/index.html"
     ),
     page!(
-        "components/timeline",
+        "component/timeline",
         "Timeline",
         "Dated events on a vertical line with status dots.",
-        "components/timeline/index.html"
+        "component/timeline/index.html"
     ),
     page!(
-        "components/empty-state",
+        "component/empty-state",
         "Empty state",
         "Placeholders for content that does not exist yet.",
-        "components/empty-state/index.html"
+        "component/empty-state/index.html"
     ),
     page!(
-        "components/button",
+        "component/button",
         "Button",
         "Action buttons with primary and danger weights.",
-        "components/button/index.html"
+        "component/button/index.html"
     ),
     page!(
-        "components/input",
+        "component/input",
         "Input",
         "Labelled text inputs and textareas.",
-        "components/input/index.html"
+        "component/input/index.html"
     ),
     page!(
-        "components/select",
+        "component/select",
         "Select",
         "Labelled native selects styled with the theme tokens.",
-        "components/select/index.html"
+        "component/select/index.html"
     ),
     page!(
-        "components/checkbox",
+        "component/checkbox",
         "Checkbox",
         "Native checkboxes with their labels.",
-        "components/checkbox/index.html"
+        "component/checkbox/index.html"
     ),
     page!(
-        "components/switch",
+        "component/switch",
         "Switch",
         "Native checkboxes drawn as switches.",
-        "components/switch/index.html"
+        "component/switch/index.html"
     ),
     page!(
-        "components/tabs",
+        "component/tabs",
         "Tabs",
         "Tabbed regions with keyboard activation.",
-        "components/tabs/index.html"
+        "component/tabs/index.html"
     ),
     page!(
-        "components/breadcrumb",
+        "component/breadcrumb",
         "Breadcrumb",
         "Where-am-I trails with stylesheet separators.",
-        "components/breadcrumb/index.html"
+        "component/breadcrumb/index.html"
     ),
     page!(
-        "components/pagination",
+        "component/pagination",
         "Pagination",
         "Page navigation for split lists.",
-        "components/pagination/index.html"
+        "component/pagination/index.html"
     ),
     page!(
-        "components/tooltip",
+        "component/tooltip",
         "Tooltip",
         "Hover and focus annotations for terms.",
-        "components/tooltip/index.html"
+        "component/tooltip/index.html"
     ),
     page!(
-        "components/scene",
+        "component/scene",
         "Scene",
         "Embedded A-Frame scenes with Rust-driven behaviour.",
-        "components/scene/index.html"
+        "component/scene/index.html"
     ),
     page!(
-        "components/kpi",
+        "component/kpi",
         "KPI",
         "Single measurements: big value, small label, status colour.",
-        "components/kpi/index.html"
+        "component/kpi/index.html"
     ),
     page!(
-        "components/steps",
+        "component/steps",
         "Steps",
         "Numbered procedures with done, current and error states.",
-        "components/steps/index.html"
+        "component/steps/index.html"
     ),
     page!(
-        "components/tree",
+        "component/tree",
         "Tree",
         "Collapsible hierarchies on native details elements.",
-        "components/tree/index.html"
+        "component/tree/index.html"
     ),
     page!(
-        "components/chip",
+        "component/chip",
         "Chip",
         "Interactive filter tokens: toggleable and removable.",
-        "components/chip/index.html"
+        "component/chip/index.html"
     ),
     page!(
-        "components/progress",
+        "component/progress",
         "Progress",
         "Determinate and indeterminate progress bars.",
-        "components/progress/index.html"
+        "component/progress/index.html"
     ),
 ];
 
