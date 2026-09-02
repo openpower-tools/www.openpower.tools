@@ -1,0 +1,26 @@
+id = "chromium"
+title = "Chromium"
+category = "Browsers"
+status = "patched"
+headline = "Official distribution packages on Fedora and Debian, built with the community patch set maintained by Raptor Engineering"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Fedora"
+status = "patched"
+note = "official package since Fedora 40/41"
+
+[[channels]]
+name = "Debian"
+status = "patched"
+note = "official ppc64el package; patch set shared with Fedora"
+
+[[evidence]]
+title = "RCS wiki: Porting/Chromium"
+url = "https://wiki.raptorcs.com/wiki/Porting/Chromium"
+
+[[evidence]]
+title = "OpenPOWER patch set (Solid Silicon GitLab)"
+url = "https://gitlab.solidsilicon.io/public-development/open-source/chromium/openpower-patches"
+
+notes = "V8's ppc64 port carries its own limits (no wasm JSPI, no trap handler); see the site's research notes when embedding."

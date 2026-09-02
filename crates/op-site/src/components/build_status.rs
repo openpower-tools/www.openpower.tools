@@ -89,6 +89,11 @@ mod tests {
                 .unwrap_or_else(|e| panic!("page {} fails validation: {e:?}", page.slug));
             pages.push((page.slug.to_owned(), lowered));
         }
+        for page in op_pages::generated_pages() {
+            let lowered = op_pages::lower(&page.body_xml)
+                .unwrap_or_else(|e| panic!("generated page {} fails validation: {e:?}", page.slug));
+            pages.push((page.slug.clone(), lowered));
+        }
         pages.push(("nav".to_owned(), op_pages::nav_markup()));
         for definition in DEFINITIONS {
             assert!(

@@ -1,0 +1,20 @@
+id = "box64"
+title = "box64 (x86_64 binary translation)"
+category = "Emulation and gaming"
+status = "in-progress"
+headline = "ppc64le dynarec merged in 0.4.2 (2026-04): usable already, not complete"
+page_size = "4K strongly favoured; the 64K default hurts compatibility"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Source"
+status = "in-progress"
+note = "build with -DPPC64LE=1; SteamRT3 and Proton 11 support in the same release"
+
+[[evidence]]
+title = "box64 changelog 0.4.2"
+url = "https://github.com/ptitSeb/box64/blob/main/docs/CHANGELOG.md"
+
+[[evidence]]
+title = "JIT for POWER? (tracking issue)"
+url = "https://github.com/ptitSeb/box64/issues/242"

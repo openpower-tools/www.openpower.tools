@@ -1,0 +1,14 @@
+id = "rust"
+title = "Rust toolchain"
+category = "Toolchains"
+status = "upstream"
+headline = "powerpc64le-unknown-linux-gnu is a Tier 2 target with host tools: rustup just works"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "rustup"
+status = "upstream"
+
+[[evidence]]
+title = "Rust platform support"
+url = "https://doc.rust-lang.org/rustc/platform-support.html"

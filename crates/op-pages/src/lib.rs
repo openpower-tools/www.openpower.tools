@@ -10,6 +10,8 @@
 //! font pack and fallback references - so every page loads the same wasm and
 //! assets from clean URLs like `/components/button/`.
 
+pub mod caniuse;
+pub use caniuse::{GeneratedPage, generated_pages};
 pub mod lower;
 pub use lower::{OPT_NS, lower};
 
@@ -225,6 +227,7 @@ pub fn nav_markup() -> String {
     let mut items = String::new();
     for (href, label) in [
         ("/", "Home"),
+        ("/can-i-use/", "Can I use"),
         ("/projects/", "Projects"),
         ("/components/", "Components"),
         ("/specimen/", "Specimen"),
@@ -285,6 +288,7 @@ mod tests {
         assert!(nav.starts_with("<opt-site-nav>") && nav.ends_with("</opt-site-nav>"));
         for href in [
             "\"/\"",
+            "\"/can-i-use/\"",
             "\"/projects/\"",
             "\"/components/\"",
             "\"/specimen/\"",

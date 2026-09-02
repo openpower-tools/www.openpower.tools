@@ -1,0 +1,21 @@
+id = "kvm"
+title = "KVM virtualisation"
+category = "Platform"
+status = "upstream"
+headline = "First-class on POWER9; the classic trap is page-size mismatch between host and guest"
+page_size = "4K host cannot run the default 64K guest kernel: set a 4K guest or run a 64K host (Fedora ships 64K, Debian 4K)"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Fedora"
+status = "upstream"
+note = "64K host kernel: default guests fine"
+
+[[channels]]
+name = "Debian"
+status = "upstream"
+note = "4K host kernel: configure guests for 4K"
+
+[[evidence]]
+title = "Talospace on Debian 13 and the page-size workaround"
+url = "https://www.talospace.com/"

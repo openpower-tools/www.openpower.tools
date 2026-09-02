@@ -9,4 +9,6 @@ repository.workspace = true
 
 [dependencies]
 quick-xml = "0.37"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
 op-site = { path = "../op-site" }

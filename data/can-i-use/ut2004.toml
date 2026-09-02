@@ -1,0 +1,15 @@
+id = "ut2004"
+title = "Unreal Tournament 2004 (OldUnreal patch)"
+category = "Emulation and gaming"
+status = "upstream"
+headline = "Official native ppc64el builds since Patch 17, after Raptor offered hardware and porting help - the ecosystem's template success story"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "OldUnreal"
+status = "upstream"
+note = "native builds published alongside x86_64 and ARM64"
+
+[[evidence]]
+title = "Build-target request and delivery"
+url = "https://github.com/OldUnreal/UT2004Patches/issues/316"

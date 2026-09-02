@@ -1,0 +1,18 @@
+id = "webkitgtk"
+title = "WebKitGTK (GNOME Web)"
+category = "Browsers"
+status = "upstream"
+headline = "Builds and runs upstream, but JavaScriptCore has no ppc64le JIT (CLoop interpreter), so performance is modest"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Fedora"
+status = "upstream"
+
+[[channels]]
+name = "Debian"
+status = "upstream"
+
+[[evidence]]
+title = "Community experience reports (Raptor forums)"
+url = "https://forums.raptorcs.com/index.php?topic=501.0"

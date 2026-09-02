@@ -1,0 +1,18 @@
+id = "qemu-user"
+title = "QEMU user-mode emulation"
+category = "Emulation and gaming"
+status = "upstream"
+headline = "The baseline for running foreign-architecture Linux binaries; slower than box64 where its dynarec applies, but complete"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Fedora"
+status = "upstream"
+
+[[channels]]
+name = "Debian"
+status = "upstream"
+
+[[evidence]]
+title = "QEMU"
+url = "https://www.qemu.org/"

@@ -1,0 +1,19 @@
+id = "wine-hangover"
+title = "Wine / Hangover (Windows applications)"
+category = "Emulation and gaming"
+status = "in-progress"
+headline = "Hangover runs Windows x86_64 apps on ppc64le with caveats; the Wine PPC64 port is not upstreamed and needs rebasing"
+page_size = "4K only (PE sections are 4K-aligned; 64K hosts are unsupported)"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Source"
+status = "in-progress"
+
+[[evidence]]
+title = "Hangover ppc64le tracking issue"
+url = "https://github.com/AndreRH/hangover/issues/20"
+
+[[evidence]]
+title = "RCS wiki: Porting/Wine"
+url = "https://wiki.raptorcs.com/wiki/Porting/Wine"

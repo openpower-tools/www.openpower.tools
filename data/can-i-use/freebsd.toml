@@ -1,0 +1,24 @@
+id = "freebsd"
+title = "FreeBSD on powerpc64/powerpc64le"
+category = "Operating systems"
+status = "upstream"
+headline = "Supported today, but retirement before FreeBSD 16 is under discussion; OpenBSD/powerpc64 is well-supported on Raptor hardware as an alternative"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "FreeBSD 14/15"
+status = "upstream"
+note = "both endiannesses on the platform page; 15 may be the last stable branch"
+
+[[channels]]
+name = "OpenBSD"
+status = "upstream"
+note = "actively tested on Talos II/Blackbird; no hypervisor operation"
+
+[[evidence]]
+title = "Talospace coverage of the retirement discussion"
+url = "https://www.talospace.com/"
+
+[[evidence]]
+title = "RCS wiki: OS compatibility list"
+url = "https://wiki.raptorcs.com/wiki/Operating_System_Compatibility_List"

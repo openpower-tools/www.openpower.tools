@@ -1,8 +1,9 @@
-//! Trunk `post_build` hook, second in the chain after `op-assets`: emits every
-//! page in [`op_pages::PAGES`] into the staging directory as
-//! `<slug>/index.html`, reusing the staged home page's `<head>` so all pages
-//! share the same hashed script, style and font assets, and injecting the
-//! shared navigation into the home page.
+//! Trunk `post_build` hook, second in the chain after `op-assets`: emits
+//! every registered page (and every data-generated page) into the
+//! staging directory as `<slug>/index.html`, reusing the staged home
+//! page's `<head>` so all pages share the same hashed script, style and
+//! font assets. Page bodies are namespaced XML, validated and lowered
+//! before emission; a validation failure fails the build loudly.
 
 use std::path::PathBuf;
 
@@ -34,16 +35,31 @@ fn strip_page_specific(head: &str) -> String {
     cleaned
 }
 
-fn render_page(shared_head: &str, nav: &str, page: &op_pages::Page) -> String {
+fn render_page(
+    shared_head: &str,
+    nav: &str,
+    slug: &str,
+    title: &str,
+    description: &str,
+    body: &str,
+) -> String {
     format!(
         "<!doctype html>\n<html lang=\"en\">\n<head>\n<title>{title}: openpower.tools</title>\n<meta name=\"description\" content=\"{description}\" />\n<link rel=\"canonical\" href=\"https://www.openpower.tools/{slug}/\" />{head}</head>\n<body>\n<opt-theme-toggle></opt-theme-toggle>\n{nav}\n<opt-site-header heading=\"{title}\" tagline=\"{description}\"></opt-site-header>\n<main>\n{body}</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This page is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n",
-        title = page.title,
-        description = page.description,
-        slug = page.slug,
         head = shared_head,
-        body = page.body,
-        nav = nav,
     )
+}
+
+fn lowered_or_exit(slug: &str, source: &str) -> String {
+    match op_pages::lower(source) {
+        Ok(body) => body,
+        Err(errors) => {
+            eprintln!("op-pages: page {slug} failed validation:");
+            for e in &errors {
+                eprintln!("  {e}");
+            }
+            std::process::exit(1);
+        }
+    }
 }
 
 fn main() {
@@ -56,35 +72,46 @@ fn main() {
     let nav = op_pages::nav_markup();
     assert!(
         home.contains("<opt-site-nav>"),
-        "home page lacks the shared navigation; keep index.html in step with op_pages::nav_markup()"
+        "home page lacks the shared navigation; keep index.html in step with op_pages::home_nav_markup()"
     );
+    let mut emitted = 0usize;
     for page in op_pages::PAGES {
-        let body = match op_pages::lower(page.body) {
-            Ok(body) => body,
-            Err(errors) => {
-                eprintln!("op-pages: page {} failed validation:", page.slug);
-                for e in &errors {
-                    eprintln!("  {e}");
-                }
-                std::process::exit(1);
-            }
-        };
-        let page = op_pages::Page {
-            slug: page.slug,
-            title: page.title,
-            description: page.description,
-            body: Box::leak(body.into_boxed_str()),
-        };
-        let page = &page;
+        let body = lowered_or_exit(page.slug, page.body);
         let dir = staging.join(page.slug);
         std::fs::create_dir_all(&dir).expect("page dir");
         std::fs::write(
             dir.join("index.html"),
-            render_page(&shared_head, &nav, page),
+            render_page(
+                &shared_head,
+                &nav,
+                page.slug,
+                page.title,
+                page.description,
+                &body,
+            ),
         )
         .expect("write page");
+        emitted += 1;
     }
-    println!("op-pages: emitted {} pages", op_pages::PAGES.len());
+    for page in op_pages::generated_pages() {
+        let body = lowered_or_exit(&page.slug, &page.body_xml);
+        let dir = staging.join(&page.slug);
+        std::fs::create_dir_all(&dir).expect("page dir");
+        std::fs::write(
+            dir.join("index.html"),
+            render_page(
+                &shared_head,
+                &nav,
+                &page.slug,
+                &page.title,
+                &page.description,
+                &body,
+            ),
+        )
+        .expect("write page");
+        emitted += 1;
+    }
+    println!("op-pages: emitted {emitted} pages");
 }
 
 #[cfg(test)]
@@ -108,20 +135,38 @@ mod tests {
     fn rendered_pages_carry_their_own_metadata_and_the_shared_assets() {
         let head = strip_page_specific(head_of(SAMPLE));
         let source = &op_pages::PAGES[0];
-        let lowered = op_pages::lower(source.body).expect("page lowers");
-        let page = op_pages::Page {
-            slug: source.slug,
-            title: source.title,
-            description: source.description,
-            body: Box::leak(lowered.into_boxed_str()),
-        };
-        let page = &page;
-        let html = render_page(&head, &op_pages::nav_markup(), page);
-        assert!(html.contains(&format!("<title>{}: openpower.tools</title>", page.title)));
-        assert!(html.contains(&format!("https://www.openpower.tools/{}/", page.slug)));
+        let body = op_pages::lower(source.body).expect("page lowers");
+        let html = render_page(
+            &head,
+            &op_pages::nav_markup(),
+            source.slug,
+            source.title,
+            source.description,
+            &body,
+        );
+        assert!(html.contains(&format!("<title>{}: openpower.tools</title>", source.title)));
+        assert!(html.contains(&format!("https://www.openpower.tools/{}/", source.slug)));
         assert!(html.matches("<title>").count() == 1);
         assert!(html.contains("opt-site-nav"));
         assert!(html.contains("theme-abc.css"));
-        assert!(html.contains(page.body));
+        assert!(html.contains(&body));
+    }
+
+    #[test]
+    fn generated_pages_render_through_the_same_wrapper() {
+        let head = strip_page_specific(head_of(SAMPLE));
+        for page in op_pages::generated_pages() {
+            let body = op_pages::lower(&page.body_xml).expect("generated page lowers");
+            let html = render_page(
+                &head,
+                &op_pages::nav_markup(),
+                &page.slug,
+                &page.title,
+                &page.description,
+                &body,
+            );
+            assert!(html.contains(&format!("https://www.openpower.tools/{}/", page.slug)));
+            assert!(html.contains("opt-machine-probes"));
+        }
     }
 }

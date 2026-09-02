@@ -1,0 +1,31 @@
+id = "firefox-jit"
+title = "Firefox (SpiderMonkey JIT + WebAssembly)"
+category = "Browsers"
+status = "patched"
+headline = "Full JIT (Baseline + Ion) with wasm SIMD and JSPI at ESR 153, via downstream patches; Mozilla has invited a formal port proposal"
+page_size = "4K and 64K"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "Fedora"
+status = "patched"
+note = "JIT builds in copr today; the maintainer plans to carry it in the official firefox 153 package"
+
+[[channels]]
+name = "Source"
+status = "patched"
+note = "patch series tracks ESR 153 and applies to trunk; lld required for linking"
+
+[[evidence]]
+title = "Bugzilla 1860412 (port history, Fedora plan)"
+url = "https://bugzilla.mozilla.org/show_bug.cgi?id=1860412"
+
+[[evidence]]
+title = "SpiderMonkey Discourse announcement (2026-07)"
+url = "https://discourse.mozilla.org/t/spidermonkey-jit-with-full-wasm-support-for-power-isa-ppc64le/148860"
+
+[[evidence]]
+title = "ESR 153 patch series"
+url = "https://github.com/runlevel5/firefox-ppc64/pull/2"
+
+notes = "Without the patches, stock Firefox interprets JavaScript and disables wasm on ppc64le; complex sites crawl. The port descends from the TenFourFox JIT via Cameron Kaiser's work."

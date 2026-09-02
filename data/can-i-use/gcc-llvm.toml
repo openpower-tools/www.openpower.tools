@@ -1,0 +1,14 @@
+id = "gcc-llvm"
+title = "GCC and LLVM/Clang"
+category = "Toolchains"
+status = "upstream"
+headline = "Mature first-party support; one sharp edge: linking very large binaries (Firefox's libxul) requires lld - BFD ld cannot"
+last_verified = "2026-09-02"
+
+[[channels]]
+name = "All major distros"
+status = "upstream"
+
+[[evidence]]
+title = "Firefox ppc64le build configuration notes"
+url = "https://bugzilla.mozilla.org/show_bug.cgi?id=1860412"
