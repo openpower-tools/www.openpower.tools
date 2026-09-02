@@ -15,6 +15,7 @@ mod input;
 mod iso;
 mod key_value;
 mod kpi;
+mod machine_probes;
 mod pagination;
 mod palette_specimen;
 mod progress;
@@ -67,6 +68,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     tooltip::DEFINITION,
     scene::DEFINITION,
     kpi::DEFINITION,
+    machine_probes::DEFINITION,
     steps::DEFINITION,
     tree::DEFINITION,
     chip::DEFINITION,

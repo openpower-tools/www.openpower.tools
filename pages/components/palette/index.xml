@@ -98,6 +98,9 @@
         <opt:card heading="Build status" href="/project/openpower-tools/status/">
           <opt:build-status></opt:build-status>
         </opt:card>
+        <opt:card heading="Machine probes" href="/can-i-use/">
+          <opt:machine-probes></opt:machine-probes>
+        </opt:card>
       </div>
       <h2>Navigation</h2>
       <div class="op-gallery">
