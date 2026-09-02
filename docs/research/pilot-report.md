@@ -1,94 +1,177 @@
-# Pilot dimensioning report — op-ask native benchmarks on atlas (POWER9)
+# How fast do small language models run on our POWER9 server? Practice-run report
 
-Status: pilot per the REGISTERED protocol (docs/research/benchmark-protocol.md,
-section 4) — **dimensioning only; excluded from all decision posteriors**.
-Data: docs/research/data/pilot/ (raw per-repetition JSONL, discard logs,
-environment manifest, kernel test); evidence archive digest in
-docs/research/manifest.json.
+This is the report of a **practice run** (a "pilot") for a larger,
+pre-registered benchmarking experiment. Its job was to shake out the
+measurement rig and find out how noisy the measurements are, so the real
+experiment is sized correctly. **Nothing in here decides anything** — the
+binding rules and decision criteria live in
+`docs/research/benchmark-protocol.md`, and the real experiment's data will
+be collected fresh.
 
-## Dataset
+## What was measured, on what
 
-- Main pass 2026-09-01 18:36 -> 02:53 (+10:00): 5 RMIT-randomised rounds x
-  13 native cells x 2 models x baseline rows (pp512, tg128), llama-bench
-  `-o json` raw samples, full section-3 attestation evidence per invocation.
-- N8b/AX rerun 2026-09-02 04:12 -> 04:44 under the amended gates: zero
-  discards in 5 rounds. Merge rule: the rerun supersedes ALL main-pass AX
-  rows (those ran before the placement amendments; N8b had no accepted
-  main-pass rows). Merged n = 1,175 (m1) + 1,265 (m2) repetitions.
-- Discard history (all recorded, causes in discards.json): 76 main-pass
-  discards, every one N8b/AX under the pre-amendment NUMA gate (file-backed
-  binary pages; see the section-3 amendment); the first top-up (64
-  discards) exposed swap-driven tmpfs eviction and produced amendments
-  three and the harness placement attestation; the rerun discarded nothing.
+The op-ask assistant for www.openpower.tools will run small language
+models locally. We want to know, with evidence, how fast that is on POWER
+hardware. The test machine ("atlas") is a two-socket POWER9 server: two
+processor chips, each with 18 cores, each core able to run up to 4
+hardware threads, and each socket with its own bank of RAM attached
+(memory reachable from the other socket is slower — this locality is
+called NUMA).
 
-## Dimensioning findings
+Two models were measured, as byte-identical files everywhere:
 
-1. **The isolation controls work.** Within-round and between-round CV
-   are 0.01-0.3% for almost every single-node cell (verified against raw
-   distinct samples_ns). Worst cases, named: m1 pp512 at N18 shows 1.89%
-   between-round CV driven by one slow round (round-mean dip ~3%, with
-   elevated within-round spread in the same round — the full-socket cell
-   is the most thermally/WOF-exposed), and m2 pp512 at N2 shows 1.16%.
-   The registered variance priors
-   (tau ~ HN(0.10), sigma_w ~ HN(0.05)) are 50-100x wider than observed
-   variation — harmlessly weakly-informative — and the +/-2% HDI
-   precision-extension rule will never trigger at base n.
-2. **AX noise was environmental, not physical.** Between-round tg CV fell
-   from 6.65% (m1) / 11.57% (m2) to 0.21% / 1.15% once staging was
-   deterministic, placement was attested under policy, and swap was off.
-   The attestations in the rerun show exact 50.00/50.00 interleave.
-3. **Socket asymmetry.** Node 8 (socket 0) is consistently ~4% faster than
-   node 0 at identical geometry (N8b vs N8: m1 tg 38.11 vs 36.71; m2 42.95
-   vs 41.43). Campaign cells remain on node 0 as registered; the asymmetry
-   is reported beside any cross-socket claim.
-4. **Packed pairs cost nothing here.** P4 == N4 and P8 == N8 within noise
-   for both models and both rows — the shared-L2/L3 penalty is nil at
-   these model sizes, so D2's packed-pair lower bound will not be the
-   binding constraint.
-5. **SMT shape.** SMT2 buys +21% tg at 4 cores (S4x2 vs N4), nothing more
-   at SMT4 (S4x4 ~= S4x2); at 8 cores SMT2 buys only +6% (S8x2 vs N8) —
-   bandwidth saturation, as expected.
-6. **Scaling.** pp scales ~linearly to 36 cores (m1: 6.12 -> 198 tok/s);
-   tg saturates per socket (m1: 59.4 at 18 cores) and the cross-socket AX
-   cell reaches 93.4 (m1) / 89.5 (m2). Note the model ordering flips at
-   AX: m1 out-runs m2 once bandwidth dominates.
-7. **Former carried anomaly resolved, measured** (kernel-test.txt): on the
-   SAME model, the POWER9 K-quant kernel family is ~1.6x (t=1) / ~1.45x
-   (t=8) more efficient per weight than the legacy 32-block family
-   (m2 shipped K-quant 6.37/41.4 tok/s vs pure Q4_0 3.94/28.2); within the
-   legacy family single-thread speed orders Q8_0 > Q4_0 > Q5_0 regardless
-   of bytes (dequant compute dominates at t=1); and at equal format m2
-   still processes ~1.35x more weights/s than m1 (960-wide geometry).
-   SmolLM2's hidden width (960, not divisible by the 256-wide K-quant
-   super-block) forces 59% of its "Q4_K_M" bytes into Q5_0 and 21% into
-   Q8_0 — legacy formats on the slow family — which outweighs its 2x
-   parameter advantage. Model-selection rule for POWER: prefer
-   256-divisible widths. Platform-parity candidate: ggml has
-   repacked/interleaved fast paths for legacy formats on x86/ARM but none
-   for POWER.
-8. **Campaign budget projection from measured pace.** The 260-invocation
-   main pass took 8.3 h wall; scaling by the registered campaign matrix
-   (base n=10, full rows at N4/N8/N18, AMO pairs, STREAM) stays inside the
-   registered 60-80 h native estimate.
+- **SmolLM2-360M** — 360 million parameters (the smaller model)
+- **Qwen3-0.6B** — 750 million parameters (the larger model)
 
-## Environment notes for the record
+Two speeds were measured, both in **tokens per second** (a token is a word
+fragment; roughly 3/4 of an English word):
 
-- Swap off, numa_balancing 0, THP madvise, irqbalance stopped, IRQs +
-  system.slice on sacrificial CPUs 60-63 (atlas_restore.sh reverts all).
-- The sacrificial core costs AX one core's sibling idleness (recorded per
-  run); at the observed AX variance this is not distinguishable from
-  noise, so no AX-35 amendment is proposed.
-- ZFS ARC: never capped (owner's standing rule); node-8 headroom is
-  obtained transiently via the registered balloon, safe only with swap
-  off.
+- **prompt-reading speed** ("pp512"): how fast the model ingests a
+  512-token prompt before it can answer;
+- **generation speed** ("tg128"): how fast it writes out a 128-token
+  answer. For feel: 5 tokens/s is about human reading pace.
 
-## Tables (generated by analysis/pilot_report.py on the merged data)
+## What the configuration names mean
 
-# Pilot dimensioning report (non-decisional)
+Each measurement ran under a named CPU-and-memory configuration
+("cell"), pinned exactly — specific cores, specific memory bank:
 
-## m1 pp512
+| name | plain meaning |
+|---|---|
+| N1, N2, N4, N8, N12, N18 | 1 to 18 cores on one socket, one thread per core, cores chosen so no two share a cache slice, memory on the same socket |
+| P4, P8 | same core counts, but neighbouring cores that share cache ("packed") — tests whether cache sharing hurts |
+| S4x2, S4x4, S8x2 | hardware-thread variants: e.g. S4x2 = 4 cores running 2 threads each (8 threads total) |
+| N8b | the mirror image of N8 on the other socket — a sanity check that both halves of the machine behave alike |
+| AX | all 36 cores across both sockets, with the model's memory striped evenly across both RAM banks |
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+## How to read the numbers
+
+- Every configuration was measured in **5 separate rounds** spread across
+  the night, with the order re-shuffled each round (so slow drift in the
+  machine cannot systematically favour one configuration). Each round
+  contains about 10 repetitions.
+- **median speed** — the middle value of all repetitions; a typical run.
+- **round-to-round spread** — how much the per-round averages differ,
+  as a percentage of the overall average. This captures variation across
+  hours. 0.1% means two rounds typically agree to one part in a thousand.
+- **spread inside one round** — how much back-to-back repetitions differ.
+- A **discard** is a run the rig rejected automatically because one of
+  its self-checks failed (for example, the model's memory was not where
+  the configuration said it must be); every discard is recorded with its
+  cause, and the run is redone.
+
+## What we learned
+
+1. **The rig is very quiet.** Almost every single-socket configuration
+   repeats to within 0.01-0.3%, across hours. The worst case in the whole
+   table is 1.89% (SmolLM2 prompt-reading on all 18 cores, where one round
+   of five ran about 3% slow — that configuration works the chip hardest,
+   so its power/heat management has the most room to vary). Consequence:
+   the sample sizes planned for the real experiment are comfortably
+   sufficient.
+2. **The scary-looking noise was a bug, not the hardware.** The
+   both-sockets configuration (AX) initially varied 7-12% between rounds.
+   The cause was memory quietly ending up on the wrong socket (details
+   below); after the fix, its variation fell to 0.2-1.2%.
+3. **The two sockets are not identical.** The second socket is
+   consistently about 4% faster than the one we test on, at identical
+   settings (N8b vs N8). Both sockets are healthy; the campaign keeps
+   testing on the slower one and will report this asymmetry beside any
+   cross-socket claim.
+4. **Cache sharing between neighbouring cores costs nothing** at these
+   model sizes: the "packed" configurations (P4, P8) exactly match the
+   spread-out ones (N4, N8).
+5. **Hardware threads help a little, then not at all.** Two threads per
+   core buys +21% generation speed on 4 cores; four threads per core adds
+   nothing more; and on 8 cores two-threads-per-core only buys +6% —
+   because by then the limit is how fast RAM can feed the cores, not the
+   cores themselves.
+6. **How speed scales.** Prompt-reading scales almost perfectly with core
+   count (it is compute-limited): SmolLM2 goes 6 -> 198 tokens/s from 1 to
+   36 cores. Generation stops improving beyond roughly 12-18 cores on one
+   socket (it is limited by memory bandwidth — how many bytes/second RAM
+   can stream); using both sockets' RAM banks nearly doubles it. Note the
+   models swap places at the top end: generation speed is set by bytes
+   streamed per token, so when bandwidth is the bottleneck the smaller
+   model wins (93 vs 90 tokens/s), while at low core counts the larger
+   model is actually faster — which brings us to:
+7. **A mystery, solved and measured.** All along, the 750M model has
+   out-run the 360M model at low core counts, which looks impossible.
+   The cause is how the models' weights are stored. Weights are kept
+   compressed ("quantised") in named formats; there are two families —
+   a newer one that compresses numbers in blocks of 256 (the "K"
+   formats), and an older one using blocks of 32. The 360M model's
+   internal width is 960, which does not divide by 256 — so the
+   conversion tool silently stored most of it (80% of its bytes) in the
+   older formats. On POWER9, the code paths for the older formats are
+   about 1.6x slower per weight than the K-format paths. We proved this
+   by re-compressing BOTH models into each single format and re-timing:
+   the 750M model re-stored in the old format drops from 6.4 to 3.9
+   tokens/s. Even at the same format the 360M model is ~1.35x slower per
+   weight (its narrow 960-wide layers carry more overhead). Two
+   takeaways: when choosing models for POWER, prefer internal widths
+   divisible by 256; and speeding up the old formats' POWER9 code is a
+   worthwhile upstream contribution (faster paths already exist for
+   x86/ARM but not POWER).
+8. **The real experiment fits its budget.** This practice pass (260
+   measurements) took 8.3 hours; scaling by the registered plan stays
+   inside the estimated 60-80 hours.
+
+## Problems the practice run caught — the point of a practice run
+
+Three defects were found before any real data existed, each fixed and
+signed off by the matching independent expert reviewer, and each recorded
+as a formal amendment to the registered protocol:
+
+1. **A maths bug in the warm-up detector** (statistician sign-off): the
+   registered formula for spotting when the browser side has warmed up
+   could never trigger on realistic data — its threshold was on the wrong
+   scale, off by orders of magnitude. Caught by the rule that all analysis
+   code must be written and committed before any data is collected.
+2. **A memory-placement check that could never pass** (experimentalist
+   sign-off): the rig requires 99% of a run's memory on the declared RAM
+   bank, but the check also counted the benchmark program's own code
+   (~10 MB the operating system had cached on the other socket, and which
+   no setting can move). Every run on the second socket failed. The check
+   now counts only the memory that matters — the model and the run's
+   working memory — and reports the excluded code pages separately.
+3. **The swap file quietly undid our memory placement** (experimentalist
+   sign-off): the machine turned out to have a 128 GiB swap file, and
+   under memory pressure the OS moved our carefully-placed model copies
+   out and back to the wrong socket. Swap is now off for the campaign
+   (restored afterwards), and placement is re-verified before every round,
+   with automatic re-staging.
+
+The discard counts tell the same story honestly: 76 discards in the main
+pass and 64 in the first re-run — all from these two placement defects —
+then **zero** discards in the final re-run.
+
+## Machine state and next steps
+
+Atlas currently holds the campaign settings (swap off, interrupt handling
+and background services corralled onto one spare core, kernel memory
+options set); `harness/atlas_restore.sh` reverts everything. Next, per
+the registered order: calibration runs (measuring a configuration against
+itself to prove the pipeline reports "no difference" when there is none),
+a memory-bandwidth ceiling measurement (STREAM), and then the real
+campaign.
+
+## Where everything lives
+
+- Binding rules: `docs/research/benchmark-protocol.md` (with amendment
+  history in place)
+- Raw data: `docs/research/data/pilot/` (one JSON line per repetition;
+  discard log; environment record; format-speed test)
+- Full evidence (placement snapshots, frequency samples, raw benchmark
+  output): archive on atlas at
+  `/mnt/verus/openpower-tools/benchmarks/pilot-2026-09-01.tar.zst`,
+  SHA-256 in `docs/research/manifest.json`
+
+## The numbers
+
+## SmolLM2-360M (the 360-million-parameter model) — prompt-reading speed (512-token prompt)
+
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 15 | 5 | 6.12 | 0.06% | 0.01% |
 | N2 | 40 | 4 | 12.23 | 0.01% | 0.00% |
@@ -106,9 +189,9 @@ docs/research/manifest.json.
 
 plot: plots/pilot-m1-pp512.svg
 
-## m1 tg128
+## SmolLM2-360M (the 360-million-parameter model) — generation speed (writing 128 tokens)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 50 | 5 | 5.46 | 0.05% | 0.03% |
 | N2 | 40 | 4 | 10.44 | 0.01% | 0.01% |
@@ -126,9 +209,9 @@ plot: plots/pilot-m1-pp512.svg
 
 plot: plots/pilot-m1-tg128.svg
 
-## m2 pp512
+## Qwen3-0.6B (the 750-million-parameter model) — prompt-reading speed (512-token prompt)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 15 | 5 | 8.54 | 0.19% | 0.02% |
 | N2 | 50 | 5 | 17.06 | 1.16% | 0.30% |
@@ -146,9 +229,9 @@ plot: plots/pilot-m1-tg128.svg
 
 plot: plots/pilot-m2-pp512.svg
 
-## m2 tg128
+## Qwen3-0.6B (the 750-million-parameter model) — generation speed (writing 128 tokens)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 50 | 5 | 6.37 | 0.15% | 0.05% |
 | N2 | 50 | 5 | 12.24 | 0.13% | 0.15% |
@@ -166,3 +249,22 @@ plot: plots/pilot-m2-pp512.svg
 
 plot: plots/pilot-m2-tg128.svg
 
+
+## Glossary
+
+- **token** — a word fragment, roughly 3/4 of an English word.
+- **socket / node** — one of the two processor chips and its attached RAM
+  bank. "node 0" and "node 8" are the hardware names of the two banks.
+- **core / hardware thread (SMT)** — each of the 18 cores per socket can
+  run 1, 2 or 4 instruction streams ("threads").
+- **pinning** — forcing a program onto exact cores and an exact RAM bank
+  so runs are comparable; the rig verifies this from kernel records.
+- **NUMA / memory locality** — RAM attached to the other socket is
+  reachable but slower; placement therefore matters and is checked.
+- **quantisation format** — the compressed storage form of model weights;
+  the "K" family compresses in 256-number blocks, the older family in
+  32-number blocks, and each format has its own speed on each CPU.
+- **round** — one time-separated pass over all configurations in shuffled
+  order; five rounds per configuration.
+- **median** — the middle value; **spread** — variation as a percentage
+  of the average (see "How to read the numbers").

@@ -1,8 +1,6 @@
-# Pilot dimensioning report (non-decisional)
+## SmolLM2-360M (the 360-million-parameter model) — prompt-reading speed (512-token prompt)
 
-## m1 pp512
-
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 15 | 5 | 6.12 | 0.06% | 0.01% |
 | N2 | 40 | 4 | 12.23 | 0.01% | 0.00% |
@@ -20,9 +18,9 @@
 
 plot: plots/pilot-m1-pp512.svg
 
-## m1 tg128
+## SmolLM2-360M (the 360-million-parameter model) — generation speed (writing 128 tokens)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 50 | 5 | 5.46 | 0.05% | 0.03% |
 | N2 | 40 | 4 | 10.44 | 0.01% | 0.01% |
@@ -40,9 +38,9 @@ plot: plots/pilot-m1-pp512.svg
 
 plot: plots/pilot-m1-tg128.svg
 
-## m2 pp512
+## Qwen3-0.6B (the 750-million-parameter model) — prompt-reading speed (512-token prompt)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 15 | 5 | 8.54 | 0.19% | 0.02% |
 | N2 | 50 | 5 | 17.06 | 1.16% | 0.30% |
@@ -60,9 +58,9 @@ plot: plots/pilot-m1-tg128.svg
 
 plot: plots/pilot-m2-pp512.svg
 
-## m2 tg128
+## Qwen3-0.6B (the 750-million-parameter model) — generation speed (writing 128 tokens)
 
-| cell | n | rounds | median tok/s | between-round CV | within-round CV |
+| configuration | measurements | rounds | median speed (tokens/s) | round-to-round spread | spread inside one round |
 |---|---|---|---|---|---|
 | N1 | 50 | 5 | 6.37 | 0.15% | 0.05% |
 | N2 | 50 | 5 | 12.24 | 0.13% | 0.15% |
