@@ -209,6 +209,14 @@ pub fn nav_markup() -> String {
     format!("<op-site-nav><ul>{items}</ul></op-site-nav>")
 }
 
+/// The home page's navigation: Home only. The section indexes
+/// (components, specimen) are deliberately not linked from the main
+/// page; they remain reachable by URL and from the generated pages,
+/// which use the full [`nav_markup`].
+pub fn home_nav_markup() -> String {
+    "<op-site-nav><ul><li><a href=\"/\">Home</a></li></ul></op-site-nav>".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,13 +244,13 @@ mod tests {
     #[test]
     fn home_page_nav_matches_the_generated_nav() {
         let home = include_str!("../../../index.html");
-        let nav = nav_markup();
+        let nav = home_nav_markup();
         let start = home.find("<op-site-nav>").expect("home nav");
         let end = home.find("</op-site-nav>").expect("home nav end") + "</op-site-nav>".len();
         assert_eq!(
             &home[start..end],
             nav,
-            "home nav drifted from op_pages::nav_markup()"
+            "home nav drifted from op_pages::home_nav_markup()"
         );
     }
 
