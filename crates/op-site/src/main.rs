@@ -1,25 +1,15 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! www.openpower.tools
 //!
-//! The page is composed in `index.html` out of custom elements; each element's
-//! behaviour lives in [`components`] and is registered here when the wasm
-//! module starts. Trunk builds this binary for `wasm32-unknown-unknown` and
-//! injects the loader into `index.html`.
-
-mod colour;
-mod components;
-mod fontprobe;
-mod fonts;
-mod html;
-mod theme;
-mod viewtransition;
-
-#[cfg(test)]
-mod palette;
+//! The page is composed in `index.html` out of custom elements; each
+//! element's behaviour lives in `op_site::components` and is registered
+//! here when the wasm module starts. Trunk builds this binary for
+//! `wasm32-unknown-unknown` and injects the loader into `index.html`.
 
 fn main() {
     console_error_panic_hook::set_once();
-    fonts::install();
-    for definition in components::DEFINITIONS {
+    op_site::fonts::install();
+    for definition in op_site::components::DEFINITIONS {
         op_webc::define(definition);
     }
 }

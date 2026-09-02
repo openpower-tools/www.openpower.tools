@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Library target: exposes the component registry so build-time tooling
-//! (op-pages' XML vocabulary validation) can consume the exact element
-//! definitions the site registers at runtime. The wasm entry point stays
-//! in `main.rs` with its own module tree.
+//! www.openpower.tools component library.
+//!
+//! The single module tree: the wasm binary in `main.rs` is a thin entry
+//! point over this library, and build-time tooling (op-pages' XML
+//! vocabulary validation) consumes [`components::DEFINITIONS`] and the
+//! [`theme`] storage contract from here.
 
 mod colour;
 pub mod components;
 mod fontprobe;
+pub mod fonts;
 mod html;
-mod theme;
+pub mod theme;
 mod viewtransition;
+
+#[cfg(test)]
+mod palette;

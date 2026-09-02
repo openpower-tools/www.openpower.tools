@@ -10,7 +10,15 @@
 
 use web_sys::Storage;
 
-pub const STORAGE_KEY: &str = "op-theme";
+/// Storage keys are namespaced (owner scheme, 2026-09-02, no migration
+/// from the old flat key): reverse-domain site prefix, then versioned
+/// storage and configuration scopes, then the setting path. Leaves under
+/// the theme scope: `current` (the explicit choice, stored here) and
+/// room for `default` and friends later.
+pub const STORAGE_BASE: &str =
+    "tools.openpower.sites.www.storage.version.1.configuration.version.1.ux.theme";
+pub const STORAGE_KEY: &str =
+    "tools.openpower.sites.www.storage.version.1.configuration.version.1.ux.theme.current";
 const ATTRIBUTE: &str = "data-theme";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -164,6 +172,11 @@ mod tests {
                 "{description}"
             );
         }
+    }
+
+    #[test]
+    fn storage_key_is_the_current_leaf_of_the_base() {
+        assert_eq!(STORAGE_KEY, format!("{STORAGE_BASE}.current"));
     }
 
     /// The pre-paint script in both pages must read the same key and values.
