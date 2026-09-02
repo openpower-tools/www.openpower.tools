@@ -11,6 +11,9 @@
     <link rel="canonical" href="https://www.openpower.tools/" />
     <!-- Apply a remembered theme before first paint; the contract with crates/op-site/src/theme.rs is tested. -->
     <script>try{var t=localStorage.getItem("tools.openpower.sites.www.storage.version.1.configuration.version.1.ux.theme.current");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}</script>
+    <!-- Headings carry fallback letter tracking until the real faces are in;
+         data-op-fonts=ready zeroes it (contract tested by op-assets). -->
+    <script>if(document.fonts)document.fonts.ready.then(function(){document.documentElement.dataset.opFonts="ready"})</script>
     <link data-trunk rel="css" href="styles/theme.css" />
     <link data-trunk rel="copy-file" href="vendor/aframe-1.8.0.min.js" />
     <link data-trunk rel="rust" href="crates/op-site/Cargo.toml" data-wasm-opt="z" />

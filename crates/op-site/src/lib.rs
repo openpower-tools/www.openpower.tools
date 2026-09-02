@@ -9,10 +9,8 @@
 mod colour;
 pub mod components;
 mod fontprobe;
-pub mod fonts;
 mod html;
 pub mod theme;
-mod viewtransition;
 
 #[cfg(test)]
 mod palette;

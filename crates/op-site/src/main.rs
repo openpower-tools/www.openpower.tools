@@ -8,7 +8,6 @@
 
 fn main() {
     console_error_panic_hook::set_once();
-    op_site::fonts::install();
     for definition in op_site::components::DEFINITIONS {
         op_webc::define(definition);
     }

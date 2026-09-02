@@ -20,7 +20,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     create: |host| {
         Box::new(Specimen {
             host,
-            on_fonts_installed: None,
+            on_fonts_loadingdone: None,
         })
     },
 };
@@ -28,7 +28,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
 struct Specimen {
     host: HtmlElement,
     /// Kept alive for as long as the element exists.
-    on_fonts_installed: Option<wasm_bindgen::prelude::Closure<dyn FnMut(web_sys::Event)>>,
+    on_fonts_loadingdone: Option<wasm_bindgen::prelude::Closure<dyn FnMut(web_sys::Event)>>,
 }
 
 /// How a token's contrast is reported.
@@ -256,20 +256,19 @@ fn render(host: &HtmlElement) {
 
 impl CustomElement for Specimen {
     fn connected(&mut self) {
-        // Attach the listener before the first render/probe so a pack that
-        // installs in between cannot be missed.
-        if self.on_fonts_installed.is_none()
+        // Re-annotate whenever the stylesheet finishes loading faces (they
+        // arrive lazily as glyphs demand them), so the badges track reality.
+        if self.on_fonts_loadingdone.is_none()
             && let Some(document) = web_sys::window().and_then(|w| w.document())
         {
             let closure =
                 wasm_bindgen::prelude::Closure::<dyn FnMut(web_sys::Event)>::new(move |_event| {
                     annotate_face_status()
                 });
-            let _ = document.add_event_listener_with_callback(
-                "op-fonts-installed",
-                closure.as_ref().unchecked_ref(),
-            );
-            self.on_fonts_installed = Some(closure);
+            let _ = document
+                .fonts()
+                .add_event_listener_with_callback("loadingdone", closure.as_ref().unchecked_ref());
+            self.on_fonts_loadingdone = Some(closure);
         }
         render(&self.host);
     }

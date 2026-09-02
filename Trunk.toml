@@ -17,8 +17,8 @@ addresses = ["127.0.0.1"]
 port = 8080
 
 # Trunk runs same-stage hooks concurrently, so the two post-build steps are
-# sequenced in one command: op-assets packs the webfonts into a content-hashed
-# blob and injects <meta name="op-fonts"> plus the fallback stylesheet link,
+# sequenced in one command: op-assets emits each webfont as a content-hashed
+# woff2 and injects preload links plus the generated font stylesheet,
 # then op-pages emits every registered page as <slug>/index.html reusing the
 # staged head, which by then carries those font links.
 [[hooks]]

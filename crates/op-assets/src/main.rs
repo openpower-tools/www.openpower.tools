@@ -3,12 +3,15 @@
 //! 1. Measures each embedded face from its own font tables and computes the
 //!    fit against the recorded target geometry of the original it replaces,
 //!    so metric numbers can never go stale when fonts are updated.
-//! 2. Encodes all faces into a single content-hashed pack
-//!    (`fonts-<hash>.pack`) in the Trunk staging directory and injects
-//!    `<meta name="op-fonts">` so the wasm can fetch it page-relative.
-//! 3. Generates the metric-fitted `local()` fallback stylesheet
-//!    (`fonts-fallback-<hash>.css`) from the same targets against the frozen
-//!    metrics of the Arial-class system designs, and injects its `<link>`.
+//! 2. Copies every face into the Trunk staging directory as its own
+//!    content-hashed woff2 and generates one `fonts-<hash>.css` holding
+//!    the metric-fitted `local()` fallback faces (from the same targets
+//!    against the frozen metrics of the Arial-class system designs)
+//!    followed by the real `@font-face` url() rules.
+//! 3. Injects `<link rel="preload" as="font">` for the first-paint faces
+//!    plus the stylesheet link, so text renders styled with no runtime
+//!    font code at all: no wasm registration, no flash beyond a
+//!    same-metrics letterform swap in the first frames.
 //!
 //! Browsers apply `size-adjust` to override metrics as well (verified by
 //! measurement in Chromium), so every override written here is the target box
@@ -16,10 +19,31 @@
 
 use std::path::{Path, PathBuf};
 
-use op_fontpack::{
-    Face, FitTarget, MANIFEST, PLEX_SANS_TARGET, PRAGMATA_TARGET, REF_STRING, SYS_TARGET,
-};
 use sha2::{Digest, Sha256};
+
+mod manifest;
+use manifest::{
+    FitTarget, MANIFEST, ManifestEntry, PLEX_SANS_TARGET, PRAGMATA_TARGET, REF_STRING, SYS_TARGET,
+};
+
+/// One loaded face: CSS descriptors, computed fit metrics, bytes, and
+/// the manifest entry it came from.
+struct Face {
+    entry: &'static ManifestEntry,
+    /// `(size-adjust, ascent-override, descent-override)`; `None` = as is.
+    metrics: Option<(String, String, String)>,
+    bytes: Vec<u8>,
+}
+
+/// Faces fetched before first paint: what the first view of any page
+/// renders with (body text, bold headings, code). The rest load lazily
+/// as glyphs demand them, behind the metric-fitted fallbacks.
+const PRELOAD: &[(&str, &str, &str)] = &[
+    ("IBM Plex Sans", "400", "normal"),
+    ("IBM Plex Sans", "700", "normal"),
+    ("Barlow Semi Condensed", "700", "normal"),
+    ("Iosevka SS08", "400", "normal"),
+];
 
 /// Advance width of [`REF_STRING`] at a 100px em, measured from the font's
 /// cmap and hmtx tables (kerning is not applied; these faces do not kern the
@@ -93,9 +117,7 @@ fn load_faces(assets: &Path) -> (Vec<Face>, Option<RenderedStandin>) {
                 (format!("{s}%"), format!("{a}%"), format!("{d}%"))
             });
             Face {
-                family: entry.family.to_owned(),
-                weight: entry.weight.to_owned(),
-                style: entry.style.to_owned(),
+                entry,
                 metrics,
                 bytes: woff2,
             }
@@ -216,42 +238,99 @@ fn short_hash(bytes: &[u8]) -> String {
     )
 }
 
+/// Content-hashed staging file name for a face.
+fn face_file_name(face: &Face) -> String {
+    let stem = Path::new(face.entry.path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .expect("face path has a stem")
+        .to_lowercase();
+    format!("font-{stem}-{}.woff2", short_hash(&face.bytes))
+}
+
+/// The `@font-face` rules for the real faces: plain woff2 URLs with
+/// `font-display: swap` (the metric-fitted fallbacks cover the wait
+/// without layout shift) and, for fitted families, the same override
+/// descriptors the runtime registration used to set.
+fn faces_css(faces: &[Face]) -> String {
+    let mut css = String::from(
+        "\n/* The shipped faces. Fitted families carry the size-adjust and box\n   overrides computed at build time from their own tables. */\n",
+    );
+    for face in faces {
+        css.push_str(&format!(
+            "\n@font-face {{\n  font-family: \"{}\";\n  src: url(\"/{}\") format(\"woff2\");\n  font-weight: {};\n  font-style: {};\n  font-display: swap;\n",
+            face.entry.family,
+            face_file_name(face),
+            face.entry.weight,
+            face.entry.style,
+        ));
+        if let Some((size_adjust, ascent, descent)) = &face.metrics {
+            css.push_str(&format!(
+                "  size-adjust: {size_adjust};\n  ascent-override: {ascent};\n  descent-override: {descent};\n  line-gap-override: 0%;\n"
+            ));
+        }
+        css.push_str("}\n");
+    }
+    css
+}
+
+/// Head links: preloads for the first-paint faces, then the stylesheet.
+/// Absolute paths: generated pages live at nested URLs. `crossorigin`
+/// is required on font preloads even same-origin, or the browser
+/// fetches the file twice.
+fn head_links(faces: &[Face], css_name: &str) -> String {
+    let mut links = String::new();
+    for spec in PRELOAD {
+        let face = faces
+            .iter()
+            .find(|f| (f.entry.family, f.entry.weight, f.entry.style) == *spec)
+            .unwrap_or_else(|| panic!("preload face {spec:?} not in the manifest"));
+        links.push_str(&format!(
+            "<link rel=\"preload\" as=\"font\" type=\"font/woff2\" href=\"/{}\" crossorigin />",
+            face_file_name(face)
+        ));
+    }
+    links.push_str(&format!("<link rel=\"stylesheet\" href=\"/{css_name}\" />"));
+    links
+}
+
 fn main() {
     let staging = std::env::var_os("TRUNK_STAGING_DIR")
         .map(PathBuf::from)
         .expect("TRUNK_STAGING_DIR is set by Trunk for hooks");
-    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts");
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
 
     let (faces, heading_standin) = load_faces(&assets);
-    let pack = op_fontpack::encode(&faces);
-    let pack_name = format!("fonts-{}.pack", short_hash(&pack));
-    std::fs::write(staging.join(&pack_name), &pack).expect("write pack");
+    for face in &faces {
+        std::fs::write(staging.join(face_file_name(face)), &face.bytes).expect("write face");
+    }
 
-    let css = fallback_css(heading_standin.as_ref());
-    let css_name = format!("fonts-fallback-{}.css", short_hash(css.as_bytes()));
-    std::fs::write(staging.join(&css_name), &css).expect("write fallback css");
+    let css = format!(
+        "{}{}",
+        fallback_css(heading_standin.as_ref()),
+        faces_css(&faces)
+    );
+    let css_name = format!("fonts-{}.css", short_hash(css.as_bytes()));
+    std::fs::write(staging.join(&css_name), &css).expect("write fonts css");
 
     let index = staging.join("index.html");
     let html = std::fs::read_to_string(&index).expect("read staged index.html");
-    assert!(
-        !html.contains("name=\"op-fonts\""),
-        "op-fonts meta already present"
+    assert!(!html.contains("as=\"font\""), "font links already present");
+    let html = html.replacen(
+        "</head>",
+        &format!("{}</head>", head_links(&faces, &css_name)),
+        1,
     );
-    // Absolute paths: generated pages live at nested URLs.
-    let inject = format!(
-        "<link rel=\"stylesheet\" href=\"/{css_name}\" /><meta name=\"op-fonts\" content=\"/{pack_name}\" />"
-    );
-    let html = html.replacen("</head>", &format!("{inject}</head>"), 1);
     assert!(
-        html.contains("name=\"op-fonts\""),
+        html.contains("as=\"font\""),
         "no </head> in staged index.html"
     );
     std::fs::write(&index, html).expect("write staged index.html");
 
     println!(
-        "op-assets: packed {} faces into {pack_name} ({} bytes), fallback css {css_name}",
+        "op-assets: emitted {} woff2 files ({} preloaded) and {css_name}",
         faces.len(),
-        pack.len()
+        PRELOAD.len(),
     );
 }
 
@@ -260,7 +339,7 @@ mod tests {
     use super::*;
 
     fn assets() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../op-site/assets/fonts")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("assets")
     }
 
     /// Every manifest entry must point at a real woff2 file in the assets.
@@ -284,7 +363,9 @@ mod tests {
         let metric = |family: &str| {
             faces
                 .iter()
-                .find(|f| f.family == family && f.style == "normal" && f.weight == "400")
+                .find(|f| {
+                    f.entry.family == family && f.entry.style == "normal" && f.entry.weight == "400"
+                })
                 .and_then(|f| f.metrics.clone())
                 .unwrap_or_else(|| panic!("{family} has no computed metrics"))
         };
@@ -311,14 +392,14 @@ mod tests {
         assert!(
             faces
                 .iter()
-                .filter(|f| f.family == "IBM Plex Sans")
+                .filter(|f| f.entry.family == "IBM Plex Sans")
                 .all(|f| f.metrics.is_none())
         );
     }
 
-    /// The generated stylesheet must contain only local() sources and one
-    /// rule per fallback family, and the same input must always produce the
-    /// same bytes so the content hash is reproducible.
+    /// The fallback block must contain only local() sources and one rule
+    /// per fallback family, and generation must be deterministic so the
+    /// content hash is reproducible.
     #[test]
     fn fallback_css_is_local_only_and_deterministic() {
         let (faces, standin) = load_faces(&assets());
@@ -329,7 +410,47 @@ mod tests {
             assert!(css.contains(def.family));
         }
         assert_eq!(css, fallback_css(standin.as_ref()));
-        assert_eq!(op_fontpack::encode(&faces), op_fontpack::encode(&faces));
+        assert_eq!(faces_css(&faces), faces_css(&faces));
+    }
+
+    /// The face rules must cover the whole manifest with hashed woff2
+    /// URLs, swap display, and override descriptors exactly where a fit
+    /// was computed; every preload spec must resolve to a real face.
+    #[test]
+    fn faces_css_and_preloads_cover_the_manifest() {
+        let (faces, _) = load_faces(&assets());
+        let css = faces_css(&faces);
+        assert_eq!(css.matches("@font-face").count(), MANIFEST.len());
+        assert_eq!(css.matches("url(\"/font-").count(), MANIFEST.len());
+        assert_eq!(css.matches("font-display: swap").count(), MANIFEST.len());
+        let fitted = faces.iter().filter(|f| f.metrics.is_some()).count();
+        assert_eq!(css.matches("size-adjust:").count(), fitted);
+        assert_eq!(fitted, MANIFEST.iter().filter(|e| e.fit.is_some()).count());
+        let links = head_links(&faces, "fonts-test.css");
+        assert_eq!(links.matches("rel=\"preload\"").count(), PRELOAD.len());
+        assert_eq!(links.matches("crossorigin").count(), PRELOAD.len());
+        assert!(links.ends_with("<link rel=\"stylesheet\" href=\"/fonts-test.css\" />"));
+        for face in &faces {
+            let name = face_file_name(face);
+            assert!(name.starts_with("font-") && name.ends_with(".woff2"));
+            assert!(!name.contains(' '), "{name}");
+        }
+    }
+
+    /// The heading tracking rule keys off data-op-fonts="ready", which
+    /// index.html must arm from document.fonts.ready now that no wasm
+    /// registration path exists.
+    #[test]
+    fn index_html_arms_the_fonts_ready_attribute() {
+        let index = include_str!("../../../index.html");
+        assert!(
+            index.contains("document.fonts.ready"),
+            "index.html lacks the fonts.ready script"
+        );
+        assert!(
+            index.contains("dataset.opFonts=\"ready\""),
+            "index.html does not set data-op-fonts=ready"
+        );
     }
 
     /// The heading fallback uses the eye-chosen optical size, and the

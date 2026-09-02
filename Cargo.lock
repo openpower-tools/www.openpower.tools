@@ -217,15 +217,10 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 name = "op-assets"
 version = "0.1.0"
 dependencies = [
- "op-fontpack",
  "sha2",
  "ttf-parser",
  "woff2-patched",
 ]
-
-[[package]]
-name = "op-fontpack"
-version = "0.1.0"
 
 [[package]]
 name = "op-pages"
@@ -243,7 +238,6 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
- "op-fontpack",
  "op-pages",
  "op-webc",
  "wasm-bindgen",
