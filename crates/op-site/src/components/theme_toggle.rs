@@ -1,15 +1,14 @@
-//! `<opt-theme-toggle>`: a fixed-position button flipping Light and Dark.
-//! The choice is remembered across visits (see `crate::theme`).
-//!
-//! Resting state is unemphasised: a quiet raised background, no border,
-//! and a semantic glyph for the current theme (moon for dark, sun for
-//! light). On hover or keyboard focus the control raises (slight lift and
-//! shadow), takes an accent outline, and the glyph morphs into the text
-//! label - the same reveal pattern as the switch. The accessible name is
-//! always present via aria-label, so the icon-only resting state loses
-//! nothing.
-//! A `data-preview` attribute on the host forces the revealed state, so
-//! specimen pages can show it without interaction.
+//! `<opt-theme-toggle>`: the theme control as a switch - the site's own
+//! on/off slider metaphor with the IEC numerals swapped for theme
+//! glyphs. The thumb carries the CURRENT theme's icon (moon for dark,
+//! sun for light) knocked out in the page background colour, exactly
+//! like opt-switch's numeral thumb; hovering plays the switch's slow
+//! ghost preview - a dimmed thumb bearing the OTHER icon slides toward
+//! the state a click would set, fading out before it ever looks real.
+//! The action is named by a tooltip (title) and aria-label; role=switch
+//! with aria-checked (checked = dark) carries the semantics, and
+//! keyboard focus mirrors hover affordances with an accent outline.
+//! The choice persists via `crate::theme`.
 
 use op_webc::{CustomElement, ElementDefinition};
 use wasm_bindgen::prelude::*;
@@ -34,8 +33,8 @@ struct ThemeToggle {
     host: HtmlElement,
     /// Kept alive for as long as the element exists.
     on_click: Option<Closure<dyn FnMut(Event)>>,
-    /// Updates the label if the system preference changes while no explicit
-    /// choice is stored.
+    /// Updates the control if the system preference changes while no
+    /// explicit choice is stored.
     on_scheme_change: Option<Closure<dyn FnMut(Event)>>,
 }
 
@@ -44,14 +43,32 @@ const SUN: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"
 const MOON: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z\"/></svg>";
 
 fn show(button: &Element, mode: Mode) {
-    if let Some(icon) = button.query_selector(".icon").ok().flatten() {
-        icon.set_inner_html(match mode {
+    let _ = button.set_attribute(
+        "data-mode",
+        match mode {
+            Mode::Dark => "dark",
+            Mode::Light => "light",
+        },
+    );
+    let _ = button.set_attribute(
+        "aria-checked",
+        if matches!(mode, Mode::Dark) {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    if let Some(thumb) = button.query_selector(".thumb").ok().flatten() {
+        thumb.set_inner_html(match mode {
             Mode::Dark => MOON,
             Mode::Light => SUN,
         });
     }
-    if let Some(label) = button.query_selector(".label").ok().flatten() {
-        label.set_text_content(Some(&mode.label()));
+    if let Some(ghost) = button.query_selector(".ghost").ok().flatten() {
+        ghost.set_inner_html(match mode {
+            Mode::Dark => SUN,
+            Mode::Light => MOON,
+        });
     }
     button
         .set_attribute("aria-label", &mode.description())
@@ -76,61 +93,68 @@ impl CustomElement for ThemeToggle {
   z-index: 10;
 }}
 button {{
-  display: inline-flex;
-  align-items: center;
-  font: inherit;
-  font-size: 0.875rem;
-  line-height: 1.1rem;
-  color: var(--op-text);
+  position: relative;
+  display: inline-block;
+  width: 2.6rem;
+  height: 1.4rem;
+  padding: 0;
+  border: 1px solid var(--op-border-strong);
+  border-radius: 0.8rem;
   background: var(--op-raised);
-  border: 0;
-  border-radius: 0.375rem;
-  padding: 0.4rem 0.55rem;
   cursor: pointer;
-  opacity: 0.85;
   outline: 2px solid transparent;
   outline-offset: 2px;
-  transition: opacity 0.15s ease, translate 0.15s ease, box-shadow 0.15s ease,
-    outline-color 0.15s ease;
+  transition: outline-color 0.15s ease;
 }}
-.icon {{
-  display: inline-flex;
+button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
+.thumb, .ghost {{
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
   width: 1.1rem;
   height: 1.1rem;
-  max-width: 1.1rem;
-  opacity: 1;
-  overflow: hidden;
-  transition: max-width 0.2s ease, opacity 0.15s ease;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }}
-.icon svg {{ width: 1.1rem; height: 1.1rem; }}
-.label {{
-  max-width: 0;
+.thumb {{
+  left: 0.12rem;
+  z-index: 1;
+  background: var(--op-text);
+  color: var(--op-bg);
+  transition: left 0.2s ease;
+}}
+.thumb svg, .ghost svg {{ width: 0.8rem; height: 0.8rem; }}
+button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
+.ghost {{
+  z-index: 0;
   opacity: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  transition: max-width 0.2s ease, opacity 0.15s ease;
+  background: color-mix(in srgb, var(--op-text) 40%, transparent);
+  color: var(--op-bg);
 }}
-button:hover, button:focus-visible, :host([data-preview]) button {{
-  opacity: 1;
-  translate: 0 -1px;
-  box-shadow: 0 2px 10px color-mix(in srgb, var(--op-text) 18%, transparent);
-  outline-color: var(--op-accent);
+@keyframes ghost-to-dark {{
+  0% {{ left: 0.12rem; opacity: 0; }}
+  35% {{ opacity: 0.6; }}
+  100% {{ left: calc(100% - 1.22rem); opacity: 0; }}
 }}
-button:hover .icon, button:focus-visible .icon,
-:host([data-preview]) button .icon {{
-  max-width: 0;
-  opacity: 0;
+@keyframes ghost-to-light {{
+  0% {{ left: calc(100% - 1.22rem); opacity: 0; }}
+  35% {{ opacity: 0.6; }}
+  100% {{ left: 0.12rem; opacity: 0; }}
 }}
-button:hover .label, button:focus-visible .label,
-:host([data-preview]) button .label {{
-  max-width: 10rem;
-  opacity: 1;
+button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
+  animation: ghost-to-dark 1.6s ease-in-out infinite;
+}}
+button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visible .ghost {{
+  animation: ghost-to-light 1.6s ease-in-out infinite;
 }}
 @media (prefers-reduced-motion: reduce) {{
-  button, .icon, .label {{ transition: none; }}
+  .thumb {{ transition: none; }}
+  .ghost {{ animation: none !important; }}
 }}
 </style>
-<button type=\"button\"><span class=\"icon\" aria-hidden=\"true\"></span><span class=\"label\"></span></button>"
+<button type=\"button\" role=\"switch\"><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>"
         ));
         let button = shadow
             .query_selector("button")
