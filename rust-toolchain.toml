@@ -3,4 +3,6 @@
 [toolchain]
 channel = "nightly-2026-08-30"
 targets = ["wasm32-unknown-unknown"]
-components = ["rustfmt", "clippy"]
+# rust-src feeds the inspector source maps: op-assets resolves the
+# stdlib paths in the wasm's DWARF against the toolchain's own sources.
+components = ["rustfmt", "clippy", "rust-src"]

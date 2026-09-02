@@ -358,20 +358,79 @@ fn emit_sourcemap(staging: &Path) {
         .to_owned();
 
     let mapper = wasm2map::WASM::load(&wasm_path)
-        .expect("wasm carries DWARF (debug=line-tables-only + keep-debug + wasm-opt -g)");
+        .expect("wasm carries DWARF (debug=line-tables-only + keep-debug)");
     let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .canonicalize()
         .expect("workspace root");
-    let (map, copies) = sourcemap::rewrite_sources(&mapper.map_v3(), &workspace);
+    let sysroot = std::process::Command::new("rustc")
+        .args(["--print", "sysroot"])
+        .output()
+        .expect("run rustc");
+    let rust_src = Path::new(String::from_utf8(sysroot.stdout).expect("utf8").trim())
+        .join("lib/rustlib/src/rust");
+    assert!(
+        rust_src.join("library").is_dir(),
+        "rust-src component missing at {} (rust-toolchain.toml lists it; run any cargo command to install)",
+        rust_src.display()
+    );
+    let registry_src = std::env::var_os("CARGO_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))
+        .expect("CARGO_HOME or HOME set")
+        .join("registry/src");
+    let resolved = sourcemap::resolve_sources(
+        &mapper.map_v3(),
+        &sourcemap::Roots {
+            workspace: &workspace,
+            rust_src: &rust_src,
+            registry_src: &registry_src,
+        },
+    );
     let map_name = format!("{wasm_name}.map");
-    std::fs::write(staging.join(&map_name), &map).expect("write source map");
-    let served = copies.len();
-    for (from, to) in copies {
+    std::fs::write(staging.join(&map_name), &resolved.map).expect("write source map");
+    let served = resolved.copies.len();
+    for (from, to) in resolved.copies {
         let dest = staging.join(&to);
         std::fs::create_dir_all(dest.parent().expect("src dir")).expect("create src dir");
         std::fs::copy(&from, &dest)
             .unwrap_or_else(|e| panic!("copy {} to staging: {e}", from.display()));
+    }
+    // The stdlib licences do not ride in the rust-src component; the
+    // toolchain doc dir carries the library copyright inventory and the
+    // individual licence texts. Serve them beside the sources.
+    let doc = rust_src
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .expect("sysroot from rust-src")
+        .join("share/doc/rust");
+    let rust_root = staging.join("src/rust");
+    let library_copyright = doc.join("COPYRIGHT-library.html");
+    assert!(
+        library_copyright.is_file(),
+        "toolchain lacks COPYRIGHT-library.html at {}",
+        doc.display()
+    );
+    std::fs::create_dir_all(rust_root.join("licenses")).expect("licence dirs");
+    std::fs::copy(&library_copyright, rust_root.join("COPYRIGHT-library.html"))
+        .expect("copy library copyright");
+    for entry in std::fs::read_dir(doc.join("licenses")).expect("read licence texts") {
+        let from = entry.expect("licence entry").path();
+        if from.is_file()
+            && let Some(name) = from.file_name()
+        {
+            std::fs::copy(&from, rust_root.join("licenses").join(name)).expect("copy licence");
+        }
+    }
+
+    if !resolved.unresolved.is_empty() {
+        println!(
+            "op-assets: {} map sources stay bare labels (crate roots erased by trim-paths): {:?} ...",
+            resolved.unresolved.len(),
+            &resolved.unresolved[..resolved.unresolved.len().min(3)]
+        );
     }
 
     let mut wasm = std::fs::read(&wasm_path).expect("read staged wasm");
@@ -393,7 +452,7 @@ fn emit_sourcemap(staging: &Path) {
     std::fs::write(&index, html).expect("write staged index.html");
 
     println!(
-        "op-assets: source map {map_name}, {served} workspace sources under /src/, wasm integrity refreshed"
+        "op-assets: source map {map_name}, {served} sources served under /src/, wasm integrity refreshed"
     );
 }
 
