@@ -1,9 +1,13 @@
 //! `<op-scene>`: an embedded A-Frame scene. The A-Frame runtime is vendored
 //! (vendor/aframe-1.8.0.min.js, copied unhashed into the site root) and
-//! loaded lazily, only when a page actually contains the element. Entities
-//! take their colours from the active theme's tokens at build time, and the
-//! spinning box is driven by a tick component registered from Rust through
-//! an inline_js bridge - the same pattern op-webc uses for custom elements.
+//! loaded lazily on PROXIMITY, not presence: an IntersectionObserver with a
+//! 50% root margin injects the script only when the scene is within half a
+//! viewport of view, so pages never pay for the runtime the reader does not
+//! reach (and the main page, which has no scene, never loads it at all).
+//! Entities take their colours from the active theme's tokens at build
+//! time, and the spinning box is driven by a tick component registered from
+//! Rust through an inline_js bridge - the same pattern op-webc uses for
+//! custom elements.
 //!
 //! A-Frame renders in the light DOM (a-scene has never been reliable inside
 //! shadow roots), so this element owns its subtree instead of slotting it.
@@ -13,7 +17,10 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::wasm_bindgen;
-use web_sys::{Document, Element, HtmlElement, Window};
+use web_sys::{
+    Document, Element, HtmlElement, IntersectionObserver, IntersectionObserverEntry,
+    IntersectionObserverInit, Window,
+};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
     tag: "op-scene",
@@ -23,6 +30,8 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
             host,
             onload: None,
             tick: None,
+            observer: None,
+            on_near: None,
         })
     },
 };
@@ -39,12 +48,15 @@ extern "C" {
 
 /// The tick callback A-Frame calls with (element, time, delta).
 type TickClosure = Closure<dyn FnMut(JsValue, f64, f64)>;
+type NearClosure = Closure<dyn FnMut(js_sys::Array, IntersectionObserver)>;
 
 struct Scene {
     host: HtmlElement,
     /// Kept alive for the element's lifetime.
     onload: Option<Closure<dyn FnMut()>>,
     tick: Option<TickClosure>,
+    observer: Option<IntersectionObserver>,
+    on_near: Option<NearClosure>,
 }
 
 /// Reads a custom property off the document root, so the scene matches the
@@ -77,6 +89,41 @@ fn build(window: &Window, document: &Document, host: &HtmlElement, tick: &js_sys
     ));
 }
 
+/// Kicks off the runtime load (or builds immediately when another scene
+/// already loaded it). Shared by the proximity callback and the fallback
+/// path when IntersectionObserver is unavailable.
+fn start_loading(
+    window: &Window,
+    document: &Document,
+    host: &HtmlElement,
+    tick_fn: &js_sys::Function,
+    onload_fn: &js_sys::Function,
+) {
+    let already_loaded =
+        js_sys::Reflect::has(window, &JsValue::from_str("AFRAME")).unwrap_or(false);
+    if already_loaded {
+        build(window, document, host, tick_fn);
+        return;
+    }
+    // Load the vendored runtime once; further op-scene elements attach to
+    // the same script's load event.
+    let script = match document.query_selector("script[data-op-aframe]") {
+        Ok(Some(existing)) => existing,
+        _ => {
+            let Ok(script) = document.create_element("script") else {
+                return;
+            };
+            let _ = script.set_attribute("src", "/aframe-1.8.0.min.js");
+            let _ = script.set_attribute("data-op-aframe", "");
+            if let Some(body) = document.body() {
+                let _ = body.append_child(&script);
+            }
+            script
+        }
+    };
+    let _ = script.add_event_listener_with_callback("load", onload_fn);
+}
+
 impl CustomElement for Scene {
     fn connected(&mut self) {
         let Some(window) = web_sys::window() else {
@@ -98,36 +145,50 @@ impl CustomElement for Scene {
         let tick_fn: js_sys::Function = tick.as_ref().unchecked_ref::<js_sys::Function>().clone();
         self.tick = Some(tick);
 
-        let already_loaded =
-            js_sys::Reflect::has(&window, &JsValue::from_str("AFRAME")).unwrap_or(false);
-        if already_loaded {
-            build(&window, &document, &self.host, &tick_fn);
-            return;
-        }
-
-        // Load the vendored runtime once; further op-scene elements attach to
-        // the same script's load event.
-        let script = match document.query_selector("script[data-op-aframe]") {
-            Ok(Some(existing)) => existing,
-            _ => {
-                let Ok(script) = document.create_element("script") else {
-                    return;
-                };
-                let _ = script.set_attribute("src", "/aframe-1.8.0.min.js");
-                let _ = script.set_attribute("data-op-aframe", "");
-                if let Some(body) = document.body() {
-                    let _ = body.append_child(&script);
-                }
-                script
-            }
-        };
         let onload = Closure::<dyn FnMut()>::new({
             let window = window.clone();
             let document = document.clone();
             let host = self.host.clone();
+            let tick_fn = tick_fn.clone();
             move || build(&window, &document, &host, &tick_fn)
         });
-        let _ = script.add_event_listener_with_callback("load", onload.as_ref().unchecked_ref());
+        let onload_fn: js_sys::Function =
+            onload.as_ref().unchecked_ref::<js_sys::Function>().clone();
         self.onload = Some(onload);
+
+        // Resources load when the scene is LIKELY to be seen: within half a
+        // viewport (rootMargin 50%). The observer fires once and disconnects.
+        let on_near = NearClosure::new({
+            let window = window.clone();
+            let document = document.clone();
+            let host = self.host.clone();
+            let tick_fn = tick_fn.clone();
+            let onload_fn = onload_fn.clone();
+            move |entries: js_sys::Array, observer: IntersectionObserver| {
+                let near = entries.iter().any(|e| {
+                    e.dyn_ref::<IntersectionObserverEntry>()
+                        .map(|entry| entry.is_intersecting())
+                        .unwrap_or(false)
+                });
+                if !near {
+                    return;
+                }
+                observer.disconnect();
+                start_loading(&window, &document, &host, &tick_fn, &onload_fn);
+            }
+        });
+        let init = IntersectionObserverInit::new();
+        init.set_root_margin("50%");
+        match IntersectionObserver::new_with_options(on_near.as_ref().unchecked_ref(), &init) {
+            Ok(observer) => {
+                observer.observe(&self.host);
+                self.observer = Some(observer);
+                self.on_near = Some(on_near);
+            }
+            Err(_) => {
+                // No observer support: fall back to load-on-connect.
+                start_loading(&window, &document, &self.host, &tick_fn, &onload_fn);
+            }
+        }
     }
 }
