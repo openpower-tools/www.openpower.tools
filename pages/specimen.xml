@@ -1,5 +1,8 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>
         Design preview for <a href="/">www.openpower.tools</a>. The page follows the theme toggle; the two
         columns below are pinned to their own theme.
       </p>
-      <opt-palette-specimen></opt-palette-specimen>
+      <opt:palette-specimen></opt:palette-specimen>
+
+</opt:body>

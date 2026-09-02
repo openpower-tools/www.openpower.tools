@@ -1,0 +1,15 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+      <p>A single measurement, data-forward: big value, small label, optional unit and
+      status colour. Several sit side by side and wrap with the line.</p>
+      <h2>Example</h2>
+      <p>
+        <opt:kpi label="CPU temp" value="52" unit="°C" state="ok"></opt:kpi>
+        <opt:kpi label="Fan 2" value="4,120" unit="rpm"></opt:kpi>
+        <opt:kpi label="VRM temp" value="78" unit="°C" state="warning"></opt:kpi>
+        <opt:kpi label="12V rail" value="11.2" unit="V" state="danger"></opt:kpi>
+        <opt:kpi label="Uptime" value="212" unit="days" state="info"></opt:kpi>
+      </p>
+      <h2>Markup</h2>
+      <pre>&lt;opt:kpi label="CPU temp" value="52" unit="&amp;deg;C" state="ok"&gt;&lt;/opt:kpi&gt;</pre>
+
+</opt:body>

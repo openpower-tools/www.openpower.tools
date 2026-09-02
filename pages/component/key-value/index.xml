@@ -1,7 +1,8 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>Label/value pairs for hardware specs, firmware versions and other metadata. The
       definition list is regular light-DOM markup; the element lays it out on a grid.</p>
       <h2>Example</h2>
-      <opt-key-value>
+      <opt:key-value>
         <dl>
           <dt>Mainboard</dt><dd>Talos II Lite (T2P9S01)</dd>
           <dt>CPU</dt><dd>POWER9 Sforza, 8 cores, DD2.3</dd>
@@ -9,10 +10,12 @@
           <dt>Host firmware</dt><dd>Hostboot, Skiboot, Petitboot</dd>
           <dt>PNOR</dt><dd>128 Mbit SPI flash</dd>
         </dl>
-      </opt-key-value>
+      </opt:key-value>
       <h2>Markup</h2>
-      <pre>&lt;opt-key-value&gt;
+      <pre>&lt;opt:key-value&gt;
   &lt;dl&gt;
     &lt;dt&gt;CPU&lt;/dt&gt;&lt;dd&gt;POWER9 Sforza, 8 cores&lt;/dd&gt;
   &lt;/dl&gt;
-&lt;/opt-key-value&gt;</pre>
+&lt;/opt:key-value&gt;</pre>
+
+</opt:body>

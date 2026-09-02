@@ -1,22 +1,23 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A scroll container and skin for a regular light-DOM table. Cells stay ordinary
       th/td markup. By default only the header carries a rule - alignment and spacing
       separate the rows - while a lined attribute restores row rules and a dense
       attribute tightens the padding for long reference tables.</p>
       <h2>Example</h2>
-      <opt-table>
+      <opt:table>
         <table>
           <caption>Host firmware stack on a stock Talos II</caption>
           <thead><tr><th>Component</th><th>Role</th><th>Status</th></tr></thead>
           <tbody>
-            <tr><td>Hostboot</td><td>Brings up the POWER9 cores and memory</td><td><opt-badge variant="ok">tracked</opt-badge></td></tr>
-            <tr><td>Skiboot</td><td>OPAL runtime services</td><td><opt-badge variant="ok">tracked</opt-badge></td></tr>
-            <tr><td>Petitboot</td><td>Kernel-based boot loader</td><td><opt-badge variant="info">notes</opt-badge></td></tr>
-            <tr><td>OpenBMC</td><td>Board management controller stack</td><td><opt-badge variant="warning">docs stale</opt-badge></td></tr>
+            <tr><td>Hostboot</td><td>Brings up the POWER9 cores and memory</td><td><opt:badge variant="ok">tracked</opt:badge></td></tr>
+            <tr><td>Skiboot</td><td>OPAL runtime services</td><td><opt:badge variant="ok">tracked</opt:badge></td></tr>
+            <tr><td>Petitboot</td><td>Kernel-based boot loader</td><td><opt:badge variant="info">notes</opt:badge></td></tr>
+            <tr><td>OpenBMC</td><td>Board management controller stack</td><td><opt:badge variant="warning">docs stale</opt:badge></td></tr>
           </tbody>
         </table>
-      </opt-table>
+      </opt:table>
       <h2>Dense, lined</h2>
-      <opt-table dense lined>
+      <opt:table dense="" lined="">
         <table>
           <thead><tr><th>Partition</th><th>Size</th></tr></thead>
           <tbody>
@@ -25,8 +26,10 @@
             <tr><td>PAYLOAD</td><td>1 MiB</td></tr>
           </tbody>
         </table>
-      </opt-table>
+      </opt:table>
       <h2>Markup</h2>
-      <pre>&lt;opt-table dense lined&gt;
+      <pre>&lt;opt:table dense lined&gt;
   &lt;table&gt;...&lt;/table&gt;
-&lt;/opt-table&gt;</pre>
+&lt;/opt:table&gt;</pre>
+
+</opt:body>

@@ -1,11 +1,14 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A placeholder for content that does not exist yet: no results, no reports,
       nothing recorded. It says so plainly and points at the way to change that.</p>
       <h2>Example</h2>
-      <opt-empty-state heading="No ports recorded yet">
+      <opt:empty-state heading="No ports recorded yet">
         <p>Nobody has recorded a port for this platform so far.
         <a href="https://github.com/openpower-tools">Open an issue</a> to start one.</p>
-      </opt-empty-state>
+      </opt:empty-state>
       <h2>Markup</h2>
-      <pre>&lt;opt-empty-state heading="No ports recorded yet"&gt;
+      <pre>&lt;opt:empty-state heading="No ports recorded yet"&gt;
   &lt;p&gt;Nobody has recorded a port yet.&lt;/p&gt;
-&lt;/opt-empty-state&gt;</pre>
+&lt;/opt:empty-state&gt;</pre>
+
+</opt:body>

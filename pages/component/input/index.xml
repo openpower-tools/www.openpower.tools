@@ -1,17 +1,20 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>Labelled text entry. The label wraps its control in the light DOM, which keeps
       the association without ids and works without wasm.</p>
       <h2>Text input</h2>
-      <opt-input>
+      <opt:input>
         <label>BMC address
-        <input type="text" placeholder="bmc.talos.local" /></label>
-      </opt-input>
+        <input type="text" placeholder="bmc.talos.local"/></label>
+      </opt:input>
       <h2>Textarea</h2>
-      <opt-input>
+      <opt:input>
         <label>Boot log excerpt
         <textarea rows="4" placeholder="Paste the failing lines from the serial console."></textarea></label>
-      </opt-input>
+      </opt:input>
       <h2>Markup</h2>
-      <pre>&lt;opt-input&gt;
+      <pre>&lt;opt:input&gt;
   &lt;label&gt;BMC address
   &lt;input type="text" placeholder="bmc.talos.local" /&gt;&lt;/label&gt;
-&lt;/opt-input&gt;</pre>
+&lt;/opt:input&gt;</pre>
+
+</opt:body>

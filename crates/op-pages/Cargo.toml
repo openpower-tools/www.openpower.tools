@@ -6,3 +6,7 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
+
+[dependencies]
+quick-xml = "0.37"
+op-site = { path = "../op-site" }

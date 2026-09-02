@@ -1,18 +1,21 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A labelled frame for code and console excerpts. The pre element stays light-DOM;
       the label names the language, file or origin, and the button copies the block's
       text (clipboard access needs a secure context).</p>
       <h2>Shell</h2>
-      <opt-source label="shell">
+      <opt:source label="shell">
 <pre>pflash -i                     # inspect the PNOR flash layout
 pflash -P VERSION -r /tmp/v   # read one partition</pre>
-      </opt-source>
+      </opt:source>
       <h2>A file</h2>
-      <opt-source label="rust-toolchain.toml">
+      <opt:source label="rust-toolchain.toml">
 <pre>[toolchain]
 channel = "nightly-2026-08-30"
 targets = ["wasm32-unknown-unknown"]</pre>
-      </opt-source>
+      </opt:source>
       <h2>Markup</h2>
-      <pre>&lt;opt-source label="shell"&gt;
+      <pre>&lt;opt:source label="shell"&gt;
   &lt;pre&gt;pflash -i&lt;/pre&gt;
-&lt;/opt-source&gt;</pre>
+&lt;/opt:source&gt;</pre>
+
+</opt:body>

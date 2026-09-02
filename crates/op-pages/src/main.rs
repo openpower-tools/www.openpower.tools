@@ -59,6 +59,23 @@ fn main() {
         "home page lacks the shared navigation; keep index.html in step with op_pages::nav_markup()"
     );
     for page in op_pages::PAGES {
+        let body = match op_pages::lower(page.body) {
+            Ok(body) => body,
+            Err(errors) => {
+                eprintln!("op-pages: page {} failed validation:", page.slug);
+                for e in &errors {
+                    eprintln!("  {e}");
+                }
+                std::process::exit(1);
+            }
+        };
+        let page = op_pages::Page {
+            slug: page.slug,
+            title: page.title,
+            description: page.description,
+            body: Box::leak(body.into_boxed_str()),
+        };
+        let page = &page;
         let dir = staging.join(page.slug);
         std::fs::create_dir_all(&dir).expect("page dir");
         std::fs::write(
@@ -90,7 +107,15 @@ mod tests {
     #[test]
     fn rendered_pages_carry_their_own_metadata_and_the_shared_assets() {
         let head = strip_page_specific(head_of(SAMPLE));
-        let page = &op_pages::PAGES[0];
+        let source = &op_pages::PAGES[0];
+        let lowered = op_pages::lower(source.body).expect("page lowers");
+        let page = op_pages::Page {
+            slug: source.slug,
+            title: source.title,
+            description: source.description,
+            body: Box::leak(lowered.into_boxed_str()),
+        };
+        let page = &page;
         let html = render_page(&head, &op_pages::nav_markup(), page);
         assert!(html.contains(&format!("<title>{}: openpower.tools</title>", page.title)));
         assert!(html.contains(&format!("https://www.openpower.tools/{}/", page.slug)));

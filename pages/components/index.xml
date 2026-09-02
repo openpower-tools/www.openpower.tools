@@ -1,14 +1,15 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>
         Every web component the site is built from, shown with its states and variants so their look
         can be planned before content lands. Each entry links to a page with the full set, and the
         <a href="/components/palette/">component palette</a> renders a live example of
         each, side by side.
       </p>
-      <opt-callout variant="note" heading="Catalogue complete for planning">
+      <opt:callout variant="note" heading="Catalogue complete for planning">
         Every component type the site plans to build with is now here, including the
         A-Frame scene integration; refinements land as the content pages start using
         them.
-      </opt-callout>
+      </opt:callout>
       <h2>Content</h2>
       <ul>
         <li><a href="/component/callout/">Callout</a>: highlighted notes, tips and warnings</li>
@@ -45,3 +46,5 @@
       <ul>
         <li><a href="/component/scene/">Scene</a>: embedded A-Frame scenes with Rust-driven behaviour</li>
       </ul>
+
+</opt:body>

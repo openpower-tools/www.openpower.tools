@@ -85,7 +85,9 @@ mod tests {
             include_str!("../../../../index.html").to_owned(),
         )];
         for page in op_pages::PAGES {
-            pages.push((page.slug.to_owned(), page.body.to_owned()));
+            let lowered = op_pages::lower(page.body)
+                .unwrap_or_else(|e| panic!("page {} fails validation: {e:?}", page.slug));
+            pages.push((page.slug.to_owned(), lowered));
         }
         pages.push(("nav".to_owned(), op_pages::nav_markup()));
         for definition in DEFINITIONS {

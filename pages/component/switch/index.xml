@@ -1,16 +1,19 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A native checkbox drawn as a switch, for settings that take effect immediately.
       The control keeps checkbox semantics for assistive tech. The thumb itself carries
       the state as the IEC power numeral - 1 on, 0 off - and hovering plays a slow,
       repeated preview behind the thumb: a dimmed ghost slides to the state a click
       would set - what would be, not what is.</p>
       <h2>Example</h2>
-      <opt-switch>
-        <label><input type="checkbox" checked /> Follow the system theme</label>
-      </opt-switch>
-      <opt-switch>
-        <label><input type="checkbox" /> Verbose boot output</label>
-      </opt-switch>
+      <opt:switch>
+        <label><input type="checkbox" checked=""/> Follow the system theme</label>
+      </opt:switch>
+      <opt:switch>
+        <label><input type="checkbox"/> Verbose boot output</label>
+      </opt:switch>
       <h2>Markup</h2>
-      <pre>&lt;opt-switch&gt;
+      <pre>&lt;opt:switch&gt;
   &lt;label&gt;&lt;input type="checkbox" /&gt; Verbose boot output&lt;/label&gt;
-&lt;/opt-switch&gt;</pre>
+&lt;/opt:switch&gt;</pre>
+
+</opt:body>

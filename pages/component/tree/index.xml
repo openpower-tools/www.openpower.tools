@@ -1,11 +1,12 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A collapsible hierarchy for partition layouts and device trees. Branches are
       native details and summary pairs, so collapsing works without wasm and stays
       keyboard-accessible; leaves are plain list items.</p>
       <h2>Example</h2>
-      <opt-tree>
+      <opt:tree>
         <ul>
           <li>
-            <details open>
+            <details open="">
               <summary>PNOR flash layout</summary>
               <ul>
                 <li><code>HBB</code> Hostboot base, 512 KiB</li>
@@ -23,12 +24,14 @@
             </details>
           </li>
         </ul>
-      </opt-tree>
+      </opt:tree>
       <h2>Markup</h2>
-      <pre>&lt;opt-tree&gt;
+      <pre>&lt;opt:tree&gt;
   &lt;ul&gt;
     &lt;li&gt;&lt;details open&gt;&lt;summary&gt;PNOR&lt;/summary&gt;
       &lt;ul&gt;&lt;li&gt;&lt;code&gt;HBB&lt;/code&gt; 512 KiB&lt;/li&gt;&lt;/ul&gt;
     &lt;/details&gt;&lt;/li&gt;
   &lt;/ul&gt;
-&lt;/opt-tree&gt;</pre>
+&lt;/opt:tree&gt;</pre>
+
+</opt:body>

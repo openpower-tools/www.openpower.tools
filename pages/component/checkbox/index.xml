@@ -1,0 +1,15 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+      <p>Native checkboxes with their labels; the accent colour marks the checked state.</p>
+      <h2>Example</h2>
+      <opt:checkbox>
+        <label><input type="checkbox" checked=""/> Petitboot autoboot</label>
+      </opt:checkbox>
+      <opt:checkbox>
+        <label><input type="checkbox"/> Serial console logging</label>
+      </opt:checkbox>
+      <h2>Markup</h2>
+      <pre>&lt;opt:checkbox&gt;
+  &lt;label&gt;&lt;input type="checkbox" checked /&gt; Petitboot autoboot&lt;/label&gt;
+&lt;/opt:checkbox&gt;</pre>
+
+</opt:body>

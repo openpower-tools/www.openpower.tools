@@ -1,22 +1,25 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
       <p>A tabbed region: the panels are light-DOM opt-tab children and the tablist is
       rendered from their labels, activated by click or the arrow keys.</p>
       <h2>Example</h2>
-      <opt-tabs>
-        <opt-tab label="Debian">
+      <opt:tabs>
+        <opt:tab label="Debian">
           <p>Install from the ppc64el netinst image; the installer runs under Petitboot's
           kernel and picks up the NVMe target directly.</p>
-        </opt-tab>
-        <opt-tab label="Fedora">
+        </opt:tab>
+        <opt:tab label="Fedora">
           <p>Fedora Server for ppc64le boots unmodified; select the HTTPS install source
           from the Petitboot menu.</p>
-        </opt-tab>
-        <opt-tab label="FreeBSD">
+        </opt:tab>
+        <opt:tab label="FreeBSD">
           <p>Community images exist for POWER9; serial console settings need adjusting
           before first boot.</p>
-        </opt-tab>
-      </opt-tabs>
+        </opt:tab>
+      </opt:tabs>
       <h2>Markup</h2>
-      <pre>&lt;opt-tabs&gt;
-  &lt;opt-tab label="Debian"&gt;...&lt;/opt-tab&gt;
-  &lt;opt-tab label="Fedora"&gt;...&lt;/opt-tab&gt;
-&lt;/opt-tabs&gt;</pre>
+      <pre>&lt;opt:tabs&gt;
+  &lt;opt:tab label="Debian"&gt;...&lt;/opt:tab&gt;
+  &lt;opt:tab label="Fedora"&gt;...&lt;/opt:tab&gt;
+&lt;/opt:tabs&gt;</pre>
+
+</opt:body>

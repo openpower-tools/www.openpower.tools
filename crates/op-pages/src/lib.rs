@@ -1,11 +1,17 @@
 //! The page registry: every generated page of the site.
 //!
+//! Bodies are namespaced XML sources (see [`lower`]) validated and
+//! lowered to HTML at emit time.
+//!
 //! Bodies are HTML fragments in `pages/`, composed of the custom elements
 //! defined in `op-site` plus light-DOM content. The `op-pages` binary (a
 //! Trunk `post_build` hook that runs after `op-assets`) wraps each fragment
 //! in the staged `index.html`'s head - which carries the hashed script, style,
 //! font pack and fallback references - so every page loads the same wasm and
 //! assets from clean URLs like `/components/button/`.
+
+pub mod lower;
+pub use lower::{OPT_NS, lower};
 
 /// One generated page.
 pub struct Page {
@@ -35,163 +41,163 @@ pub const PAGES: &[Page] = &[
         "specimen",
         "Palette specimen",
         "Every design token with its value and WCAG contrast, the site's elements in both themes, and the typography tiers.",
-        "specimen.html"
+        "specimen.xml"
     ),
     page!(
         "components",
         "Components",
         "The web components the site is built from, each with its states and variants.",
-        "components/index.html"
+        "components/index.xml"
     ),
     page!(
         "components/palette",
         "Component palette",
         "Every component rendered live, side by side.",
-        "components/palette/index.html"
+        "components/palette/index.xml"
     ),
     page!(
         "component/callout",
         "Callout",
         "Highlighted blocks for notes, tips and warnings.",
-        "component/callout/index.html"
+        "component/callout/index.xml"
     ),
     page!(
         "component/badge",
         "Badge",
         "Compact status markers with variant-coloured dots.",
-        "component/badge/index.html"
+        "component/badge/index.xml"
     ),
     page!(
         "component/card",
         "Card",
         "Titled content containers with optional link headings and footers.",
-        "component/card/index.html"
+        "component/card/index.xml"
     ),
     page!(
         "component/details",
         "Details",
         "Collapsible sections built on the native details element.",
-        "component/details/index.html"
+        "component/details/index.xml"
     ),
     page!(
         "component/key-value",
         "Key-value",
         "Label/value pairs for specs and metadata.",
-        "component/key-value/index.html"
+        "component/key-value/index.xml"
     ),
     page!(
         "component/table",
         "Table",
         "Tabular data in a scrollable, token-styled frame.",
-        "component/table/index.html"
+        "component/table/index.xml"
     ),
     page!(
         "component/source",
         "Source",
         "Labelled code blocks with a copy control.",
-        "component/source/index.html"
+        "component/source/index.xml"
     ),
     page!(
         "component/timeline",
         "Timeline",
         "Dated events on a vertical line with status dots.",
-        "component/timeline/index.html"
+        "component/timeline/index.xml"
     ),
     page!(
         "component/empty-state",
         "Empty state",
         "Placeholders for content that does not exist yet.",
-        "component/empty-state/index.html"
+        "component/empty-state/index.xml"
     ),
     page!(
         "component/button",
         "Button",
         "Action buttons with primary and danger weights.",
-        "component/button/index.html"
+        "component/button/index.xml"
     ),
     page!(
         "component/input",
         "Input",
         "Labelled text inputs and textareas.",
-        "component/input/index.html"
+        "component/input/index.xml"
     ),
     page!(
         "component/select",
         "Select",
         "Labelled native selects styled with the theme tokens.",
-        "component/select/index.html"
+        "component/select/index.xml"
     ),
     page!(
         "component/checkbox",
         "Checkbox",
         "Native checkboxes with their labels.",
-        "component/checkbox/index.html"
+        "component/checkbox/index.xml"
     ),
     page!(
         "component/switch",
         "Switch",
         "Native checkboxes drawn as switches.",
-        "component/switch/index.html"
+        "component/switch/index.xml"
     ),
     page!(
         "component/tabs",
         "Tabs",
         "Tabbed regions with keyboard activation.",
-        "component/tabs/index.html"
+        "component/tabs/index.xml"
     ),
     page!(
         "component/breadcrumb",
         "Breadcrumb",
         "Where-am-I trails with stylesheet separators.",
-        "component/breadcrumb/index.html"
+        "component/breadcrumb/index.xml"
     ),
     page!(
         "component/pagination",
         "Pagination",
         "Page navigation for split lists.",
-        "component/pagination/index.html"
+        "component/pagination/index.xml"
     ),
     page!(
         "component/tooltip",
         "Tooltip",
         "Hover and focus annotations for terms.",
-        "component/tooltip/index.html"
+        "component/tooltip/index.xml"
     ),
     page!(
         "component/scene",
         "Scene",
         "Embedded A-Frame scenes with Rust-driven behaviour.",
-        "component/scene/index.html"
+        "component/scene/index.xml"
     ),
     page!(
         "component/kpi",
         "KPI",
         "Single measurements: big value, small label, status colour.",
-        "component/kpi/index.html"
+        "component/kpi/index.xml"
     ),
     page!(
         "component/steps",
         "Steps",
         "Numbered procedures with done, current and error states.",
-        "component/steps/index.html"
+        "component/steps/index.xml"
     ),
     page!(
         "component/tree",
         "Tree",
         "Collapsible hierarchies on native details elements.",
-        "component/tree/index.html"
+        "component/tree/index.xml"
     ),
     page!(
         "component/chip",
         "Chip",
         "Interactive filter tokens: toggleable and removable.",
-        "component/chip/index.html"
+        "component/chip/index.xml"
     ),
     page!(
         "component/progress",
         "Progress",
         "Determinate and indeterminate progress bars.",
-        "component/progress/index.html"
+        "component/progress/index.xml"
     ),
 ];
 
