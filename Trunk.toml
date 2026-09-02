@@ -1,6 +1,8 @@
-# Trunk builds crates/op-site for wasm32-unknown-unknown, runs wasm-bindgen and
-# wasm-opt, and assembles dist/ from index.html. Tool versions are pinned here
-# (and wasm-bindgen additionally by Cargo.lock) so builds are reproducible.
+# Trunk builds crates/op-site for wasm32-unknown-unknown, runs wasm-bindgen,
+# and assembles dist/ from index.html. Tool versions are pinned here (and
+# wasm-bindgen additionally by Cargo.lock) so builds are reproducible.
+# wasm-opt stays pinned but disabled (data-wasm-opt="0"): binaryen 132 cannot
+# update the DWARF that the inspector source maps are generated from.
 
 [build]
 target = "index.html"

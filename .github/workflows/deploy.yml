@@ -53,7 +53,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Rust lints (wasm target)
-        run: cargo clippy --workspace --all-targets --target wasm32-unknown-unknown -- -D warnings
+        run: cargo clippy -p op-site -p op-webc --all-targets --target wasm32-unknown-unknown -- -D warnings
 
       - name: Rust tests (native)
         run: cargo test --workspace

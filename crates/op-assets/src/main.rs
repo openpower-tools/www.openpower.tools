@@ -19,9 +19,10 @@
 
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use sha2::{Digest, Sha256, Sha384};
 
 mod manifest;
+mod sourcemap;
 use manifest::{
     FitTarget, MANIFEST, ManifestEntry, PLEX_SANS_TARGET, PRAGMATA_TARGET, REF_STRING, SYS_TARGET,
 };
@@ -331,6 +332,68 @@ fn main() {
         "op-assets: emitted {} woff2 files ({} preloaded) and {css_name}",
         faces.len(),
         PRELOAD.len(),
+    );
+
+    emit_sourcemap(&staging);
+}
+
+/// Maps the staged wasm's DWARF to a browser source map, serves the
+/// workspace sources it references, patches the binary's
+/// sourceMappingURL and refreshes the preload's integrity digest.
+/// See `sourcemap` for the whole story.
+fn emit_sourcemap(staging: &Path) {
+    let wasm_path = std::fs::read_dir(staging)
+        .expect("read staging dir")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with("_bg.wasm"))
+        })
+        .expect("staged *_bg.wasm");
+    let wasm_name = wasm_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("wasm file name")
+        .to_owned();
+
+    let mapper = wasm2map::WASM::load(&wasm_path)
+        .expect("wasm carries DWARF (debug=line-tables-only + keep-debug + wasm-opt -g)");
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("workspace root");
+    let (map, copies) = sourcemap::rewrite_sources(&mapper.map_v3(), &workspace);
+    let map_name = format!("{wasm_name}.map");
+    std::fs::write(staging.join(&map_name), &map).expect("write source map");
+    let served = copies.len();
+    for (from, to) in copies {
+        let dest = staging.join(&to);
+        std::fs::create_dir_all(dest.parent().expect("src dir")).expect("create src dir");
+        std::fs::copy(&from, &dest)
+            .unwrap_or_else(|e| panic!("copy {} to staging: {e}", from.display()));
+    }
+
+    let mut wasm = std::fs::read(&wasm_path).expect("read staged wasm");
+    assert!(
+        !wasm
+            .windows(b"sourceMappingURL".len())
+            .any(|w| w == b"sourceMappingURL"),
+        "wasm already carries a sourceMappingURL section"
+    );
+    wasm.extend_from_slice(&sourcemap::source_mapping_section(&format!("/{map_name}")));
+    std::fs::write(&wasm_path, &wasm).expect("write patched wasm");
+
+    use base64::Engine as _;
+    let digest = base64::engine::general_purpose::STANDARD.encode(Sha384::digest(&wasm));
+    let index = staging.join("index.html");
+    let html = std::fs::read_to_string(&index).expect("read staged index.html");
+    let html =
+        sourcemap::rewrite_integrity(&html, &format!("/{wasm_name}"), &format!("sha384-{digest}"));
+    std::fs::write(&index, html).expect("write staged index.html");
+
+    println!(
+        "op-assets: source map {map_name}, {served} workspace sources under /src/, wasm integrity refreshed"
     );
 }
 

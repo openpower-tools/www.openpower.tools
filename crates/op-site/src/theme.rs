@@ -254,10 +254,11 @@ mod tests {
 
         let mut declared: Vec<&str> = Vec::new();
         for line in css.lines() {
-            if let Some((name, value)) = line.trim().split_once(':') {
-                if name.starts_with("--op-") && value.trim().starts_with('#') {
-                    declared.push(name.trim());
-                }
+            if let Some((name, value)) = line.trim().split_once(':')
+                && name.starts_with("--op-")
+                && value.trim().starts_with('#')
+            {
+                declared.push(name.trim());
             }
         }
         declared.sort_unstable();

@@ -30,3 +30,9 @@ lto = true
 codegen-units = 1
 panic = "abort"
 trim-paths = "all"
+# Line-table DWARF rides into the wasm (kept by data-keep-debug) and
+# feeds the source map op-assets generates; with trim-paths above, no
+# build-machine path can leak into it. wasm-opt is disabled for the
+# shipped wasm: binaryen 132 aborts updating this DWARF version, and a
+# map made before optimization would not match the shipped offsets.
+debug = "line-tables-only"
