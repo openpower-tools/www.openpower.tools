@@ -13,6 +13,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-button",
     observed_attributes: &["variant", "disabled"],
     create: |host| Box::new(Button { host }),

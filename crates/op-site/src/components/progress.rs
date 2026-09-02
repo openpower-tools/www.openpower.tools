@@ -11,6 +11,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-progress",
     observed_attributes: &["value", "label", "state"],
     create: |host| Box::new(Progress { host }),

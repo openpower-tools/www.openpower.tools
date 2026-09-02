@@ -10,6 +10,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-tooltip",
     observed_attributes: &["text"],
     create: |host| Box::new(Tooltip { host }),

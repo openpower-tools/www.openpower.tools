@@ -36,6 +36,27 @@ pub trait CustomElement: 'static {
     fn attribute_changed(&mut self, _name: &str, _old: Option<String>, _new: Option<String>) {}
 }
 
+/// A workspace-relative Rust source position, as `file!()`/`line!()`
+/// report it for workspace members (`crates/...`) - the same shape the
+/// site serves under `/src/`.
+pub struct SourceLocation {
+    pub path: &'static str,
+    pub line: u32,
+}
+
+/// Captures the invocation site as a [`SourceLocation`]. Use it for
+/// [`ElementDefinition::source`] so the inspector's jump-to-definition
+/// on a custom element opens the Rust component.
+#[macro_export]
+macro_rules! here {
+    () => {
+        $crate::SourceLocation {
+            path: file!(),
+            line: line!(),
+        }
+    };
+}
+
 /// Static description of a custom element class.
 pub struct ElementDefinition {
     /// Tag name; must contain a hyphen, e.g. `op-theme-toggle`.
@@ -46,6 +67,10 @@ pub struct ElementDefinition {
     /// lifecycle callback, never from the JS constructor, so the host may be
     /// inspected freely.
     pub create: fn(HtmlElement) -> Box<dyn CustomElement>,
+    /// Where this definition lives ([`here!`]); the shim maps the
+    /// element's generated class onto it so inspectors jump straight to
+    /// the Rust source, which the site serves under `/src/`.
+    pub source: SourceLocation,
 }
 
 /// Per-instance state, owned by the JS element as `this.__rust`.
@@ -97,39 +122,141 @@ impl ElementClass {
 /// The JavaScript shim, kept as a Rust constant so tests can check it against
 /// the exported method names, and inlined below for wasm-bindgen.
 pub const SHIM: &str = r#"
-export function defineElement(tag, observedAttributes, cls) {
-  class RustElement extends HTMLElement {
-    static get observedAttributes() { return observedAttributes; }
-    #rust() { return (this.__rust ??= cls.create(this)); }
-    connectedCallback() { this.#rust().connected(); }
-    disconnectedCallback() { this.#rust().disconnected(); }
-    adoptedCallback() { this.#rust().adopted(); }
-    attributeChangedCallback(name, oldValue, newValue) {
-      this.#rust().attributeChanged(name, oldValue, newValue);
-    }
+const VLQ_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function vlq(value) {
+  let x = value < 0 ? (-value << 1) | 1 : value << 1;
+  let out = "";
+  do {
+    let digit = x & 31;
+    x >>>= 5;
+    if (x) digit |= 32;
+    out += VLQ_CHARS[digit];
+  } while (x);
+  return out;
+}
+export function defineElement(tag, observedAttributes, cls, path, line) {
+  const body = `return class extends HTMLElement {
+  static get observedAttributes() { return observedAttributes; }
+  connectedCallback() { rust(this).connected(); }
+  disconnectedCallback() { rust(this).disconnected(); }
+  adoptedCallback() { rust(this).adopted(); }
+  attributeChangedCallback(name, oldValue, newValue) {
+    rust(this).attributeChanged(name, oldValue, newValue);
+  }
+}`;
+  const rust = (el) => (el.__rust ??= cls.create(el));
+  let RustElement;
+  try {
+    // Each element's class lives in its own little script whose inline
+    // source map points every line at the element's DEFINITION in its
+    // Rust source (served under /src/), so the inspector's
+    // jump-to-definition opens the component, not a JS wrapper.
+    // new Function prepends two header lines; +4 covers everything.
+    const mappings = ["AA" + vlq(line - 1) + "A"];
+    for (let i = body.split("\n").length + 4; i > 1; i--) mappings.push("AAAA");
+    const map = {
+      version: 3,
+      file: tag + ".js",
+      sources: ["/src/" + path],
+      sourcesContent: [null],
+      names: [],
+      mappings: mappings.join(";"),
+    };
+    RustElement = new Function(
+      "HTMLElement", "observedAttributes", "rust",
+      body
+        + "\n//# sourceURL=op-webc/" + tag + ".js"
+        + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
+    )(HTMLElement, observedAttributes, rust);
+  } catch (_csp) {
+    // A Content-Security-Policy without unsafe-eval forbids Function();
+    // fall back to a plain class and lose only the pretty jump target.
+    RustElement = class extends HTMLElement {
+      static get observedAttributes() { return observedAttributes; }
+      connectedCallback() { rust(this).connected(); }
+      disconnectedCallback() { rust(this).disconnected(); }
+      adoptedCallback() { rust(this).adopted(); }
+      attributeChangedCallback(name, oldValue, newValue) {
+        rust(this).attributeChanged(name, oldValue, newValue);
+      }
+    };
   }
   customElements.define(tag, RustElement);
 }
 "#;
 
 #[wasm_bindgen(inline_js = r#"
-export function defineElement(tag, observedAttributes, cls) {
-  class RustElement extends HTMLElement {
-    static get observedAttributes() { return observedAttributes; }
-    #rust() { return (this.__rust ??= cls.create(this)); }
-    connectedCallback() { this.#rust().connected(); }
-    disconnectedCallback() { this.#rust().disconnected(); }
-    adoptedCallback() { this.#rust().adopted(); }
-    attributeChangedCallback(name, oldValue, newValue) {
-      this.#rust().attributeChanged(name, oldValue, newValue);
-    }
+const VLQ_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function vlq(value) {
+  let x = value < 0 ? (-value << 1) | 1 : value << 1;
+  let out = "";
+  do {
+    let digit = x & 31;
+    x >>>= 5;
+    if (x) digit |= 32;
+    out += VLQ_CHARS[digit];
+  } while (x);
+  return out;
+}
+export function defineElement(tag, observedAttributes, cls, path, line) {
+  const body = `return class extends HTMLElement {
+  static get observedAttributes() { return observedAttributes; }
+  connectedCallback() { rust(this).connected(); }
+  disconnectedCallback() { rust(this).disconnected(); }
+  adoptedCallback() { rust(this).adopted(); }
+  attributeChangedCallback(name, oldValue, newValue) {
+    rust(this).attributeChanged(name, oldValue, newValue);
+  }
+}`;
+  const rust = (el) => (el.__rust ??= cls.create(el));
+  let RustElement;
+  try {
+    // Each element's class lives in its own little script whose inline
+    // source map points every line at the element's DEFINITION in its
+    // Rust source (served under /src/), so the inspector's
+    // jump-to-definition opens the component, not a JS wrapper.
+    // new Function prepends two header lines; +4 covers everything.
+    const mappings = ["AA" + vlq(line - 1) + "A"];
+    for (let i = body.split("\n").length + 4; i > 1; i--) mappings.push("AAAA");
+    const map = {
+      version: 3,
+      file: tag + ".js",
+      sources: ["/src/" + path],
+      sourcesContent: [null],
+      names: [],
+      mappings: mappings.join(";"),
+    };
+    RustElement = new Function(
+      "HTMLElement", "observedAttributes", "rust",
+      body
+        + "\n//# sourceURL=op-webc/" + tag + ".js"
+        + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
+    )(HTMLElement, observedAttributes, rust);
+  } catch (_csp) {
+    // A Content-Security-Policy without unsafe-eval forbids Function();
+    // fall back to a plain class and lose only the pretty jump target.
+    RustElement = class extends HTMLElement {
+      static get observedAttributes() { return observedAttributes; }
+      connectedCallback() { rust(this).connected(); }
+      disconnectedCallback() { rust(this).disconnected(); }
+      adoptedCallback() { rust(this).adopted(); }
+      attributeChangedCallback(name, oldValue, newValue) {
+        rust(this).attributeChanged(name, oldValue, newValue);
+      }
+    };
   }
   customElements.define(tag, RustElement);
 }
 "#)]
 extern "C" {
     #[wasm_bindgen(js_name = defineElement)]
-    fn define_element(tag: &str, observed_attributes: js_sys::Array, cls: ElementClass);
+    fn define_element(
+        tag: &str,
+        observed_attributes: js_sys::Array,
+        cls: ElementClass,
+        path: &str,
+        line: u32,
+    );
 }
 
 /// Registers `definition` with the browser's custom element registry.
@@ -145,6 +272,8 @@ pub fn define(definition: &ElementDefinition) {
         ElementClass {
             create: definition.create,
         },
+        definition.source.path,
+        definition.source.line,
     );
 }
 
@@ -158,7 +287,7 @@ mod tests {
     fn inline_js_matches_shim_constant() {
         let source = include_str!("lib.rs");
         let signature = format!(
-            "export function {}(tag, observedAttributes, cls) {{",
+            "export function {}(tag, observedAttributes, cls, path, line) {{",
             "defineElement"
         );
         let occurrences = source.matches(&signature).count();
@@ -190,7 +319,15 @@ mod tests {
                 "shim does not call {method}"
             );
         }
-        assert!(SHIM.contains("cls.create(this)"));
+        assert!(SHIM.contains("cls.create(el)"));
+        assert!(
+            SHIM.contains("sourceMappingURL=data:application/json;base64,"),
+            "shim does not attach the per-element source map"
+        );
+        assert!(
+            SHIM.matches("class extends HTMLElement").count() == 2,
+            "mapped class and CSP fallback class expected"
+        );
         let source = include_str!("lib.rs");
         assert!(source.contains("pub fn connected(&mut self)"));
         assert!(source.contains("pub fn disconnected(&mut self)"));
@@ -210,11 +347,21 @@ mod tests {
             tag: "op-example",
             observed_attributes: &["heading"],
             create,
+            source: crate::here!(),
         };
         assert!(
             definition.tag.contains('-'),
             "custom element tags must contain a hyphen"
         );
         assert_eq!(definition.observed_attributes, &["heading"]);
+        assert!(
+            definition
+                .source
+                .path
+                .ends_with("crates/op-webc/src/lib.rs"),
+            "{}",
+            definition.source.path
+        );
+        assert!(definition.source.line > 0);
     }
 }

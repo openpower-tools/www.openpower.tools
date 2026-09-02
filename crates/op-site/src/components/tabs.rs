@@ -13,6 +13,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-tabs",
     observed_attributes: &[],
     create: |host| {
@@ -24,6 +25,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
 };
 
 pub const TAB_DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-tab",
     observed_attributes: &[],
     create: |host| Box::new(Tab { host }),

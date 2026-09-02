@@ -103,3 +103,33 @@ pub fn shadow_root(host: &HtmlElement) -> ShadowRoot {
     host.attach_shadow(&ShadowRootInit::new(ShadowRootMode::Open))
         .expect("attach shadow root")
 }
+
+#[cfg(test)]
+mod definition_tests {
+    use super::*;
+
+    /// Every definition's source location (`op_webc::here!`) must name
+    /// a real workspace file: the shim maps the element's class onto it
+    /// and the site serves it under `/src/`, so a wrong path breaks the
+    /// inspector's jump-to-definition silently.
+    #[test]
+    fn every_definition_names_its_real_source_file() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for definition in DEFINITIONS {
+            let source = &definition.source;
+            assert!(
+                source.path.starts_with("crates/") && source.path.ends_with(".rs"),
+                "{}: unexpected source shape {}",
+                definition.tag,
+                source.path
+            );
+            assert!(
+                workspace.join(source.path).is_file(),
+                "{}: {} does not exist",
+                definition.tag,
+                source.path
+            );
+            assert!(source.line > 0, "{}", definition.tag);
+        }
+    }
+}

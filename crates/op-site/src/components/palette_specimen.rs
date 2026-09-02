@@ -15,6 +15,7 @@ use web_sys::{Element, HtmlElement};
 use crate::colour::{self, Rgb};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-palette-specimen",
     observed_attributes: &[],
     create: |host| {

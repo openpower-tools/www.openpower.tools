@@ -28,6 +28,7 @@ use super::{BASE_CSS, iso, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-callout",
     observed_attributes: &["variant", "heading"],
     create: |host| Box::new(Callout { host }),

@@ -9,6 +9,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-card",
     observed_attributes: &["heading", "href"],
     create: |host| Box::new(Card { host }),

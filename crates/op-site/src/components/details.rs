@@ -8,6 +8,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-details",
     observed_attributes: &["summary", "open"],
     create: |host| Box::new(Details { host }),

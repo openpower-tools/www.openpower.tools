@@ -13,6 +13,7 @@ use web_sys::{CustomEvent, CustomEventInit, HtmlElement};
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-chip",
     observed_attributes: &["variant", "toggle", "pressed", "removable"],
     create: |host| {

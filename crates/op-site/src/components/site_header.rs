@@ -8,6 +8,7 @@ use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-site-header",
     observed_attributes: &["heading", "tagline"],
     create: |host| Box::new(SiteHeader { host }),

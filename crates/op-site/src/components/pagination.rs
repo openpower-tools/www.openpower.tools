@@ -8,6 +8,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-pagination",
     observed_attributes: &[],
     create: |host| Box::new(Pagination { host }),

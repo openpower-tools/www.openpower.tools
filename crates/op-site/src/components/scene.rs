@@ -23,6 +23,7 @@ use web_sys::{
 };
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-scene",
     observed_attributes: &[],
     create: |host| {

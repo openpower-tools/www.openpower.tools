@@ -6,6 +6,7 @@ use web_sys::HtmlElement;
 use super::{BASE_CSS, DEFINITIONS, shadow_root};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
+    source: op_webc::here!(),
     tag: "opt-build-status",
     observed_attributes: &[],
     create: |host| Box::new(BuildStatus { host }),
