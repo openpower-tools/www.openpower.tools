@@ -38,6 +38,24 @@ macro_rules! page {
 /// emitted beside it.
 pub const PAGES: &[Page] = &[
     page!(
+        "projects",
+        "Projects",
+        "Projects under the openpower.tools umbrella; each lives at /project/{name}/.",
+        "projects/index.xml"
+    ),
+    page!(
+        "project/openpower-tools",
+        "openpower-tools",
+        "The umbrella project: this site, its component vocabulary, and the supporting tooling.",
+        "project/openpower-tools/index.xml"
+    ),
+    page!(
+        "project/openpower-tools/status",
+        "openpower-tools status",
+        "Aggregated build and distribution status for openpower-tools and related OpenPOWER work.",
+        "project/openpower-tools/status/index.xml"
+    ),
+    page!(
         "specimen",
         "Palette specimen",
         "Every design token with its value and WCAG contrast, the site's elements in both themes, and the typography tiers.",
@@ -207,6 +225,7 @@ pub fn nav_markup() -> String {
     let mut items = String::new();
     for (href, label) in [
         ("/", "Home"),
+        ("/projects/", "Projects"),
         ("/components/", "Components"),
         ("/specimen/", "Specimen"),
     ] {
@@ -264,7 +283,12 @@ mod tests {
     fn nav_links_cover_home_and_every_top_level_section() {
         let nav = nav_markup();
         assert!(nav.starts_with("<opt-site-nav>") && nav.ends_with("</opt-site-nav>"));
-        for href in ["\"/\"", "\"/components/\"", "\"/specimen/\""] {
+        for href in [
+            "\"/\"",
+            "\"/projects/\"",
+            "\"/components/\"",
+            "\"/specimen/\"",
+        ] {
             assert!(nav.contains(href), "nav lacks {href}");
         }
     }

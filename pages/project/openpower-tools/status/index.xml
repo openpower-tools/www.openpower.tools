@@ -1,0 +1,10 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+<p>Aggregated status for openpower-tools and related OpenPOWER work:
+the site's own build today, with more sources to follow.</p>
+<opt:build-status></opt:build-status>
+<opt:callout variant="note" heading="Aggregation">
+  Further sources land here over time: distribution package builds for
+  ppc64le, firmware image pipelines, and related OpenPOWER project
+  builds.
+</opt:callout>
+</opt:body>

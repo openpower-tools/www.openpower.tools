@@ -1,0 +1,13 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+<p>Projects under the openpower.tools umbrella: tooling, libraries and
+infrastructure for OpenPOWER systems. The index is plural; each project
+lives at /project/{name}/.</p>
+<div class="op-gallery">
+  <opt:card heading="openpower-tools" href="/project/openpower-tools/">
+    <p>This site and its component vocabulary, the build and status
+    tooling around it, and the wider effort to keep OpenPOWER machines
+    first-class.</p>
+    <p><a href="/project/openpower-tools/status/">Build and distribution status</a></p>
+  </opt:card>
+</div>
+</opt:body>

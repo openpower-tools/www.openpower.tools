@@ -95,7 +95,7 @@
         <opt:card heading="Progress" href="/component/progress/">
           <opt:progress label="Flashing" value="62"></opt:progress>
         </opt:card>
-        <opt:card heading="Build status">
+        <opt:card heading="Build status" href="/project/openpower-tools/status/">
           <opt:build-status></opt:build-status>
         </opt:card>
       </div>

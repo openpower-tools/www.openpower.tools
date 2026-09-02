@@ -1,0 +1,12 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+<p>The umbrella project: this site, its opt component vocabulary, and
+the supporting tooling.</p>
+<ul>
+  <li><a href="/project/openpower-tools/status/">Status</a>: build and
+  distribution health, aggregated in one place.</li>
+  <li><a href="/components/">Components</a>: the element vocabulary the
+  site is built from.</li>
+  <li><a href="https://github.com/openpower-tools/www.openpower.tools">Source</a>:
+  the site, components and page pipeline.</li>
+</ul>
+</opt:body>
