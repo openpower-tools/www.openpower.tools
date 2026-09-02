@@ -8,7 +8,17 @@
 //! The action is named by a tooltip (title) and aria-label; role=switch
 //! with aria-checked (checked = dark) carries the semantics, and
 //! keyboard focus mirrors hover affordances with an accent outline.
-//! The choice persists via `crate::theme`.
+//!
+//! A click flips the thumb at once but the palette blends in slowly
+//! (`theme::EASE_MS`, exponential - see the easing block in
+//! `styles/theme.css`), so the page creeps toward the other theme
+//! rather than snapping. A second click inside that window aborts:
+//! the stored choice and the thumb return, and the palette glides
+//! back from wherever the blend was. The choice persists via
+//! `crate::theme`.
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use op_webc::{CustomElement, ElementDefinition};
 use wasm_bindgen::prelude::*;
@@ -25,6 +35,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
             host,
             on_click: None,
             on_scheme_change: None,
+            ease: Rc::default(),
         })
     },
 };
@@ -36,6 +47,20 @@ struct ThemeToggle {
     /// Updates the control if the system preference changes while no
     /// explicit choice is stored.
     on_scheme_change: Option<Closure<dyn FnMut(Event)>>,
+    /// The in-flight palette blend, shared with the click handler.
+    ease: Rc<RefCell<Ease>>,
+}
+
+#[derive(Default)]
+struct Ease {
+    /// `Some(origin)` while a click's blend is in flight; the next
+    /// click then aborts back to `origin` instead of toggling onward.
+    origin: Option<Mode>,
+    /// Handle of the pending settle timeout.
+    timer: Option<i32>,
+    /// Keeps the settle callback alive until it is replaced by the
+    /// next blend (never dropped from inside its own invocation).
+    settle: Option<Closure<dyn FnMut()>>,
 }
 
 const SUN: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"5\" fill=\"currentColor\"/><g stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><line x1=\"12\" y1=\"1.5\" x2=\"12\" y2=\"4.5\"/><line x1=\"12\" y1=\"19.5\" x2=\"12\" y2=\"22.5\"/><line x1=\"1.5\" y1=\"12\" x2=\"4.5\" y2=\"12\"/><line x1=\"19.5\" y1=\"12\" x2=\"22.5\" y2=\"12\"/><line x1=\"4.6\" y1=\"4.6\" x2=\"6.7\" y2=\"6.7\"/><line x1=\"17.3\" y1=\"17.3\" x2=\"19.4\" y2=\"19.4\"/><line x1=\"4.6\" y1=\"19.4\" x2=\"6.7\" y2=\"17.3\"/><line x1=\"17.3\" y1=\"6.7\" x2=\"19.4\" y2=\"4.6\"/></g></svg>";
@@ -180,15 +205,57 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
             self.on_scheme_change = Some(closure);
         }
 
+        let ease = self.ease.clone();
         let target = button.clone();
         let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
-            let next = theme::current().opposite();
-            let target = target.clone();
-            // Cross-fade the palette change like the font swap.
-            crate::viewtransition::run(move || {
-                theme::choose(next);
-                show(&target, next);
+            let window = web_sys::window().expect("window");
+            let mut state = ease.borrow_mut();
+            if let Some(handle) = state.timer.take() {
+                window.clear_timeout_with_handle(handle);
+            }
+            match state.origin.take() {
+                // Second click mid-blend: abort. The easing attribute
+                // stays armed, so the palette glides back from wherever
+                // the blend was; CSS transition reversing shortens the
+                // return in proportion to how far it had got.
+                Some(origin) => {
+                    theme::choose(origin);
+                    show(&target, origin);
+                }
+                // First click: store and show the new theme at once
+                // (the thumb slides now) while the palette blends in
+                // slowly behind it.
+                None => {
+                    let origin = theme::current();
+                    let next = origin.opposite();
+                    theme::begin_easing();
+                    theme::choose(next);
+                    show(&target, next);
+                    let describing = next.easing_description();
+                    let _ = target.set_attribute("aria-label", &describing);
+                    let _ = target.set_attribute("title", &describing);
+                    state.origin = Some(origin);
+                }
+            }
+            // Either way a blend is now in flight; settle once it has
+            // run out (abort reversals finish sooner - the attribute
+            // lingering a moment longer changes nothing).
+            let ease_for_settle = ease.clone();
+            let button_for_settle = target.clone();
+            let settle = Closure::<dyn FnMut()>::new(move || {
+                let mut state = ease_for_settle.borrow_mut();
+                state.timer = None;
+                state.origin = None;
+                theme::end_easing();
+                show(&button_for_settle, theme::current());
             });
+            state.timer = window
+                .set_timeout_with_callback_and_timeout_and_arguments_0(
+                    settle.as_ref().unchecked_ref(),
+                    theme::EASE_MS + 200,
+                )
+                .ok();
+            state.settle = Some(settle);
         });
         button
             .add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())

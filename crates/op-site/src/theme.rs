@@ -21,6 +21,18 @@ pub const STORAGE_KEY: &str =
     "tools.openpower.sites.www.storage.version.1.configuration.version.1.ux.theme.current";
 const ATTRIBUTE: &str = "data-theme";
 
+/// Attribute on `<html>` that arms the slow palette blend declared in
+/// `styles/theme.css`: while present, the registered colour tokens
+/// transition over [`EASE_MS`] on an exponential curve, so a
+/// `data-theme` flip creeps in instead of snapping and a second click
+/// can abort it. A contract test keeps the stylesheet in step.
+pub const EASING_ATTRIBUTE: &str = "data-op-theme-easing";
+
+/// How long an armed palette blend runs. The stylesheet's
+/// transition-duration must match (tested); the toggle settles its
+/// state slightly after this.
+pub const EASE_MS: i32 = 3_000;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Dark,
@@ -62,6 +74,17 @@ impl Mode {
     /// Visible button text: the theme currently in effect.
     pub fn label(self) -> String {
         format!("Theme: {}", self.name())
+    }
+
+    /// Accessible description while a blend toward `self` is in
+    /// flight: names the destination and the way back, since a second
+    /// activation aborts.
+    pub fn easing_description(self) -> String {
+        format!(
+            "Colour theme: switching to {}. Activate to return to {}.",
+            self.name(),
+            self.opposite().name()
+        )
     }
 
     /// Accessible description of the button's current state and action.
@@ -107,6 +130,26 @@ pub fn system_prefers_light() -> bool {
 /// The theme currently in effect.
 pub fn current() -> Mode {
     resolve(stored(), system_prefers_light())
+}
+
+fn document_root() -> Option<web_sys::Element> {
+    web_sys::window()?.document()?.document_element()
+}
+
+/// Arms the slow palette blend for subsequent theme flips.
+pub fn begin_easing() {
+    if let Some(root) = document_root() {
+        root.set_attribute(EASING_ATTRIBUTE, "")
+            .expect("set easing attribute");
+    }
+}
+
+/// Disarms the blend so later theme changes (system preference shifts)
+/// apply instantly again.
+pub fn end_easing() {
+    if let Some(root) = document_root() {
+        let _ = root.remove_attribute(EASING_ATTRIBUTE);
+    }
 }
 
 /// Records an explicit user choice and reflects it on `<html>`.
@@ -183,6 +226,122 @@ mod tests {
     #[test]
     fn index_html_prepaint_script_agrees_with_storage_contract() {
         check_prepaint_script(include_str!("../../../index.html"));
+    }
+
+    #[test]
+    fn easing_descriptions_name_the_target_and_the_way_back() {
+        for target in [Mode::Dark, Mode::Light] {
+            let description = target.easing_description();
+            assert!(
+                description.contains(&format!("switching to {}", target.name())),
+                "{description}"
+            );
+            assert!(
+                description.ends_with(&format!("return to {}.", target.opposite().name())),
+                "{description}"
+            );
+        }
+    }
+
+    /// The stylesheet's easing machinery must cover exactly the colour
+    /// tokens: every token declared with a hex value is registered as a
+    /// typed <color> (with the dark palette as initial value, since dark
+    /// is the :root default) and listed in the gated transition, and the
+    /// gate matches [`EASING_ATTRIBUTE`] / [`EASE_MS`].
+    #[test]
+    fn easing_css_registers_and_transitions_every_colour_token() {
+        let css = include_str!("../../../styles/theme.css");
+
+        let mut declared: Vec<&str> = Vec::new();
+        for line in css.lines() {
+            if let Some((name, value)) = line.trim().split_once(':') {
+                if name.starts_with("--op-") && value.trim().starts_with('#') {
+                    declared.push(name.trim());
+                }
+            }
+        }
+        declared.sort_unstable();
+        declared.dedup();
+        assert!(declared.len() > 10, "token scan looks broken: {declared:?}");
+
+        let mut registered: Vec<(&str, &str)> = Vec::new();
+        for segment in css.split("@property ").skip(1) {
+            let name = segment.split('{').next().expect("name").trim();
+            let body = segment
+                .split('{')
+                .nth(1)
+                .expect("body")
+                .split('}')
+                .next()
+                .expect("body end");
+            assert!(
+                body.contains("syntax: \"<color>\""),
+                "{name} is not typed as <color>"
+            );
+            assert!(body.contains("inherits: true"), "{name} must inherit");
+            let initial = body
+                .split("initial-value:")
+                .nth(1)
+                .unwrap_or_else(|| panic!("{name} lacks initial-value"))
+                .split(';')
+                .next()
+                .expect("initial end")
+                .trim();
+            registered.push((name, initial));
+        }
+        registered.sort_unstable();
+        let names: Vec<&str> = registered.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, declared, "registrations != hex-declared tokens");
+
+        let dark_block = css
+            .split(":root,")
+            .nth(1)
+            .expect("dark :root block")
+            .split('}')
+            .next()
+            .expect("dark block end");
+        for (name, initial) in &registered {
+            let dark = dark_block
+                .split(&format!("{name}:"))
+                .nth(1)
+                .unwrap_or_else(|| panic!("{name} missing from the dark palette"))
+                .split(';')
+                .next()
+                .expect("value end")
+                .trim();
+            assert_eq!(
+                initial, &dark,
+                "{name} initial-value drifted from the dark palette"
+            );
+        }
+
+        let rule = css
+            .split(&format!(":root[{EASING_ATTRIBUTE}]"))
+            .nth(1)
+            .expect("easing rule")
+            .split('}')
+            .next()
+            .expect("rule end");
+        let mut transitioned: Vec<&str> = rule
+            .split("transition-property:")
+            .nth(1)
+            .expect("transition-property")
+            .split(';')
+            .next()
+            .expect("list end")
+            .split(',')
+            .map(str::trim)
+            .collect();
+        transitioned.sort_unstable();
+        assert_eq!(transitioned, declared, "transition list != colour tokens");
+        assert!(
+            rule.contains(&format!("transition-duration: {}s", EASE_MS / 1000)),
+            "stylesheet duration disagrees with EASE_MS"
+        );
+        assert!(
+            rule.contains("cubic-bezier(") && rule.contains("linear("),
+            "expected the exponential curve and its bezier fallback"
+        );
     }
 
     fn check_prepaint_script(index: &str) {

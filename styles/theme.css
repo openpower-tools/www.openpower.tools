@@ -116,6 +116,53 @@
   --op-pole-base: #FFFFFF;
 }
 
+/*
+ * Theme easing. The toggle arms <html data-op-theme-easing> for the
+ * duration of a click's palette blend. The colour tokens are registered
+ * as typed <color> properties (which is what lets them interpolate at
+ * all); while the attribute is present they transition on an
+ * exponential curve - barely moving at first, committing at the end -
+ * so a second click inside the window aborts: the reversal replays from
+ * wherever the blend was, shortened in proportion (CSS transition
+ * reversing). Browsers lacking property registration ignore these
+ * rules and flip instantly, which keeps the abort semantics true. Each
+ * initial-value carries the dark palette (the :root default); a test in
+ * op-site keeps the registrations, the :root declarations and the
+ * transition-property list identical, and the duration in step with the
+ * toggle's timer.
+ */
+@property --op-bg { syntax: "<color>"; inherits: true; initial-value: #020202; }
+@property --op-surface { syntax: "<color>"; inherits: true; initial-value: #2B415F; }
+@property --op-text { syntax: "<color>"; inherits: true; initial-value: #DCCAA4; }
+@property --op-muted { syntax: "<color>"; inherits: true; initial-value: #ADB8C6; }
+@property --op-link { syntax: "<color>"; inherits: true; initial-value: #E6D27A; }
+@property --op-link-hover { syntax: "<color>"; inherits: true; initial-value: #D7BD44; }
+@property --op-accent { syntax: "<color>"; inherits: true; initial-value: #EB6424; }
+@property --op-highlight { syntax: "<color>"; inherits: true; initial-value: #EB6424; }
+@property --op-focus { syntax: "<color>"; inherits: true; initial-value: #EB6424; }
+@property --op-border { syntax: "<color>"; inherits: true; initial-value: #334D70; }
+@property --op-border-strong { syntax: "<color>"; inherits: true; initial-value: #8F9DB0; }
+@property --op-code-bg { syntax: "<color>"; inherits: true; initial-value: #1A2738; }
+@property --op-status-neutral { syntax: "<color>"; inherits: true; initial-value: #8F9DB0; }
+@property --op-status-info { syntax: "<color>"; inherits: true; initial-value: #7FB0DE; }
+@property --op-status-ok { syntax: "<color>"; inherits: true; initial-value: #97C264; }
+@property --op-status-warning { syntax: "<color>"; inherits: true; initial-value: #E0A458; }
+@property --op-status-danger { syntax: "<color>"; inherits: true; initial-value: #E4756A; }
+@property --op-raised { syntax: "<color>"; inherits: true; initial-value: #131A26; }
+@property --op-pole-base { syntax: "<color>"; inherits: true; initial-value: #000000; }
+
+:root[data-op-theme-easing] {
+  transition-property: --op-bg, --op-surface, --op-text, --op-muted,
+    --op-link, --op-link-hover, --op-accent, --op-highlight, --op-focus,
+    --op-border, --op-border-strong, --op-code-bg, --op-status-neutral,
+    --op-status-info, --op-status-ok, --op-status-warning,
+    --op-status-danger, --op-raised, --op-pole-base;
+  transition-duration: 3s;
+  /* easeInExpo-shaped fallback, then a true exponential (2^(6t)-1)/63. */
+  transition-timing-function: cubic-bezier(0.9, 0.05, 0.85, 0.3);
+  transition-timing-function: linear(0, 0.008 10%, 0.021 20%, 0.039 30%, 0.068 40%, 0.111 50%, 0.177 60%, 0.276 70%, 0.426 80%, 0.654 90%, 0.809 95%, 1);
+}
+
 /* Font tokens: candidates are compared on /specimen/; the site default is
    chosen there. Every webfont is embedded in the wasm binary and registered
    through the CSS Font Loading API (crates/op-site/src/fonts.rs); the
