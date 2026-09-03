@@ -813,8 +813,8 @@ table{border-collapse:collapse;font-size:.9rem}td,th{padding:.25rem .6rem;border
 .ok{color:#1b7f3b;font-weight:600}.fail{color:#b3261e;font-weight:700}
 p.note{color:#444;max-width:70ch}.machine{margin:.4rem 0 1rem}.summary{padding:.6rem .9rem;background:#fff;border:1px solid #ddd;display:inline-block}
 a{color:#0b57d0}
-.film{margin:.6rem 0 1rem;display:inline-block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:100%}
-.film .chartbox{margin-top:.6rem}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block}
+.film{margin:.6rem 0 1rem;display:inline-block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:100%;user-select:none;-webkit-user-select:none}
+.film .chartbox{margin-top:.6rem}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block;touch-action:none}
 .film .view{background-repeat:no-repeat;image-rendering:auto;display:block;max-width:100%}
 .film .bar{display:flex;gap:.6rem;align-items:center;margin-top:.4rem;font-size:.85rem}
 .film input[type=range]{flex:1;min-width:220px}.film .t{font-variant-numeric:tabular-nums;min-width:4.5rem}.film .n{color:#777}
@@ -851,7 +851,7 @@ document.querySelectorAll('.film').forEach(f => {
   if (chart) {
     const seek = e => { const r = chart.getBoundingClientRect(); const vb = chart.viewBox.baseVal; const px = (e.clientX - r.left) * (vb.width / r.width);
       tc = Math.min(tEnd, Math.max(0, (px - x0) / (x1 - x0) * t1)); render(); };
-    chart.addEventListener('pointerdown', e => { pause(); seek(e); chart.setPointerCapture(e.pointerId); chart.onpointermove = seek; });
+    chart.addEventListener('pointerdown', e => { e.preventDefault(); pause(); seek(e); chart.setPointerCapture(e.pointerId); chart.onpointermove = seek; });
     chart.addEventListener('pointerup', () => { chart.onpointermove = null; });
   }
   render();
