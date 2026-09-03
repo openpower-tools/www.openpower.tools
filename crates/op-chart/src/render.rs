@@ -30,6 +30,10 @@ pub fn escape(text: &str) -> String {
 
 /// The value gridlines drawn and labelled on the left axis.
 const VALUE_TICKS: [f64; 5] = [0.0, 25.0, 50.0, 75.0, 100.0];
+/// Minimum vertical distance between end labels (12 px text plus a gap).
+const LABEL_GAP: f64 = 14.0;
+/// Markers per series at most, spread over the samples.
+const MAX_MARKERS: usize = 8;
 
 /// Draw `spec` in the box and scales `l` describes. The caller chooses the
 /// layout (the film uses [`Layout::film`]) so the element and the page
@@ -95,31 +99,55 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
     out.push_str("</g>");
 
     out.push_str("<g class=\"series\">");
+    // end labels first, so their vertical placement can be settled together
+    let wanted: Vec<f64> = spec
+        .series
+        .iter()
+        .filter(|s| !s.label.is_empty())
+        .filter_map(|s| s.points.last().map(|(_, v)| l.y_of(*v) - 5.0))
+        .collect();
+    let mut placed =
+        crate::labels::spread(&wanted, LABEL_GAP, l.top + 10.0, l.plot_bottom() - 3.0).into_iter();
     for s in &spec.series {
         let pts: Vec<String> = s
             .points
             .iter()
             .map(|(t, v)| format!("{:.1},{:.1}", l.x_of(*t), l.y_of(*v)))
             .collect();
-        let dash = if s.dash {
-            " stroke-dasharray=\"5 4\""
-        } else {
-            ""
-        };
         out.push_str(&format!(
-            "<polyline class=\"series-{}\" points=\"{}\" fill=\"none\" stroke-width=\"{}\"{dash} stroke-linejoin=\"round\"/>",
+            "<polyline class=\"series-{}\" points=\"{}\" fill=\"none\" stroke-width=\"{}\" stroke-linejoin=\"round\"/>",
             s.index,
             pts.join(" "),
             s.width
         ));
-        if !s.label.is_empty() && !s.points.is_empty() {
-            let i = ((s.points.len() as f64 * s.label_at) as usize).min(s.points.len() - 1);
+        let labelled = !s.label.is_empty() && !s.points.is_empty();
+        // markers at sparse samples: always in the markup, shown by the
+        // stylesheet for unlabelled series and in forced-colours mode
+        let shown = if labelled { "" } else { " shown" };
+        for i in crate::labels::marker_samples(s.points.len(), MAX_MARKERS) {
             let (t, v) = s.points[i];
             out.push_str(&format!(
-                "<text class=\"serieslabel series-{}\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
+                "<path class=\"marker series-{}{shown}\" transform=\"translate({:.1} {:.1})\" d=\"{}\"/>",
                 s.index,
-                l.x_of(t) + 4.0,
-                l.y_of(v) - 5.0,
+                l.x_of(t),
+                l.y_of(v),
+                crate::labels::marker_path(s.index)
+            ));
+        }
+        if labelled {
+            let (t, _) = s.points[s.points.len() - 1];
+            let x = l.x_of(t);
+            let y = placed.next().unwrap_or(l.top + 10.0);
+            out.push_str(&format!(
+                "<line class=\"swatch series-{}\" x1=\"{:.1}\" x2=\"{:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\"/>",
+                s.index,
+                x - 16.0,
+                x - 4.0
+            ));
+            out.push_str(&format!(
+                "<text class=\"endlabel\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
+                x - 20.0,
+                y + 4.0,
                 escape(&s.label)
             ));
         }
@@ -179,22 +207,12 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
 pub(crate) mod fixtures {
     use crate::{Chapter, Series, Spec};
 
-    fn series(
-        label: &str,
-        index: usize,
-        t: &[f64],
-        y: &[f64],
-        dash: bool,
-        width: f64,
-        label_at: f64,
-    ) -> Series {
+    fn series(label: &str, index: usize, t: &[f64], y: &[f64], width: f64) -> Series {
         Series {
             label: label.to_owned(),
             index,
             points: t.iter().copied().zip(y.iter().copied()).collect(),
-            dash,
             width,
-            label_at,
         }
     }
 
@@ -218,9 +236,7 @@ pub(crate) mod fixtures {
                 2,
                 &times,
                 &[0.0, 8.0, 30.0, 61.0, 84.0, 95.0, 99.0, 100.0],
-                false,
                 2.4,
-                0.85,
             )],
         }
     }
@@ -247,8 +263,8 @@ pub(crate) mod fixtures {
                 chapter(3.03, "settled"),
             ],
             series: vec![
-                series("ghost left %", 3, &t, &ghost, false, 2.4, 0.5),
-                series("palette blend %", 1, &t, &palette, true, 1.8, 0.85),
+                series("ghost left %", 3, &t, &ghost, 2.4),
+                series("palette blend %", 1, &t, &palette, 1.8),
             ],
         }
     }
@@ -303,8 +319,9 @@ mod tests {
         // every series is addressed by its class, line and label alike
         assert!(svg.contains("<polyline class=\"series-3\""));
         assert!(svg.contains("<polyline class=\"series-1\""));
-        assert!(svg.contains("<text class=\"serieslabel series-3\""));
-        assert!(svg.contains("<text class=\"serieslabel series-1\""));
+        assert!(svg.contains("<line class=\"swatch series-3\""));
+        assert!(svg.contains("<line class=\"swatch series-1\""));
+        assert!(svg.contains("<text class=\"endlabel\""));
     }
 
     #[test]
@@ -352,5 +369,40 @@ mod tests {
                 .starts_with("<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 1200 268\"")
         );
         assert_eq!(r.layout.x_of(3.0), 1186.0);
+    }
+
+    #[test]
+    fn end_labels_are_kept_apart_and_unlabelled_series_show_markers() {
+        // two series ending at the same value would collide; the emitter spreads them
+        let mut spec = demo();
+        let mut twin = spec.series[0].clone();
+        twin.index = 4;
+        twin.label = "twin".to_owned();
+        spec.series.push(twin);
+        let svg = film(&spec).svg;
+        let ys: Vec<f64> = svg
+            .match_indices("<text class=\"endlabel\"")
+            .map(|(i, _)| {
+                let rest = &svg[i..];
+                let y = rest
+                    .split("y=\"")
+                    .nth(1)
+                    .unwrap()
+                    .split('"')
+                    .next()
+                    .unwrap();
+                y.parse::<f64>().unwrap()
+            })
+            .collect();
+        assert_eq!(ys.len(), 2);
+        assert!((ys[0] - ys[1]).abs() >= 14.0, "{ys:?}");
+        // labelled series carry hidden markers; an unlabelled one shows them
+        assert!(svg.contains("class=\"marker series-2\" "));
+        let mut spec = demo();
+        spec.series[0].label.clear();
+        let svg = film(&spec).svg;
+        assert!(svg.contains("class=\"marker series-2 shown\""));
+        assert!(!svg.contains("endlabel"));
+        assert_eq!(svg.matches("class=\"marker series-2 shown\"").count(), 8);
     }
 }

@@ -12,7 +12,9 @@ pub struct Chapter {
 /// One sampled series.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Series {
-    /// Direct label drawn near the point at `label_at`; empty for none.
+    /// Direct end label, placed at the series' last point and kept clear of
+    /// its neighbours; empty for none, in which case the series carries
+    /// markers instead.
     pub label: String,
     /// Which palette series this is, 1 to 6: the emitter writes the class
     /// `series-N` and the consumer's stylesheet maps it to `--op-series-N`.
@@ -21,10 +23,8 @@ pub struct Series {
     /// `(t, value)` pairs in time order; values are clamped to the layout's
     /// value domain when drawn.
     pub points: Vec<(f64, f64)>,
-    pub dash: bool,
+    /// Stroke width in px; 2 is the palette's design width.
     pub width: f64,
-    /// Fraction along the series (0..1) at which the label sits.
-    pub label_at: f64,
 }
 
 /// Everything [`crate::render`] draws from.

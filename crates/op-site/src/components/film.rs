@@ -49,9 +49,7 @@ struct Series {
     index: usize,
     t: Vec<f64>,
     y: Vec<f64>,
-    dash: bool,
     lw: f64,
-    at: f64,
 }
 
 /// Everything the element renders from.
@@ -109,9 +107,7 @@ impl Data {
                 index: (num(&s, "series", i as f64 + 1.0).round() as usize).clamp(1, SERIES_TOKENS),
                 t: nums(&s, "t"),
                 y: nums(&s, "y"),
-                dash: get(&s, "dash").as_bool().unwrap_or(false),
-                lw: num(&s, "lw", 1.8),
-                at: num(&s, "at", 0.85),
+                lw: num(&s, "lw", 2.0),
             })
             .collect::<Vec<_>>();
         let last = times.last().copied().unwrap_or(0.0);
@@ -192,15 +188,34 @@ impl Data {
 /// How many `--op-series-N` tokens the palette defines.
 const SERIES_TOKENS: usize = 6;
 
-/// Series lines and labels take their colour from the palette tokens; the
-/// markup carries only the class.
+/// Series lines, swatches and markers take their colour from the palette
+/// tokens and their dash from this table, so colour is never the only cue;
+/// the markup carries only the class. Butt caps keep the pattern legible at
+/// 2 px.
 const SERIES_CSS: &str = "
-.chart .series-1 { stroke: var(--op-series-1); } .chart .serieslabel.series-1 { fill: var(--op-series-1); }
-.chart .series-2 { stroke: var(--op-series-2); } .chart .serieslabel.series-2 { fill: var(--op-series-2); }
-.chart .series-3 { stroke: var(--op-series-3); } .chart .serieslabel.series-3 { fill: var(--op-series-3); }
-.chart .series-4 { stroke: var(--op-series-4); } .chart .serieslabel.series-4 { fill: var(--op-series-4); }
-.chart .series-5 { stroke: var(--op-series-5); } .chart .serieslabel.series-5 { fill: var(--op-series-5); }
-.chart .series-6 { stroke: var(--op-series-6); } .chart .serieslabel.series-6 { fill: var(--op-series-6); }";
+.chart polyline[class^=series] { stroke-linecap: butt; }
+.chart .series-1 { stroke: var(--op-series-1); }
+.chart .series-2 { stroke: var(--op-series-2); } .chart polyline.series-2 { stroke-dasharray: 8 4; }
+.chart .series-3 { stroke: var(--op-series-3); } .chart polyline.series-3 { stroke-dasharray: 2 3; }
+.chart .series-4 { stroke: var(--op-series-4); } .chart polyline.series-4 { stroke-dasharray: 8 4 2 4; }
+.chart .series-5 { stroke: var(--op-series-5); } .chart polyline.series-5 { stroke-dasharray: 12 4; }
+.chart .series-6 { stroke: var(--op-series-6); } .chart polyline.series-6 { stroke-dasharray: 4 2 4 6; }";
+
+/// Forced-colours mode keeps SVG author colours, so every paint is mapped
+/// to a system colour here: series, axes and text on CanvasText with the
+/// dashes and markers carrying identity, the played region and playhead on
+/// Highlight, the band as an outline.
+const FORCED_COLOURS_CSS: &str = "
+@media (forced-colors: active) {
+  .chart { forced-color-adjust: auto; background: Canvas; }
+  .chart polyline[class^=series], .chart .swatch, .chart .tick, .chart .mark, .chart .chapter, .chart .peek-line { stroke: CanvasText; }
+  .chart .marker { display: inline; stroke: CanvasText; fill: Canvas; }
+  .chart .axis, .chart .marklabel, .chart .endlabel, .chart .head-t { fill: CanvasText; stroke: Canvas; }
+  .chart .grid { stroke: GrayText; }
+  .chart .band { fill: none; stroke: CanvasText; stroke-dasharray: 4 3; opacity: 1; }
+  .chart .bar-bg { fill: GrayText; } .chart .bar-played { fill: Highlight; }
+  .chart .head { stroke: Highlight; } .chart .head-dot { fill: Highlight; }
+}";
 
 /// The film's data as a chart spec: one axis for every series, chapters as
 /// marks, and the colours exactly as the data passes them.
@@ -224,9 +239,7 @@ fn spec_of(d: &Data) -> op_chart::Spec {
                 label: s.label.clone(),
                 index: s.index,
                 points: s.t.iter().copied().zip(s.y.iter().copied()).collect(),
-                dash: s.dash,
                 width: s.lw,
-                label_at: s.at,
             })
             .collect(),
     }
@@ -699,8 +712,12 @@ impl CustomElement for Film {
 .chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 11px; }}
 .chart .grid {{ stroke: var(--op-border); }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
 .chart .mark {{ stroke: var(--op-accent); stroke-dasharray: 3 3; }} .chart .marklabel {{ fill: var(--op-accent); }}
-.chart .serieslabel {{ font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+.chart .endlabel {{ fill: var(--op-text); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 3; }}
+.chart .swatch {{ stroke-width: 3; }}
+.chart .marker {{ display: none; fill: var(--op-surface); stroke-width: 1.5; stroke-dasharray: none; }} .chart .marker.shown {{ display: inline; }}
 {SERIES_CSS}
+{FORCED_COLOURS_CSS}
+@media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart polyline[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
 .chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 .chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
 .chart .peek-line {{ stroke: var(--op-muted); stroke-dasharray: 3 3; }}
@@ -1110,23 +1127,13 @@ mod chart_reference {
     //! film-side rules over them.
     use super::*;
 
-    fn series(
-        label: &str,
-        index: usize,
-        t: &[f64],
-        y: &[f64],
-        dash: bool,
-        lw: f64,
-        at: f64,
-    ) -> Series {
+    fn series(label: &str, index: usize, t: &[f64], y: &[f64], lw: f64) -> Series {
         Series {
             label: label.to_owned(),
             index,
             t: t.to_vec(),
             y: y.to_vec(),
-            dash,
             lw,
-            at,
         }
     }
 
@@ -1145,9 +1152,7 @@ mod chart_reference {
                 2,
                 &times,
                 &[0.0, 8.0, 30.0, 61.0, 84.0, 95.0, 99.0, 100.0],
-                false,
                 2.4,
-                0.85,
             )],
             ylabel: "progress %".to_owned(),
             t_max: 3.0,
@@ -1178,8 +1183,8 @@ mod chart_reference {
                 (3.03, "settled".to_owned()),
             ],
             series: vec![
-                series("ghost left %", 3, &t, &ghost, false, 2.4, 0.5),
-                series("palette blend %", 1, &t, &palette, true, 1.8, 0.85),
+                series("ghost left %", 3, &t, &ghost, 2.4),
+                series("palette blend %", 1, &t, &palette, 1.8),
             ],
             ylabel: "% (opacity, left)".to_owned(),
             t_max: 3.7,
@@ -1195,17 +1200,44 @@ mod chart_reference {
         let svg = op_chart::render(&spec_of(&d), op_chart::Layout::film(d.t_max)).svg;
         assert!(
             svg.contains("<polyline class=\"series-2\"")
-                && svg.contains("class=\"serieslabel series-2\"")
+                && svg.contains("class=\"swatch series-2\"")
         );
         assert!(!svg.contains("stroke=\"#") && !svg.contains("fill=\"#"));
         for n in 1..=SERIES_TOKENS {
             assert!(SERIES_CSS.contains(&format!(
                 ".chart .series-{n} {{ stroke: var(--op-series-{n}); }}"
             )));
-            assert!(SERIES_CSS.contains(&format!(
-                ".serieslabel.series-{n} {{ fill: var(--op-series-{n}); }}"
-            )));
         }
+        // one dash pattern per series after the first, all distinct
+        let dashes: Vec<&str> = SERIES_CSS
+            .split("stroke-dasharray: ")
+            .skip(1)
+            .map(|d| d.split(';').next().unwrap())
+            .collect();
+        assert_eq!(dashes.len(), SERIES_TOKENS - 1);
+        let distinct: std::collections::BTreeSet<&str> = dashes.iter().copied().collect();
+        assert_eq!(distinct.len(), dashes.len());
+        assert!(!SERIES_CSS.contains(".series-1 { stroke-dasharray"));
+        // forced colours: every paint the chart uses is mapped to a system colour
+        for class in [
+            "polyline[class^=series]",
+            ".marker",
+            ".endlabel",
+            ".grid",
+            ".band",
+            ".bar-played",
+            ".head",
+            ".peek-line",
+        ] {
+            assert!(
+                FORCED_COLOURS_CSS.contains(class),
+                "{class} has no forced-colours rule"
+            );
+        }
+        for system in ["CanvasText", "Canvas", "GrayText", "Highlight"] {
+            assert!(FORCED_COLOURS_CSS.contains(system));
+        }
+        assert!(!FORCED_COLOURS_CSS.contains("var(--op-series"));
     }
 
     #[test]

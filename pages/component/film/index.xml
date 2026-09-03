@@ -9,6 +9,12 @@
       frames, arrows, J and L, Shift with an arrow for one second, Page Up and Page Down
       by chapter (Ctrl or Alt with an arrow does the same), digits, Home and End, the
       angle brackets for speed.</p>
+      <p>Series take their colour from the palette tokens (<code>--op-series-1</code> to
+      <code>6</code>, fitted per theme and tested for contrast and colour-vision separation),
+      but colour is never the only cue: each series after the first has its own dash pattern,
+      a labelled series ends in a direct label with a swatch, an unlabelled one carries markers,
+      and under forced colours or a high-contrast preference every paint maps to a system
+      colour with the dashes and markers keeping the series apart.</p>
       <h2>Example</h2>
       <opt:film sheet="/opt-film-demo.png" title="Eight frames of a theme flight">
         <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"]], "ylabel": "progress %", "series": [{"label": "palette", "series": 1, "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "series": 3, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "series": 2, "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>

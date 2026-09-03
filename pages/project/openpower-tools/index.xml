@@ -6,6 +6,9 @@ the supporting tooling.</p>
   distribution health, aggregated in one place.</li>
   <li><a href="/components/">Components</a>: the element vocabulary the
   site is built from.</li>
+  <li><a href="/reports/interactions/">Interaction reports</a>: every
+  control driven through its interaction machine with real input, each
+  edge filmed, charted and checked; rebuilt on every deploy.</li>
   <li><a href="https://github.com/openpower-tools/www.openpower.tools">Source</a>:
   the site, components and page pipeline.</li>
 </ul>

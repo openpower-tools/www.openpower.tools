@@ -1328,6 +1328,43 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   Check("release seeks and clears pending", p3["k"] == 2 and p3["pending"] is None and not p3["pend_state"], f"playhead {p3['k']}"),
                   Check("Escape cancels a press", p4["k"] == 2 and p4["pending"] is None, f"playhead {p4['k']}")]
     rep.edges.append(e4)
+    # E5 the chart under forced colours and high contrast: identity must survive without the palette
+    e5 = Edge(("Paused", "Peek", "Paused"), "Forced colours and high contrast",
+              "With forced-colors active every paint maps to a system colour, markers appear on every series and dashes carry identity; "
+              "with prefers-contrast more the grid reaches the strong border and strokes thicken.")
+    CH = f"""(() => {{ const sr = {F}.shadowRoot; const cs = e => e && getComputedStyle(e);
+      const p1 = sr.querySelector('polyline.series-1'), p2 = sr.querySelector('polyline.series-2') || p1, m = sr.querySelector('.marker'), g = sr.querySelector('.grid'), lab = sr.querySelector('.endlabel');
+      return {{s1: cs(p1).stroke, s2: cs(p2).stroke, dash2: cs(p2).strokeDasharray, w1: cs(p1).strokeWidth, marker: m ? cs(m).display : null, grid: cs(g).stroke, label: lab ? cs(lab).fill : null,
+        token1: getComputedStyle({F}).getPropertyValue('--op-series-1').trim(), strong: getComputedStyle({F}).getPropertyValue('--op-border-strong').trim()}}; }})()"""
+    normal = b.js(CH)
+    b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "active"}])
+    time.sleep(0.2)
+    forced = b.js(CH)
+    b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "none"}, {"name": "prefers-contrast", "value": "more"}])
+    time.sleep(0.2)
+    more = b.js(CH)
+    b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "none"}, {"name": "prefers-contrast", "value": "no-preference"}])
+    time.sleep(0.2)
+    back = b.js(CH)
+
+    def rgb(value):
+        """A token's computed value as the browser reports paints: registered <color> properties
+        already come back as rgb(...); a bare hex is converted."""
+        v = value.strip()
+        if v.startswith("#") and len(v) == 7:
+            return "rgb(%d, %d, %d)" % tuple(int(v[i:i + 2], 16) for i in (1, 3, 5))
+        return v
+
+    e5.checks += [Check("series stroke resolves to its palette token", normal["s1"] == rgb(normal["token1"]), f"{normal['s1']} vs token {normal['token1']}"),
+                  Check("the second series carries a dash pattern", normal["dash2"] not in (None, "", "none"), f"dasharray {normal['dash2']}"),
+                  Check("markers are hidden for labelled series in normal mode", normal["marker"] == "none", f"display {normal['marker']}"),
+                  Check("forced colours replace the palette stroke with a system colour", forced["s1"] != normal["s1"] and forced["s1"] == forced["s2"], f"{normal['s1']} -> {forced['s1']} / {forced['s2']}"),
+                  Check("forced colours keep the dash pattern as the identity cue", forced["dash2"] == normal["dash2"], f"{forced['dash2']}"),
+                  Check("forced colours show the markers", forced["marker"] == "inline", f"display {forced['marker']}"),
+                  Check("high contrast raises the grid to the strong border", more["grid"] == rgb(more["strong"]) and more["grid"] != normal["grid"], f"{normal['grid']} -> {more['grid']} (strong {more['strong']})"),
+                  Check("high contrast thickens the strokes", float(more["w1"].rstrip("px")) > float(normal["w1"].rstrip("px")), f"{normal['w1']} -> {more['w1']}"),
+                  Check("the emulation is reset afterwards", back["s1"] == normal["s1"] and back["marker"] == normal["marker"])]
+    rep.edges.append(e5)
     return rep
 
 # ----------------------------------------------------------------------------
