@@ -143,7 +143,7 @@ MATRIX = [
     ("tritanopia", {"media": [], "vision": "tritanopia"}),
     ("achromatopsia", {"media": [], "vision": "achromatopsia"}),
 ]
-MATRIX_RESET = {"media": [{"name": "forced-colors", "value": "none"}, {"name": "prefers-color-scheme", "value": "dark"}], "vision": "none"}
+MATRIX_RESET = {"media": [], "vision": "none"}  # no emulated media at all: the browser's own state
 # The palette test holds CIEDE2000 8 under Machado's model, and Chrome's
 # emulation, a separate implementation, renders the same floor (8.9 at its
 # closest, tritanopia, on the toggle's flight film).
@@ -693,11 +693,6 @@ def changed_fraction_images(a, b_) -> float:
     changed = sum(diff.histogram()[255:])
     return round(changed / (a.width * a.height), 4)
 
-
-def changed_fraction(a: bytes, b_: bytes) -> float:
-    from PIL import Image
-    import io
-    return changed_fraction_images(Image.open(io.BytesIO(a)), Image.open(io.BytesIO(b_)))
 
 def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start", trace=(), t0: float | None = None):
     """Stitches (t, png) frames into a horizontal sprite sheet with a
@@ -1734,74 +1729,82 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         // without one (an unlabelled series) fall back to the polyline's own points
         const pts = sw ? [[(+sw.getAttribute('x1') + +sw.getAttribute('x2')) / 2, +sw.getAttribute('y1')]] : p.getAttribute('points').split(' ').map(s => s.split(',').map(Number));
         const paint = getComputedStyle(sw || p).stroke;
-        return {{cls, dash: getComputedStyle(p).strokeDasharray, pts, probe: sw ? 'swatch' : 'line', paint}}; }});
-      const surface = getComputedStyle(sr.host).backgroundColor;
-      return {{rect: [r.x, r.y, r.width, r.height], vb: [vb.width, vb.height], series, surface, scroll: [window.scrollX, window.scrollY]}}; }})()"""
+        return {{cls, pts, paint}}; }});
+      return {{rect: [r.x, r.y, r.width, r.height], vb: [vb.width, vb.height], series, scroll: [window.scrollX, window.scrollY]}}; }})()"""
+    # the dash patterns are read under whichever emulation is in force
+    DASHES = f"""(() => Object.fromEntries([...{F}.shadowRoot.querySelectorAll('polyline[class^=series]')].map(p => [p.getAttribute('class'), getComputedStyle(p).strokeDasharray])))()"""
+    STROKE1 = f"""getComputedStyle({F}.shadowRoot.querySelector('polyline[class^=series]')).stroke"""
     b.js(f"{F}.scrollIntoView({{block: 'center'}}); 'ok'")
     # the pointer's last position left the film peeking; the thumbnail would cover the chart's edge
     b.hover(2, 2)
     time.sleep(0.3)
     geom = b.js(GEOM)
+    baseline_stroke = b.js(STROKE1)
     rx, ry, rw, rh = geom["rect"]
     sx, sy = rw / geom["vb"][0], rh / geom["vb"][1]
-    files = []
-    probes = {}  # series class -> the pixel proven to be its own stroke in the unemulated capture
+    x0 = rx + (geom["scroll"][0] if b.clip_uses_page_coords else 0)
+    y0 = ry + (geom["scroll"][1] if b.clip_uses_page_coords else 0)
 
     def rgb_of(css):
         return tuple(int(v) for v in re.findall(r"\d+", css)[:3]) if css and css.startswith("rgb") else None
-    for mode, how in MATRIX + [("reset", MATRIX_RESET)]:
+
+    def emulate(how):
         b.call("Emulation.setEmulatedMedia", features=how["media"])
         b.call("Emulation.setEmulatedVisionDeficiency", type=how["vision"])
         time.sleep(0.25)
-        if mode == "reset":
-            break
-        x0 = rx + (geom["scroll"][0] if b.clip_uses_page_coords else 0)
-        y0 = ry + (geom["scroll"][1] if b.clip_uses_page_coords else 0)
+
+    def capture(mode):
         shot = b.call("Page.captureScreenshot", format="png", clip={"x": x0, "y": y0, "width": rw, "height": rh, "scale": 1.0})
         png = base64.b64decode(shot["data"])
         (d / f"matrix-{mode}.png").write_bytes(png)
-        files.append((mode, f"matrix-{mode}.png"))
-        img = Image.open(io.BytesIO(png)).convert("RGB")
-        ksx, ksy = img.width / rw, img.height / rh
-        surface = tuple(int(v) for v in re.findall(r"\d+", geom["surface"])[:3]) if geom["surface"].startswith("rgb") else (0, 0, 0)
-        # the rendered colour of each series, read at a pixel proven (in the unemulated
-        # capture) to carry that series' own stroke, so no neighbour can be read instead
-        colours, dashes = {}, {}
-        for sr in geom["series"]:
-            dashes[sr["cls"]] = sr["dash"]
+        return Image.open(io.BytesIO(png)).convert("RGB")
+
+    files = []
+    probes = {}  # series class -> the pixel proven to be its own stroke in the unemulated capture
+    try:
+        for mode, how in MATRIX:
+            emulate(how)
+            img = capture(mode)
+            files.append((mode, f"matrix-{mode}.png"))
+            ksx, ksy = img.width / rw, img.height / rh
             if mode == "none":
-                want = rgb_of(sr["paint"])
-                # a stroke edge is anti-aliased, so accept a pixel within a small
-                # distance of the paint; a neighbouring element's colour is far beyond it
-                best, best_d = None, 8.0
-                for (px, py) in sr["pts"]:
-                    ix, iy = int(px * sx * ksx), int(py * sy * ksy)
-                    for dx in range(-2, 3):
-                        for dy in range(-2, 3):
-                            if 0 <= ix + dx < img.width and 0 <= iy + dy < img.height and want:
-                                c = img.getpixel((ix + dx, iy + dy))
-                                dist = ciede2000(_srgb_to_lab(c), _srgb_to_lab(want))
-                                if dist < best_d:
-                                    best, best_d = (ix + dx, iy + dy), dist
-                if best:
-                    probes[sr["cls"]] = best
-            if sr["cls"] in probes:
-                colours[sr["cls"]] = img.getpixel(probes[sr["cls"]])
-        names = sorted(colours)
-        worst, worst_pair = float("inf"), ""
-        for i in range(len(names)):
-            for j in range(i + 1, len(names)):
-                dist = ciede2000(_srgb_to_lab(colours[names[i]]), _srgb_to_lab(colours[names[j]]))
-                if dist < worst:
-                    worst, worst_pair = dist, f"{names[i]} vs {names[j]}"
-        if mode.startswith("forced") or mode == "achromatopsia":
-            # one system colour, or no hue at all: identity rests on the dash table
-            distinct = len(set(dashes.values())) == len(dashes)
-            e7.checks.append(Check(f"{mode}: dashes tell the series apart", distinct and len(dashes) >= 2,
-                                   f"{len(dashes)} series, dashes {sorted(set(dashes.values()))}"))
-        else:
-            e7.checks.append(Check(f"{mode}: rendered series stay pairwise apart", len(names) >= 2 and worst >= MIN_SERIES_SEPARATION,
-                                   f"{len(names)} of {len(geom['series'])} series probed; closest pair {worst_pair} at dE00 {worst:.1f}" if names else "no series probed"))
+                # a pixel near each series' swatch that carries that series' own paint (a stroke
+                # edge is anti-aliased, so a small distance is accepted; a neighbour is far beyond it)
+                for sr in geom["series"]:
+                    want = rgb_of(sr["paint"])
+                    best, best_d = None, 8.0
+                    for (px, py) in sr["pts"]:
+                        ix, iy = int(px * sx * ksx), int(py * sy * ksy)
+                        for dx in range(-2, 3):
+                            for dy in range(-2, 3):
+                                if want and 0 <= ix + dx < img.width and 0 <= iy + dy < img.height:
+                                    c = img.getpixel((ix + dx, iy + dy))
+                                    dist = ciede2000(_srgb_to_lab(c), _srgb_to_lab(want))
+                                    if dist < best_d:
+                                        best, best_d = (ix + dx, iy + dy), dist
+                    if best:
+                        probes[sr["cls"]] = best
+            colours = {cls: img.getpixel(px) for cls, px in probes.items()}
+            dashes = b.js(DASHES)
+            names = sorted(colours)
+            worst, worst_pair = float("inf"), ""
+            for i in range(len(names)):
+                for j in range(i + 1, len(names)):
+                    dist = ciede2000(_srgb_to_lab(colours[names[i]]), _srgb_to_lab(colours[names[j]]))
+                    if dist < worst:
+                        worst, worst_pair = dist, f"{names[i]} vs {names[j]}"
+            if mode.startswith("forced") or mode == "achromatopsia":
+                # one system colour, or no hue at all: identity rests on the dash table
+                distinct = len(set(dashes.values())) == len(dashes)
+                e7.checks.append(Check(f"{mode}: dashes tell the series apart", distinct and len(dashes) >= 2,
+                                       f"{len(dashes)} series, dashes {sorted(set(dashes.values()))}"))
+            else:
+                all_probed = len(names) == len(geom["series"]) and len(names) >= 2
+                e7.checks.append(Check(f"{mode}: rendered series stay pairwise apart", all_probed and worst >= MIN_SERIES_SEPARATION,
+                                       f"{len(names)} of {len(geom['series'])} series probed; closest pair {worst_pair} at dE00 {worst:.1f}" if names else "no series probed"))
+    finally:
+        emulate(MATRIX_RESET)
+    e7.checks.append(Check("the emulations are reset afterwards", b.js(STROKE1) == baseline_stroke, f"first series stroke {b.js(STROKE1)} vs {baseline_stroke} before"))
     e7.matrix = files
     rep.edges.append(e7)
     return rep

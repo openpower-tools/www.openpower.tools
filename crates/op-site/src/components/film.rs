@@ -221,6 +221,11 @@ const PRINT_CSS: &str = "
   .chart .peek-line { display: none; }
 }";
 
+/// The chart's static rules, in the order the stylesheet carries them.
+fn chart_rules() -> String {
+    format!("{SERIES_CSS}\n{FORCED_COLOURS_CSS}\n{PRINT_CSS}")
+}
+
 const FORCED_COLOURS_CSS: &str = "
 @media (forced-colors: active) {
   .chart { forced-color-adjust: auto; background: Canvas; }
@@ -726,6 +731,7 @@ impl CustomElement for Film {
                 )
             })
             .collect();
+        let chart_rules = chart_rules();
         let layout = op_chart::Layout::film(data.t_max);
         let chart = if data.series.is_empty() {
             String::new()
@@ -777,9 +783,7 @@ impl CustomElement for Film {
 .chart .endlabel {{ fill: var(--op-text); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 3; }}
 .chart .swatch {{ stroke-width: 3; shape-rendering: crispEdges; }}
 .chart .marker {{ display: none; fill: var(--op-surface); stroke-width: 1.5; stroke-dasharray: none; }} .chart .marker.shown {{ display: inline; }}
-{SERIES_CSS}
-{FORCED_COLOURS_CSS}
-{PRINT_CSS}
+{chart_rules}
 @media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart polyline[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
 .chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 .chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
@@ -1317,21 +1321,41 @@ mod chart_reference {
         // print: the same paints mapped to print blacks and greys on white, identity by dash and marker
         for class in [
             "polyline[class^=series]",
+            ".swatch",
+            ".tick",
+            ".chart .mark,",
+            ".axis",
             ".marker",
             ".endlabel",
+            ".head-t",
+            ".head ",
             ".grid",
             ".band",
             ".bar-played",
-            ".head",
             "print-color-adjust: exact",
         ] {
             assert!(PRINT_CSS.contains(class), "{class} has no print rule");
         }
         assert!(PRINT_CSS.starts_with("\n@media print {"));
         assert!(!PRINT_CSS.contains("var(--op-series"));
-        // the print rule never overrides the series dash table
+        // the print rule never touches the series dash table: the declaration block that
+        // addresses the series polylines carries no dasharray
+        let series_block = PRINT_CSS
+            .split("polyline[class^=series]")
+            .nth(1)
+            .and_then(|rest| rest.split('{').nth(1))
+            .and_then(|block| block.split('}').next())
+            .expect("a print rule for the series");
+        assert!(!series_block.contains("stroke-dasharray"), "{series_block}");
         assert!(!PRINT_CSS.contains("polyline.series-"));
         assert!(PRINT_CSS.contains(".chart .marker { display: inline;"));
+        // and the assembled rules the stylesheet carries include all three blocks
+        let rules = chart_rules();
+        assert!(
+            rules.contains("@media print {")
+                && rules.contains("@media (forced-colors: active)")
+                && rules.contains(".chart .series-6")
+        );
     }
 
     #[test]
