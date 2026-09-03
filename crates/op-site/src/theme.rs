@@ -33,6 +33,13 @@ pub const EASING_ATTRIBUTE: &str = "data-op-theme-easing";
 /// state slightly after this.
 pub const EASE_MS: i32 = 3_000;
 
+/// The blend's exponential timing curve and its shape-preserving
+/// fallback for engines without `linear()`. The stylesheet must use
+/// exactly these (tested), and the toggle's thumb rides the same pair
+/// so the control's position tracks the palette.
+pub const EASE_CURVE: &str = "linear(0, 0.008 10%, 0.021 20%, 0.039 30%, 0.068 40%, 0.111 50%, 0.177 60%, 0.276 70%, 0.426 80%, 0.654 90%, 0.809 95%, 1)";
+pub const EASE_CURVE_FALLBACK: &str = "cubic-bezier(0.9, 0.05, 0.85, 0.3)";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Dark,
@@ -340,8 +347,14 @@ mod tests {
             "stylesheet duration disagrees with EASE_MS"
         );
         assert!(
-            rule.contains("cubic-bezier(") && rule.contains("linear("),
-            "expected the exponential curve and its bezier fallback"
+            rule.contains(&format!("transition-timing-function: {EASE_CURVE};")),
+            "stylesheet curve disagrees with EASE_CURVE"
+        );
+        assert!(
+            rule.contains(&format!(
+                "transition-timing-function: {EASE_CURVE_FALLBACK};"
+            )),
+            "stylesheet fallback disagrees with EASE_CURVE_FALLBACK"
         );
     }
 

@@ -12,12 +12,15 @@
 //! with aria-checked (checked = dark) carries the semantics, and
 //! keyboard focus mirrors hover affordances with an accent outline.
 //!
-//! A click flips the thumb at once but the palette blends in slowly
-//! (`theme::EASE_MS`, exponential - see the easing block in
-//! `styles/theme.css`), so the page creeps toward the other theme
-//! rather than snapping. A second click inside that window aborts:
-//! the stored choice and the thumb return, and the palette glides
-//! back from wherever the blend was. The choice persists via
+//! A click swaps the thumb's icon to the destination at once, then
+//! the thumb travels on exactly the palette blend's clock and curve
+//! (`theme::EASE_MS` / `theme::EASE_CURVE`, via a `data-easing`
+//! attribute armed for the flight), so the control IS the progress
+//! indicator: both arrive together. A second click inside that window
+//! aborts: the stored choice returns immediately and thumb and
+//! palette glide back in step, shortened by CSS transition reversing.
+//! Theme changes without a click (a system preference flip while no
+//! choice is stored) stay instant. The choice persists via
 //! `crate::theme`.
 
 use std::cell::RefCell;
@@ -156,6 +159,11 @@ button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
 }}
 .thumb svg, .ghost svg {{ width: 0.8rem; height: 0.8rem; }}
 button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
+button[data-easing] .thumb {{
+  transition-duration: {ease_ms}ms;
+  transition-timing-function: {ease_fallback};
+  transition-timing-function: {ease_curve};
+}}
 .ghost {{
   z-index: 0;
   opacity: 0;
@@ -183,7 +191,7 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
   animation: ghost-to-light 1.6s ease-in-out infinite;
 }}
 @media (prefers-reduced-motion: reduce) {{
-  .thumb {{ transition: none; }}
+  .thumb, button[data-easing] .thumb {{ transition: none; }}
   .ghost {{ animation: none !important; }}
   /* no travel: the preview simply appears at the destination side */
   button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
@@ -196,7 +204,10 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
   }}
 }}
 </style>
-<button type=\"button\" role=\"switch\"><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>"
+<button type=\"button\" role=\"switch\"><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>",
+            ease_ms = theme::EASE_MS,
+            ease_curve = theme::EASE_CURVE,
+            ease_fallback = theme::EASE_CURVE_FALLBACK,
         ));
         let button = shadow
             .query_selector("button")
@@ -246,6 +257,8 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
                     let origin = theme::current();
                     let next = origin.opposite();
                     theme::begin_easing();
+                    // The thumb rides the blend's clock for the flight.
+                    let _ = target.set_attribute("data-easing", "");
                     theme::choose(next);
                     show(&target, next);
                     let describing = next.easing_description();
@@ -264,6 +277,7 @@ button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visibl
                 state.timer = None;
                 state.origin = None;
                 theme::end_easing();
+                let _ = button_for_settle.remove_attribute("data-easing");
                 show(&button_for_settle, theme::current());
             });
             state.timer = window
