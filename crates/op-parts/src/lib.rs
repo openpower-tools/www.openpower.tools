@@ -189,7 +189,7 @@ pub fn css(sel: &Selectors, look: &Look) -> String {
 {t}{thumb} {{
   z-index: 2;
   background: {off_fill};
-  transition: left var(--op-motion-snap) ease, background var(--op-motion-snap) ease;
+  transition: left var(--op-motion-snap) ease;
 }}
 {on_track}{thumb} {{
   left: {on_l};

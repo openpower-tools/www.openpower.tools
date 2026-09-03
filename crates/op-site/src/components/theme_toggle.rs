@@ -211,7 +211,7 @@ impl CustomElement for ThemeToggle {
 button {{
   outline: 2px solid transparent;
   outline-offset: 2px;
-  transition: outline-color var(--op-motion-snap) ease;
+
 }}
 :host(:state(attention)) button {{ outline-color: var(--op-accent); }}
 button svg {{ width: 0.8rem; height: 0.8rem; }}
