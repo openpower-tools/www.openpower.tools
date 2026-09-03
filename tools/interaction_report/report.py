@@ -352,7 +352,7 @@ def machine_svg(nodes: list[str], edges: list[tuple], highlight: tuple | None) -
 # ----------------------------------------------------------------------------
 # charts: inline SVG with a playhead, sharing the film's clock
 # ----------------------------------------------------------------------------
-CHART_W, CHART_H, ML, MR, MT, MB = 900, 250, 46, 14, 16, 30
+CHART_W, CHART_H, ML, MR, MT, MB = 900, 268, 46, 14, 16, 48
 
 
 def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progress %", ymin=-4, ymax=106) -> str:
@@ -384,7 +384,18 @@ def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progres
         if sr.get("label") and sr["t"]:
             i = min(len(sr["t"]) - 1, int(len(sr["t"]) * sr.get("at", 0.85)))
             out.append(f'<text x="{x_of(sr["t"][i]) + 4:.1f}" y="{y_of(sr["y"][i]) - 5:.1f}" fill="{sr["color"]}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">{sr["label"]}</text>')
-    out.append(f'<line class="head" x1="{ML}" x2="{ML}" y1="{MT}" y2="{CHART_H - MB}" stroke="{OKABE["mark"]}" stroke-width="1.5"/>')
+    # a YouTube-style bar under the axis: played portion, chapter dividers
+    # (the machine's marks), and a band for the hovered chapter
+    by = CHART_H - 10
+    out.append(f'<rect class="band" x="{ML}" y="{MT}" width="0" height="{CHART_H - MB - MT}" fill="{OKABE["mark"]}" opacity="0.07"/>')
+    out.append(f'<rect class="bar-bg" x="{ML}" y="{by}" width="{CHART_W - ML - MR}" height="4" rx="2" fill="#ddd"/>')
+    out.append(f'<rect class="bar-played" x="{ML}" y="{by}" width="0" height="4" rx="2" fill="{OKABE["mark"]}"/>')
+    for tm, _label in marks:
+        x = x_of(tm)
+        out.append(f'<rect class="chapter" x="{x - 1:.1f}" y="{by - 3}" width="2" height="10" fill="#fff" stroke="#999" stroke-width="0.6"/>')
+    out.append(f'<line class="peek-line" x1="{ML}" x2="{ML}" y1="{MT}" y2="{CHART_H - MB}" stroke="#555" stroke-width="1" stroke-dasharray="3 3" visibility="hidden"/>')
+    out.append(f'<line class="head" x1="{ML}" x2="{ML}" y1="{MT}" y2="{by + 4}" stroke="{OKABE["mark"]}" stroke-width="1.5"/>')
+    out.append(f'<circle class="head-dot" cx="{ML}" cy="{by + 2}" r="5" fill="{OKABE["mark"]}"/>')
     out.append(f'<text class="head-t" x="{ML + 4}" y="{CHART_H - MB - 6}" fill="{OKABE["mark"]}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">0.00s</text>')
     out.append("</svg>")
     return "\n".join(out)
@@ -437,7 +448,7 @@ def changed_fraction(a: bytes, b_: bytes) -> float:
     return hist[255] / (ia.size[0] * ia.size[1])
 
 
-def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title=""):
+def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start"):
     """Stitches (t, png) frames into a horizontal sprite sheet with a
     timestamp table and, per frame, the fraction of pixels that changed
     since the previous frame - shown as the reel's captions, so a frame
@@ -455,7 +466,8 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
     sheet.save(d / f"{name}-film.png", optimize=True)
     times = [t for t, _ in frames]
     deltas = [0.0] + [changed_fraction(frames[i - 1][1], frames[i][1]) for i in range(1, len(frames))]
-    film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title}
+    film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title,
+            "chapters": [[0.0, chapter0]] + [[float(t), label] for t, label in marks]}
     if series:
         t_max = max(max(times), max(max(sr["t"]) for sr in series if sr["t"]))
         film["chart"] = chart_svg(series, t_max, marks, ylabel)
@@ -491,7 +503,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     b.hover(x, y)
     rows = sample(b, T, 2.0, 0.04, film=film, rect=rect)
     ts = [t for t, _ in rows]
-    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)",
+    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", chapter0="preview loop",
               series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
                       {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     at = next((t for t, s in rows if s["attention"]), None)
@@ -518,7 +530,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     pal = [(green(s["bg"]) - g_on) / (g_off - g_on) * 100 for _, s in rows]
     thumb = [abs(s["thumb"] - thumb_on) / span * 100 for _, s in rows]
     gap = max(abs(a - p) for a, p in zip(ghost, pal))
-    make_film(e2, film, d, "flight", keys=8, title=f"max ghost-palette gap {gap:.1f} pts",
+    make_film(e2, film, d, "flight", keys=8, title=f"max ghost-palette gap {gap:.1f} pts", chapter0="flight",
               series=[{"label": "ideal exponential", "color": OKABE["ideal"], "t": ideal_t, "y": ideal, "lw": 1, "dash": True, "at": 0.68},
                       {"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.06},
                       {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
@@ -572,7 +584,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     origin_x = thumb_on if origin_dark else thumb_off
     ghost = [abs(s["ghost"] - origin_x) / span * 100 for _, s in rows]
     thumb = [abs(s["thumb"] - origin_x) / span * 100 for _, s in rows]
-    make_film(e4, film, d, "abort", keys=8, marks=[(t_abort, "second click: abort")],
+    make_film(e4, film, d, "abort", keys=8, marks=[(t_abort, "abort")], chapter0="flight",
               series=[{"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.2},
                       {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.3},
                       {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.25}])
@@ -603,7 +615,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     g_from = g_on if before["dark"] else g_off
     g_to = g_off if before["dark"] else g_on
     pal = [(green(s["bg"]) - g_from) / (g_to - g_from) * 100 for _, s in rows]
-    make_film(e6, film, d, "refly", keys=8, marks=[(t_ab, "abort"), (t_re, "fly again")],
+    make_film(e6, film, d, "refly", keys=8, marks=[(t_ab, "abort"), (t_re, "fly again")], chapter0="flight",
               series=[{"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
                       {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9}])
     e6.checks += [Check("third click re-arms toward the opposite setting", s_re["flight"] and s_re["dark"] != before["dark"]),
@@ -639,7 +651,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     rows = sample(b, T, 3.6, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
     g_from = green(rows[0][1]["bg"]); g_to = green(rows[-1][1]["bg"])
-    make_film(e8, film, d, "reduced", keys=6, marks=[(t_click, "click")],
+    make_film(e8, film, d, "reduced", keys=6, marks=[(t_click, "click")], chapter0="hover",
               series=[{"label": "palette (still fades)", "color": OKABE["palette"], "t": ts, "y": [(green(s["bg"]) - g_from) / (g_to - g_from or 1) * 100 for _, s in rows], "lw": 2.6, "at": 0.7},
                       {"label": "ghost (snaps)", "color": OKABE["ghost"], "t": ts, "y": [abs(s["ghost"] - rows[0][1]["ghost"]) / span * 100 for _, s in rows], "at": 0.3}])
     mid = green(rows[len(rows) // 2][1]["bg"])
@@ -802,85 +814,149 @@ table{border-collapse:collapse;font-size:.9rem}td,th{padding:.25rem .6rem;border
 .ok{color:#1b7f3b;font-weight:600}.fail{color:#b3261e;font-weight:700}
 p.note{color:#444;max-width:70ch}.machine{margin:.4rem 0 1rem}.summary{padding:.6rem .9rem;background:#fff;border:1px solid #ddd;display:inline-block}
 a{color:#0b57d0}
-.film{margin:.6rem 0 1rem;display:block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:930px;user-select:none;-webkit-user-select:none}
-.film .stagebox{display:flex;justify-content:center;padding:4px 0 8px}
+.film{margin:.6rem 0 1rem;display:block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:930px;user-select:none;-webkit-user-select:none;outline:2px solid transparent;outline-offset:2px}
+.film:focus-visible,.film svg.chart:focus-visible{outline-color:#D55E00}
+.film .stagebox{display:flex;flex-direction:column;align-items:center;padding:4px 0 8px}
 .film .stage{background-repeat:no-repeat;border:1px solid #e3e3e3;box-shadow:0 1px 4px rgba(0,0,0,.08)}
-.film .reelbox{position:relative;overflow:hidden;width:100%;padding:6px 0;border-top:1px solid #eee}
+.film .stage.pending{outline:2px dashed #D55E00;outline-offset:2px}
+.film .stagelabel{font-size:.78rem;color:#666;min-height:1.2em;margin-top:.3rem;font-variant-numeric:tabular-nums}
+.film .reelbox{position:relative;overflow:hidden;width:100%;padding:6px 0;border-top:1px solid #eee;touch-action:none}
 .film .gate{position:absolute;left:0;top:0;bottom:0;width:0;margin-left:-1px;border-left:2px solid #D55E00;opacity:.75;pointer-events:none;z-index:2}
 .film .reel{display:flex;gap:8px;align-items:flex-start;will-change:transform}
 .film .fr{margin:0;flex:none;cursor:pointer;text-align:center}
 .film .fr .cell{background-repeat:no-repeat;border:1px solid #e3e3e3;box-sizing:content-box}
+.film .fr:hover .cell{border-color:#999}
 .film .fr.current .cell{outline:2px solid #D55E00;outline-offset:1px}
+.film .fr.pending .cell{outline:2px dashed #D55E00;outline-offset:1px}
 .film .fr figcaption{font-size:.72rem;color:#666;font-variant-numeric:tabular-nums;white-space:nowrap}
-.film .chartbox{margin-top:.6rem}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block;touch-action:none}
-.film .view{background-repeat:no-repeat;image-rendering:auto;display:block;max-width:100%}
-.film .bar{display:flex;gap:.6rem;align-items:center;margin-top:.4rem;font-size:.85rem}
+.film .bar{display:flex;gap:.6rem;align-items:center;margin-top:.4rem;font-size:.85rem;flex-wrap:wrap}
 .film input[type=range]{flex:1;min-width:220px}.film .t{font-variant-numeric:tabular-nums;min-width:4.5rem}.film .n{color:#777}
+.film .keys{font-size:.8rem;color:#555;margin:.3rem 0 0}.film .keys summary{cursor:pointer}
+.film .keys dl{display:grid;grid-template-columns:max-content 1fr;gap:.15rem .8rem;margin:.4rem 0}.film .keys dt{font-family:ui-monospace,monospace}.film .keys dd{margin:0}
+.film .chartbox{margin-top:.6rem;position:relative}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block;touch-action:none}
+.film .peek{position:absolute;bottom:56px;transform:translateX(-50%);pointer-events:none;background:#fff;border:1px solid #bbb;border-radius:3px;padding:3px;box-shadow:0 2px 6px rgba(0,0,0,.15);z-index:3}
+.film .peek .pframe{background-repeat:no-repeat}.film .peek .ptime{font-size:.75rem;text-align:center;color:#333;font-variant-numeric:tabular-nums;white-space:nowrap}
+.film .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 """
 
 PLAYER_JS = """<script>
 document.querySelectorAll('.film').forEach(f => {
   const times = JSON.parse(f.dataset.times), n = times.length, w = +f.dataset.w, h = +f.dataset.h;
+  const chapters = JSON.parse(f.dataset.chapters || '[[0,"start"]]');
   const reelbox = f.querySelector('.reelbox'), reel = f.querySelector('.reel'), gate = f.querySelector('.gate'), frs = [...f.querySelectorAll('.fr')];
-  const slider = f.querySelector('input'), label = f.querySelector('.t'), btn = f.querySelector('button'), rate = f.querySelector('select');
-  const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headT = chart && chart.querySelector('.head-t');
+  const slider = f.querySelector('input[type=range]'), label = f.querySelector('.t'), btn = f.querySelector('button.play'), rate = f.querySelector('select');
+  const stage = f.querySelector('.stage'), stageLabel = f.querySelector('.stagelabel'), live = f.querySelector('.sr');
+  const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headDot = chart && chart.querySelector('.head-dot'), headT = chart && chart.querySelector('.head-t');
+  const played = chart && chart.querySelector('.bar-played'), band = chart && chart.querySelector('.band'), peekLine = chart && chart.querySelector('.peek-line');
+  const peek = f.querySelector('.peek'), pframe = peek && peek.querySelector('.pframe'), ptime = peek && peek.querySelector('.ptime');
   const x0 = chart ? +chart.dataset.x0 : 0, x1 = chart ? +chart.dataset.x1 : 1, t1 = chart ? +chart.dataset.t1 : times[n - 1];
   const tEnd = Math.max(times[n - 1], t1);
-  // small controls get shown larger, large ones are capped
   const scale = w < 220 ? 1.5 : Math.min(1, 320 / w);
   const cw = Math.round(w * scale), ch = Math.round(h * scale);
-  // the stage: one centred frame at a comfortable size, traditional playback
-  const stage = f.querySelector('.stage');
+  const paint = (el, sw, sh) => { el.style.width = sw + 'px'; el.style.height = sh + 'px'; el.style.backgroundImage = 'url(' + f.dataset.sheet + ')'; el.style.backgroundSize = (sw * n) + 'px ' + sh + 'px'; };
+  frs.forEach((fr, k) => { const c = fr.querySelector('.cell'); paint(c, cw, ch); c.style.backgroundPosition = (-k * cw) + 'px 0'; });
   const ss = Math.min(900 / w, w < 220 ? 3 : 1.25), sw = Math.round(w * ss), sh = Math.round(h * ss);
-  stage.style.width = sw + 'px'; stage.style.height = sh + 'px';
-  stage.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
-  stage.style.backgroundSize = (sw * n) + 'px ' + sh + 'px';
-  frs.forEach((fr, k) => {
-    const c = fr.querySelector('.cell');
-    c.style.width = cw + 'px'; c.style.height = ch + 'px';
-    c.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
-    c.style.backgroundSize = (cw * n) + 'px ' + ch + 'px';
-    c.style.backgroundPosition = (-k * cw) + 'px 0';
-  });
-  let tc = 0, playing = false, raf = 0, last = null;
+  paint(stage, sw, sh);
+  if (pframe) paint(pframe, cw, ch);
+  let tc = 0, playing = false, raf = 0, last = null, pending = null;
   const frameAt = t => { let k = 0; for (let j = 0; j < n; j++) if (times[j] <= t + 1e-6) k = j; return k; };
+  const chapterAt = t => { let c = chapters[0]; for (const ch_ of chapters) if (ch_[0] <= t + 1e-6) c = ch_; return c; };
+  const xOf = t => x0 + Math.min(1, Math.max(0, t / t1)) * (x1 - x0);
+  const fmt = t => t.toFixed(2) + 's';
+  const announce = (() => { let timer = 0; return msg => { clearTimeout(timer); timer = setTimeout(() => { live.textContent = msg; }, 250); }; })();
+  const showStage = (k, tag) => { stage.style.backgroundPosition = (-k * sw) + 'px 0'; stageLabel.textContent = fmt(times[k]) + ' \\u00b7 frame ' + (k + 1) + ' of ' + n + (tag ? ' \\u00b7 ' + tag : ''); };
   const render = () => {
     const k = frameAt(tc);
-    // fractional position between frames, so the reel glides on playback
     const next = Math.min(n - 1, k + 1), span = times[next] - times[k];
     const frac = span > 0 ? Math.min(1, Math.max(0, (tc - times[k]) / span)) : 0;
-    // The strip stays still and is paged; the marker travels across the
-    // page and restarts at the left when the strip pages forward. All
-    // positions are measured from the DOM so borders and captions cannot
-    // drift the marker.
     const mid = j => frs[j].offsetLeft + frs[j].offsetWidth / 2;
     const pitch = n > 1 ? frs[1].offsetLeft - frs[0].offsetLeft : frs[0].offsetWidth;
     const perPage = Math.max(1, Math.floor(reelbox.clientWidth / pitch));
     const page = Math.floor(k / perPage), pageLeft = frs[page * perPage].offsetLeft;
     reel.style.transform = 'translateX(' + (-pageLeft) + 'px)';
     const samePage = Math.floor(next / perPage) === page;
-    const pos = mid(k) + (samePage ? frac * (mid(next) - mid(k)) : 0);
-    gate.style.left = (pos - pageLeft) + 'px';
-    frs.forEach((fr, j) => fr.classList.toggle('current', j === k));
-    stage.style.backgroundPosition = (-k * sw) + 'px 0';
-    slider.value = k; label.textContent = tc.toFixed(2) + 's';
-    if (chart) { const x = x0 + Math.min(1, tc / t1) * (x1 - x0); head.setAttribute('x1', x); head.setAttribute('x2', x); headT.setAttribute('x', x + 4); headT.textContent = tc.toFixed(2) + 's'; }
+    gate.style.left = (mid(k) + (samePage ? frac * (mid(next) - mid(k)) : 0) - pageLeft) + 'px';
+    frs.forEach((fr, j) => { fr.classList.toggle('current', j === k); fr.classList.toggle('pending', j === pending); });
+    if (pending === null) { showStage(k, chapterAt(tc)[1]); stage.classList.remove('pending'); }
+    slider.value = k; label.textContent = fmt(tc);
+    if (chart) {
+      const x = xOf(tc);
+      head.setAttribute('x1', x); head.setAttribute('x2', x); headDot.setAttribute('cx', x); headT.setAttribute('x', x + 4); headT.textContent = fmt(tc);
+      played.setAttribute('width', Math.max(0, x - x0));
+      chart.setAttribute('aria-valuenow', tc.toFixed(2)); chart.setAttribute('aria-valuemax', tEnd.toFixed(2));
+      chart.setAttribute('aria-valuetext', tc.toFixed(2) + ' seconds, frame ' + (k + 1) + ' of ' + n + ', ' + chapterAt(tc)[1]);
+    }
   };
+  const seekTo = t => { tc = Math.min(tEnd, Math.max(0, t)); render(); announce(fmt(tc) + ', frame ' + (frameAt(tc) + 1) + ' of ' + n); };
   const pause = () => { playing = false; btn.textContent = 'Play'; cancelAnimationFrame(raf); last = null; };
+  const play = () => { if (tc >= tEnd) tc = 0; playing = true; btn.textContent = 'Pause'; last = null; raf = requestAnimationFrame(tick); };
   const tick = now => {
     if (!playing) return;
     if (last !== null) { tc += (now - last) / 1000 * +rate.value; if (tc > tEnd + 0.6) tc = 0; }
     last = now; render(); raf = requestAnimationFrame(tick);
   };
-  btn.addEventListener('click', () => { if (playing) { pause(); return; } playing = true; btn.textContent = 'Pause'; if (tc >= tEnd) tc = 0; raf = requestAnimationFrame(tick); });
-  slider.addEventListener('input', () => { pause(); tc = times[+slider.value]; render(); });
-  frs.forEach((fr, k) => fr.addEventListener('click', () => { pause(); tc = times[k]; render(); }));
+  btn.addEventListener('click', () => playing ? pause() : play());
+  slider.addEventListener('input', () => { pause(); seekTo(times[+slider.value]); });
+  // --- peek: look without moving the playhead ---
+  const showPeek = (t, anchorX) => {
+    if (!chart) return;
+    const k = frameAt(t), x = xOf(t);
+    peekLine.setAttribute('x1', x); peekLine.setAttribute('x2', x); peekLine.setAttribute('visibility', 'visible');
+    const c = chapterAt(t); const nextC = chapters.find(ch_ => ch_[0] > c[0]);
+    band.setAttribute('x', xOf(c[0])); band.setAttribute('width', Math.max(0, xOf(nextC ? nextC[0] : tEnd) - xOf(c[0])));
+    pframe.style.backgroundPosition = (-k * cw) + 'px 0';
+    ptime.textContent = fmt(times[k]) + ' \\u00b7 ' + c[1];
+    peek.hidden = false;
+    const r = chart.getBoundingClientRect(), vb = chart.viewBox.baseVal;
+    peek.style.left = (anchorX !== undefined ? anchorX : x * (r.width / vb.width)) + 'px';
+  };
+  const hidePeek = () => { if (!chart) return; peek.hidden = true; peekLine.setAttribute('visibility', 'hidden'); band.setAttribute('width', 0); };
+  const tAtPointer = e => { const r = chart.getBoundingClientRect(), vb = chart.viewBox.baseVal; const px = (e.clientX - r.left) * (vb.width / r.width); return Math.min(tEnd, Math.max(0, (px - x0) / (x1 - x0) * t1)); };
   if (chart) {
-    const seek = e => { const r = chart.getBoundingClientRect(); const vb = chart.viewBox.baseVal; const px = (e.clientX - r.left) * (vb.width / r.width);
-      tc = Math.min(tEnd, Math.max(0, (px - x0) / (x1 - x0) * t1)); render(); };
-    chart.addEventListener('pointerdown', e => { e.preventDefault(); pause(); seek(e); chart.setPointerCapture(e.pointerId); chart.onpointermove = seek; });
-    chart.addEventListener('pointerup', () => { chart.onpointermove = null; });
+    chart.addEventListener('pointermove', e => { if (e.buttons & 1) { seekTo(tAtPointer(e)); hidePeek(); } else { const r = chart.getBoundingClientRect(); showPeek(tAtPointer(e), e.clientX - r.left); } });
+    chart.addEventListener('pointerleave', hidePeek);
+    chart.addEventListener('pointerdown', e => { e.preventDefault(); pause(); hidePeek(); chart.setPointerCapture(e.pointerId); seekTo(tAtPointer(e)); });
+    chart.addEventListener('pointerup', e => { chart.releasePointerCapture(e.pointerId); });
   }
+  // --- strip: hover peeks; press-drag chooses a pending frame, release seeks, Esc cancels ---
+  const frameUnder = e => { const el = document.elementFromPoint(e.clientX, e.clientY); const fr = el && el.closest('.fr'); return fr && frs.includes(fr) ? +fr.dataset.k : null; };
+  frs.forEach((fr, k) => {
+    fr.addEventListener('pointerenter', () => { if (pending === null) showPeek(times[k]); });
+    fr.addEventListener('pointerleave', () => { if (pending === null) hidePeek(); });
+  });
+  const setPending = k => { pending = k; render(); showStage(k, 'pending \\u2014 release to seek, Esc to cancel'); stage.classList.add('pending'); showPeek(times[k]); };
+  reelbox.addEventListener('pointerdown', e => {
+    const k = frameUnder(e); if (k === null) return;
+    e.preventDefault(); pause(); reelbox.setPointerCapture(e.pointerId); setPending(k);
+  });
+  reelbox.addEventListener('pointermove', e => { if (pending === null) return; const k = frameUnder(e); if (k !== null && k !== pending) setPending(k); });
+  const commit = () => { if (pending === null) return; const k = pending; pending = null; hidePeek(); seekTo(times[k]); };
+  const cancel = () => { if (pending === null) return; pending = null; hidePeek(); render(); announce('seek cancelled'); };
+  reelbox.addEventListener('pointerup', commit);
+  reelbox.addEventListener('pointercancel', cancel);
+  // --- keys, YouTube's model, while the player (or its chart) has focus ---
+  const step = dk => { pause(); seekTo(times[Math.min(n - 1, Math.max(0, frameAt(tc) + dk))]); };
+  const rates = ['0.25', '0.5', '1'];
+  f.addEventListener('keydown', e => {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'SUMMARY') return;
+    const key = e.key;
+    let handled = true;
+    if (key === ' ' || key === 'k' || key === 'K') { playing ? pause() : play(); }
+    else if (key === '.') step(1);
+    else if (key === ',') step(-1);
+    else if (key === 'ArrowRight') step(5);
+    else if (key === 'ArrowLeft') step(-5);
+    else if (key === 'l' || key === 'L') step(10);
+    else if (key === 'j' || key === 'J') step(-10);
+    else if (key === 'Home') step(-n);
+    else if (key === 'End') step(n);
+    else if (/^[0-9]$/.test(key)) { pause(); seekTo(tEnd * (+key / 10)); }
+    else if (key === '>' ) { rate.value = rates[Math.min(rates.length - 1, rates.indexOf(rate.value) + 1)]; announce('speed ' + rate.value + 'x'); }
+    else if (key === '<') { rate.value = rates[Math.max(0, rates.indexOf(rate.value) - 1)]; announce('speed ' + rate.value + 'x'); }
+    else if (key === 'Escape') { cancel(); }
+    else handled = false;
+    if (handled) e.preventDefault();
+  });
   window.addEventListener('resize', render);
   render();
 });
@@ -911,17 +987,26 @@ def render_control(rep: ControlReport, out: Path):
                 f"<figure class='fr' data-k='{k}'><div class='cell'></div>"
                 f"<figcaption>{t:.2f}s{'' if k == 0 else (' &middot; ' + (f'{dl * 100:.0f}%' if dl > 0.001 else 'same'))}</figcaption></figure>"
                 for k, (t, dl) in enumerate(zip(f["times"], f["deltas"])))
+            chart = f.get("chart", "")
+            if chart:
+                chart = chart.replace("<svg class=\"chart\"", "<svg class=\"chart\" tabindex=\"0\" role=\"slider\" aria-label=\"playhead\" aria-valuemin=\"0\" aria-valuenow=\"0\" aria-valuetext=\"0.00 seconds\"", 1)
             parts.append(
                 f"<h3>Playback{title}</h3>"
-                f"<div class='film' data-sheet='{f['sheet']}' data-w='{f['w']}' data-h='{f['h']}' data-times='{json.dumps([round(t, 3) for t in f['times']])}'>"
-                f"<div class='stagebox'><div class='stage'></div></div>"
+                f"<div class='film' tabindex='0' role='group' aria-label='Playback: {e.title}' data-sheet='{f['sheet']}' data-w='{f['w']}' data-h='{f['h']}' "
+                f"data-times='{json.dumps([round(t, 3) for t in f['times']])}' data-chapters='{json.dumps(f['chapters'])}'>"
+                f"<div class='stagebox'><div class='stage'></div><div class='stagelabel'></div></div>"
                 f"<div class='reelbox'><div class='gate'></div><div class='reel'>{cells}</div></div>"
-                f"<div class='bar'><button type='button'>Play</button>"
-                f"<select><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
-                f"<input type='range' min='0' max='{len(f['times']) - 1}' value='0'><span class='t'></span>"
-                f"<span class='n'>{len(f['times'])} frames; captions give the share of pixels changed since the previous frame; the marker pages the strip rather than scrolling it</span></div>"
-                + (f"<div class='chartbox'>{f['chart']}</div>" if f.get("chart") else "")
-                + "</div>")
+                f"<div class='bar'><button type='button' class='play'>Play</button>"
+                f"<select aria-label='speed'><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
+                f"<input type='range' min='0' max='{len(f['times']) - 1}' value='0' aria-label='frame'><span class='t'></span>"
+                f"<span class='n'>{len(f['times'])} frames; captions give the share of pixels changed since the previous frame</span></div>"
+                f"<details class='keys'><summary>Keys</summary><dl>"
+                f"<dt>Space, K</dt><dd>play / pause</dd><dt>, .</dt><dd>previous / next frame</dd><dt>&larr; &rarr;</dt><dd>five frames back / forward</dd>"
+                f"<dt>J L</dt><dd>ten frames back / forward</dd><dt>0-9</dt><dd>seek to 0-90 %</dd><dt>Home End</dt><dd>first / last frame</dd>"
+                f"<dt>&lt; &gt;</dt><dd>slower / faster</dd><dt>Esc</dt><dd>cancel a pending seek on the strip</dd></dl>"
+                f"<p>Hover the chart or the strip to peek without moving the playhead; press and drag across the strip to choose a frame and release to seek.</p></details>"
+                + (f"<div class='chartbox'>{chart}<div class='peek' hidden><div class='pframe'></div><div class='ptime'></div></div></div>" if chart else "")
+                + "<span class='sr' aria-live='polite'></span></div>")
         if e.frames:
             parts.append("<h3>Frames</h3><div class='strip'>" + "".join(
                 f"<figure><img class='frame' src='{p}'><figcaption>{c}</figcaption></figure>" for c, p in e.frames) + "</div>")
