@@ -260,6 +260,8 @@ struct Dom {
     host: HtmlElement,
     stage: HtmlElement,
     stage_label: Element,
+    /// The recorded video over the stage, when the film has one.
+    video: Option<web_sys::HtmlVideoElement>,
     reelbox: HtmlElement,
     reel: HtmlElement,
     gate: HtmlElement,
@@ -369,6 +371,7 @@ fn render(dom: &Dom, d: &Data, st: &State) {
         &JsValue::from_f64(k as f64),
     );
     dom.time_label.set_text_content(Some(&fmt(st.tc)));
+    sync_video(dom, st);
     if let Some(chart) = &dom.chart {
         let x = dom.layout.x_of(st.tc);
         // one transform carries the line, the dot and the readout together
@@ -393,6 +396,30 @@ fn render(dom: &Dom, d: &Data, st: &State) {
                 d.chapter_at(st.tc).1
             ),
         );
+    }
+}
+
+/// Keep the recorded video on the film's clock: play and pause with it, run
+/// at its rate, and re-seek whenever the two drift past a threshold (a
+/// small one while paused, since a paused frame should be exact).
+fn sync_video(dom: &Dom, st: &State) {
+    let Some(video) = &dom.video else {
+        return;
+    };
+    if video.ready_state() >= 2 && !video.class_list().contains("ready") {
+        let _ = video.class_list().add_1("ready");
+    }
+    video.set_playback_rate(st.rate);
+    if st.playing {
+        if video.paused() {
+            let _ = video.play();
+        }
+    } else if !video.paused() {
+        let _ = video.pause();
+    }
+    let threshold = if st.playing { 0.12 } else { 0.02 };
+    if (video.current_time() - st.tc).abs() > threshold {
+        video.set_current_time(st.tc);
     }
 }
 
@@ -493,6 +520,8 @@ impl Player {
         }
         self.dom.play.set_text_content(Some("Play"));
         set_state(&self.dom.host, "playing", false);
+        drop(st);
+        sync_video(&self.dom, &self.state.borrow());
     }
 
     fn play(&self) {
@@ -645,6 +674,20 @@ impl CustomElement for Film {
         let cell_h = (data.h * scale).round();
         let ss = (900.0 / data.w).min(if data.w < 220.0 { 3.0 } else { 1.25 });
         let stage_w = (data.w * ss).round();
+        // A recorded video, when the element names one, plays over the
+        // sheet's frame in the stage and follows the same clock; the sheet
+        // stays underneath as the poster and the fallback.
+        let video_markup = self
+            .host
+            .get_attribute("video")
+            .filter(|v| !v.is_empty())
+            .map(|v| {
+                format!(
+                    "<video class=\"stagevideo\" muted playsinline preload=\"metadata\" aria-hidden=\"true\" src=\"{}\"></video>",
+                    escape(&v)
+                )
+            })
+            .unwrap_or_default();
         let stage_h = (data.h * ss).round();
         let cells: String = data
             .times
@@ -688,7 +731,10 @@ impl CustomElement for Film {
 :host {{ display: block; border: 1px solid var(--op-border); background: var(--op-surface); color: var(--op-text); padding: 0.5rem; max-width: 930px; user-select: none; -webkit-user-select: none; outline: 2px solid transparent; outline-offset: 2px; font-size: 0.9rem; }}
 :host(:focus-visible) {{ outline-color: var(--op-accent); }}
 .stagebox {{ display: flex; flex-direction: column; align-items: center; padding: 4px 0 8px; }}
+.stagewrap {{ position: relative; display: inline-block; }}
 .stage {{ background-repeat: no-repeat; border: 1px solid var(--op-border); }}
+.stagevideo {{ position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); display: none; object-fit: fill; }}
+.stagevideo.ready {{ display: block; }}
 .stage.pending {{ outline: 2px dashed var(--op-accent); outline-offset: 2px; }}
 .stagelabel {{ font-size: 0.8em; color: var(--op-muted); min-height: 1.2em; margin-top: 0.3rem; font-variant-numeric: tabular-nums; }}
 .reelbox {{ position: relative; overflow: hidden; width: 100%; padding: 6px 0; border-top: 1px solid var(--op-border); touch-action: none; }}
@@ -727,7 +773,7 @@ impl CustomElement for Film {
 .peek .pframe {{ background-repeat: no-repeat; }} .peek .ptime {{ font-size: 0.8em; text-align: center; color: var(--op-text); font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 </style>
-<div class=\"stagebox\" part=\"stage\"><div class=\"stage\" style=\"width:{stage_w}px;height:{stage_h}px;background-image:url('{sheet}');background-size:{}px {stage_h}px\"></div><div class=\"stagelabel\"></div></div>
+<div class=\"stagebox\" part=\"stage\"><div class=\"stagewrap\"><div class=\"stage\" style=\"width:{stage_w}px;height:{stage_h}px;background-image:url('{sheet}');background-size:{}px {stage_h}px\"></div>{video_markup}</div><div class=\"stagelabel\"></div></div>
 <div class=\"reelbox\" part=\"reel\"><div class=\"gate\"></div><div class=\"reel\">{cells}</div></div>
 <div class=\"bar\"><button type=\"button\" class=\"play\">Play</button><select aria-label=\"speed\"><option value=\"1\">1x</option><option value=\"0.5\">0.5x</option><option value=\"0.25\">0.25x</option></select><input type=\"range\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"frame\"><span class=\"t\"></span><span class=\"n\">{n} frames; captions give the share of pixels changed since the previous frame</span></div>
 <details class=\"keys\"><summary>Keys</summary><dl><dt>Space, K</dt><dd>play / pause</dd><dt>, .</dt><dd>previous / next frame</dd><dt>← →</dt><dd>five frames back / forward</dd><dt>J L</dt><dd>ten frames back / forward</dd><dt>Shift ← →</dt><dd>one second back / forward</dd><dt>PgUp PgDn</dt><dd>previous / next chapter (also Ctrl or Alt with an arrow)</dd><dt>0-9</dt><dd>seek to 0-90 %</dd><dt>Home End</dt><dd>first / last frame</dd><dt>&lt; &gt;</dt><dd>slower / faster</dd><dt>Esc</dt><dd>cancel a pending seek on the strip</dd></dl><p>Hover the chart or the strip to peek without moving the playhead; press and drag across the strip to choose a frame and release to seek.</p></details>
@@ -777,6 +823,7 @@ impl CustomElement for Film {
             host: self.host.clone(),
             stage,
             stage_label,
+            video: qh(".stagevideo").and_then(|v| v.dyn_into::<web_sys::HtmlVideoElement>().ok()),
             reelbox,
             reel,
             gate,
@@ -1110,6 +1157,18 @@ impl CustomElement for Film {
                     if handled {
                         ke.prevent_default();
                     }
+                }),
+            );
+        }
+        // the recording shows itself as soon as it has a frame, without
+        // waiting for the next render
+        if let Some(video) = dom.video.clone() {
+            let v = video.clone();
+            listen(
+                &video,
+                "loadeddata",
+                Closure::new(move |_| {
+                    let _ = v.class_list().add_1("ready");
                 }),
             );
         }

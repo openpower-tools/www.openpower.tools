@@ -34,7 +34,7 @@ const EXTRA_ATTRS: &[(&str, &[&str])] = &[
     // Read once at connect time rather than observed for reactivity.
     ("table", &["dense", "lined"]),
     ("tab", &["label"]),
-    ("film", &["sheet", "title", "id"]),
+    ("film", &["sheet", "title", "id", "video"]),
     ("machine", &["for"]),
 ];
 

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["websocket-client>=1.8", "pillow>=10"]
+# dependencies = ["websocket-client>=1.8", "pillow>=10", "rangehttpserver>=1.4"]
 # ///
 """Interaction report and harness for www.openpower.tools.
 
@@ -31,6 +31,8 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -44,6 +46,21 @@ STORAGE_KEY = "tools.openpower.sites.www.storage.version.1.configuration.version
 # elements colour it from the tokens. The ad hoc revision, which must not depend on the site,
 # draws with the light theme's values read from the same file.
 SERIES = {"palette": 1, "thumb": 2, "ghost": 3, "preview": 4, "ideal": 5}
+
+# Films are recorded at this device scale factor: sheets and videos share it.
+DPR = 1.5
+# The stage video comes from the DevTools screencast, which sustains about 23
+# frames a second for the full viewport as JPEG at this quality (PNG halves
+# that); the sheet keeps its exact PNG screenshots at a lower cadence.
+CAST_QUALITY = 90
+CAST_MARGIN = 14
+# Sheet frames are cut from the screencast at most this often (seconds).
+SHEET_PERIOD = 0.08
+# A pixel counts as changed when a channel moves by more than this, which is
+# above JPEG requantisation noise between two captures of one image.
+CHANGE_TOLERANCE = 24
+# The browser whose screencast the films are cut from (set by main).
+RECORDER = None
 OKABE = {"mark": "#D55E00"}
 
 
@@ -83,7 +100,8 @@ class Browser:
         self.proc = subprocess.Popen(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
              "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
-             "--window-size=1280,900", f"--remote-debugging-port={self.port}", "--remote-allow-origins=*",
+             "--window-size=1280,900", f"--force-device-scale-factor={DPR}",
+             f"--remote-debugging-port={self.port}", "--remote-allow-origins=*",
              f"--user-data-dir={self.profile}", "about:blank"],
             stdout=log, stderr=log)
         # CI runners can take well over ten seconds to bring Chrome up.
@@ -103,26 +121,117 @@ class Browser:
         self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=60)
         self.mid = 0
         self.events: list[dict] = []
+        # One thread owns the socket's receive side so screencast frames are
+        # acknowledged the moment they arrive (Chrome sends the next frame only
+        # after the acknowledgement) while the main thread samples the page.
+        self.lock = threading.Lock()
+        self.cond = threading.Condition(self.lock)
+        self.replies: dict[int, dict] = {}
+        self.closing = False
+        self.cast_frames: list[tuple[float, bytes]] = []
+        self.casting = False
+        self.cast_rect = None
+        self.reader = threading.Thread(target=self._read_loop, name="cdp-reader", daemon=True)
+        self.reader.start()
         self.call("Page.enable")
         self.call("Runtime.enable")
         self.clip_uses_page_coords = None
 
+    def _read_loop(self):
+        while not self.closing:
+            try:
+                raw = self.ws.recv()
+            except websocket.WebSocketTimeoutException:
+                continue
+            except Exception:
+                if self.closing:
+                    return
+                raise
+            if not raw:
+                if self.closing:
+                    return
+                continue
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                continue  # a closing handshake or a truncated frame at shutdown
+            if "id" in msg:
+                with self.cond:
+                    self.replies[msg["id"]] = msg
+                    self.cond.notify_all()
+            elif msg.get("method") == "Page.screencastFrame":
+                p = msg["params"]
+                with self.lock:
+                    if self.casting:
+                        md = p["metadata"]
+                        self.cast_frames.append((md["timestamp"], base64.b64decode(p["data"]), md["deviceWidth"], md["deviceHeight"]))
+                    self.mid += 1
+                    self.ws.send(json.dumps({"id": self.mid, "method": "Page.screencastFrameAck",
+                                             "params": {"sessionId": p["sessionId"]}}))
+            else:
+                with self.lock:
+                    self.events.append(msg)
+
+    def cast_start(self, rect):
+        """Start recording the viewport for a film; frames accumulate until cast_take.
+        The moment it starts is the film's clock origin."""
+        with self.lock:
+            if self.casting:
+                return
+            self.casting = True
+            self.cast_rect = rect
+            self.cast_frames = []
+            self.film_t0 = time.time()
+        self.call("Page.startScreencast", format="jpeg", quality=CAST_QUALITY,
+                  maxWidth=int(1280 * DPR), maxHeight=int(900 * DPR), everyNthFrame=1)
+
+    def film_start(self, rect) -> list:
+        """Begin a film: start the recording and return its frame list, opened
+        with a frame at time zero (the state before any input)."""
+        self.cast_start(rect)
+        return [(0.0, None)]
+
+    def cast_take(self):
+        """Stop recording and return (rect, [(timestamp, jpeg, deviceWidth, deviceHeight)]) for the film just made."""
+        with self.lock:
+            if not self.casting:
+                return None, []
+            self.casting = False
+        self.call("Page.stopScreencast")
+        with self.lock:
+            frames, rect = self.cast_frames, self.cast_rect
+            self.cast_frames = []
+        if frames and not getattr(self, "cast_noted", False):
+            from PIL import Image
+            import io
+            im = Image.open(io.BytesIO(frames[0][1]))
+            span = frames[-1][0] - frames[0][0]
+            print(f"   (screencast {im.width}x{im.height} for a {frames[0][2]}x{frames[0][3]} viewport; {len(frames)} frames in {span:.1f}s)")
+            self.cast_noted = True
+        return rect, frames
+
     def close(self):
+        self.closing = True
         try:
             self.ws.close()
         finally:
             self.proc.kill()
 
     def call(self, method: str, **params):
-        self.mid += 1
-        self.ws.send(json.dumps({"id": self.mid, "method": method, "params": params}))
-        while True:
-            msg = json.loads(self.ws.recv())
-            if msg.get("id") == self.mid:
-                if "error" in msg:
-                    raise RuntimeError(f"{method}: {msg['error']}")
-                return msg.get("result", {})
-            self.events.append(msg)
+        with self.cond:
+            self.mid += 1
+            mid = self.mid
+            self.ws.send(json.dumps({"id": mid, "method": method, "params": params}))
+            deadline = time.time() + 120
+            while mid not in self.replies:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise RuntimeError(f"{method}: no reply within 120s")
+                self.cond.wait(remaining)
+            msg = self.replies.pop(mid)
+        if "error" in msg:
+            raise RuntimeError(f"{method}: {msg['error']}")
+        return msg.get("result", {})
 
     def js(self, expr: str):
         r = self.call("Runtime.evaluate", expression=expr, returnByValue=True, awaitPromise=True)
@@ -167,7 +276,8 @@ class Browser:
         self.call("Input.dispatchMouseEvent", type="mouseReleased", x=x, y=y, button="left", clickCount=1)
 
     def errors(self) -> list:
-        return [e["params"] for e in self.events if e.get("method") == "Runtime.exceptionThrown"]
+        with self.lock:
+            return [e["params"] for e in self.events if e.get("method") == "Runtime.exceptionThrown"]
 
     def calibrate_clip(self):
         """Whether captureScreenshot clips are page- or viewport-relative here."""
@@ -192,7 +302,7 @@ class Browser:
             x, y = x + sx, y + sy
         shot = self.call("Page.captureScreenshot", format="png",
                          clip={"x": max(0, x - margin), "y": max(0, y - margin),
-                               "width": w + 2 * margin, "height": h + 2 * margin, "scale": scale})
+                               "width": w + 2 * margin, "height": h + 2 * margin, "scale": scale / DPR})
         return base64.b64decode(shot["data"])
 
     def frame(self, path: Path, rect, margin: float = 14, scale: float = 2):
@@ -427,14 +537,22 @@ def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=No
     frame every `every`-th sample so frames and curves share one clock."""
     start = time.time()
     t0 = t0 if t0 is not None else start
+    if film is not None and rect is not None:
+        b.cast_start(rect)
+        if t0 is None:
+            t0 = b.film_t0  # rows, sheet frames and the recording share one origin
     rows = []
     i = 0
+    last_frame = -1.0
     while time.time() - start < seconds:
         s = b.js(expr)
         t = round(time.time() - t0, 3)
         rows.append((t, s))
-        if film is not None and i % every == 0:
-            film.append((t, b.frame_bytes(rect, scale=scale)))
+        # a sheet frame wanted at this time; cut from the screencast later, so
+        # the loop never waits on a screenshot and the curves stay dense
+        if film is not None and i % every == 0 and t - last_frame >= SHEET_PERIOD:
+            film.append((t, None))
+            last_frame = t
         i += 1
         if until and until(s):
             break
@@ -446,26 +564,65 @@ def burst(b: Browser, rect, seconds: float, fps: float = 15, t0: float | None = 
     """A short frame sequence with no sampling in between."""
     start = time.time()
     t0 = t0 if t0 is not None else start
+    b.cast_start(rect)
+    t0 = t0 if t0 is not None else b.film_t0
     film = []
     while time.time() - start < seconds:
-        film.append((round(time.time() - t0, 3), b.frame_bytes(rect, scale=scale)))
-        time.sleep(max(0, 1 / fps - 0.02))
+        film.append((round(time.time() - t0, 3), None))
+        time.sleep(1 / fps)
     return film
 
 
+def crop_frame(img, rect, dev_w: float, dev_h: float, cell: tuple, margin: float = CAST_MARGIN):
+    """The element's region of a screencast frame, framed like the sheet: the
+    same margin, scaled from the frame's own size, padded with the edge colour
+    where the viewport clipped it, and resized to the sheet cell."""
+    from PIL import Image
+    x, y, w, h = rect
+    sx, sy = img.width / dev_w, img.height / dev_h
+    left, top = (x - margin) * sx, (y - margin) * sy
+    right, bottom = (x + w + margin) * sx, (y + h + margin) * sy
+    bw, bh = max(2, int(round(right - left))), max(2, int(round(bottom - top)))
+    edge = img.getpixel((min(img.width - 1, max(0, int(left))), min(img.height - 1, max(0, int(top)))))
+    canvas = Image.new("RGB", (bw, bh), edge)
+    cl, ct = max(0, int(left)), max(0, int(top))
+    cr, cb = min(img.width, int(right)), min(img.height, int(bottom))
+    if cr > cl and cb > ct:
+        canvas.paste(img.crop((cl, ct, cr, cb)), (cl - int(left), ct - int(top)))
+    return canvas.resize(cell, Image.LANCZOS)
+
+
+def sheet_cell(rect) -> tuple:
+    """The sheet cell for an element: its box plus the margin, at the device scale, even-sized."""
+    _, _, w, h = rect
+    cw, ch = int(round((w + 2 * CAST_MARGIN) * DPR)), int(round((h + 2 * CAST_MARGIN) * DPR))
+    return (cw - cw % 2, ch - ch % 2)
+
+
+def nearest_cast_frame(cast: list, origin: float, t: float):
+    """The screencast frame closest to film time `t`, or None when none is within reach."""
+    best, best_d = None, 0.35
+    for entry in cast:
+        d = abs(entry[0] - origin - t)
+        if d < best_d:
+            best, best_d = entry, d
+    return best
+
+
+def changed_fraction_images(a, b_) -> float:
+    """The share of pixels whose colour moved by more than the tolerance."""
+    from PIL import ImageChops
+    diff = ImageChops.difference(a.convert("RGB"), b_.convert("RGB")).convert("L").point(lambda v: 255 if v > CHANGE_TOLERANCE else 0)
+    changed = sum(diff.histogram()[255:])
+    return round(changed / (a.width * a.height), 4)
+
+
 def changed_fraction(a: bytes, b_: bytes) -> float:
-    """Fraction of pixels that differ between two PNG frames of equal size."""
-    from PIL import Image, ImageChops
+    from PIL import Image
     import io
-    ia, ib = Image.open(io.BytesIO(a)).convert("RGB"), Image.open(io.BytesIO(b_)).convert("RGB")
-    if ia.size != ib.size:
-        return 1.0
-    diff = ImageChops.difference(ia, ib).convert("L").point(lambda v: 255 if v > 24 else 0)
-    hist = diff.histogram()
-    return hist[255] / (ia.size[0] * ia.size[1])
+    return changed_fraction_images(Image.open(io.BytesIO(a)), Image.open(io.BytesIO(b_)))
 
-
-def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start", trace=()):
+def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start", trace=(), t0: float | None = None):
     """Stitches (t, png) frames into a horizontal sprite sheet with a
     timestamp table and, per frame, the fraction of pixels that changed
     since the previous frame - shown as the reel's captions, so a frame
@@ -474,15 +631,34 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
     import io
     if not frames:
         return
-    images = [Image.open(io.BytesIO(png)).convert("RGB") for _, png in frames]
+    rect, cast = RECORDER.cast_take() if RECORDER is not None else (None, [])
+    cell = sheet_cell(rect) if rect is not None else None
+    # frames captured as screenshots come with their bytes; frames wanted at a
+    # time are cut from the screencast, nearest frame to that time
+    origin = t0 if t0 is not None else (RECORDER.film_t0 if (RECORDER is not None and cast) else 0.0)
+    images = []
+    times = []
+    for t, png in frames:
+        if png is not None:
+            im = Image.open(io.BytesIO(png)).convert("RGB")
+        else:
+            entry = nearest_cast_frame(cast, origin, t)
+            if entry is None:
+                continue
+            ts, jpeg, dev_w, dev_h = entry
+            im = crop_frame(Image.open(io.BytesIO(jpeg)).convert("RGB"), rect, dev_w, dev_h, cell)
+        images.append(im)
+        times.append(t)
+    if not images:
+        print("   (film skipped: no frames within reach of the screencast)")
+        return
     w, h = images[0].size
     images = [im if im.size == (w, h) else im.resize((w, h)) for im in images]
     sheet = Image.new("RGB", (w * len(images), h), "#ffffff")
     for i, im in enumerate(images):
         sheet.paste(im, (i * w, 0))
     sheet.save(d / f"{name}-film.png", optimize=True)
-    times = [t for t, _ in frames]
-    deltas = [0.0] + [changed_fraction(frames[i - 1][1], frames[i][1]) for i in range(1, len(frames))]
+    deltas = [0.0] + [changed_fraction_images(images[i - 1], images[i]) for i in range(1, len(images))]
     film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title,
             "chapters": [[0.0, chapter0]] + [[float(t), label] for t, label in marks],
             "series": [{k: v for k, v in sr.items() if k in ("label", "series", "t", "y", "dash", "lw", "at")} for sr in (series or [])],
@@ -491,7 +667,53 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
     if series:
         t_max = max(max(times), max(max(sr["t"]) for sr in series if sr["t"]))
         film["chart"] = chart_svg(series, t_max, marks, ylabel)
+    if cast:
+        video = write_video(cast, rect, origin, times, d, name, (w, h))
+        if video:
+            film["video"] = video
     edge.film = film
+
+
+def write_video(cast: list, rect, origin: float, times: list, d: Path, name: str, cell: tuple):
+    """Cut the screencast to the film's element, framed exactly like the sheet
+    (same margin, resized to the sheet's cell), and encode it as VP9 WebM at
+    the frames' own timestamps (variable frame rate), aligned to the sheet's
+    clock. Returns the file name, or None when there is nothing to encode."""
+    if len(cast) < 2 or rect is None or not shutil.which("ffmpeg"):
+        return None
+    from PIL import Image
+    import io
+    cell_w, cell_h = cell
+    even = (cell_w - cell_w % 2, cell_h - cell_h % 2)
+    end = times[-1] + 0.25
+    with tempfile.TemporaryDirectory(prefix="op-film-") as tmp:
+        tmp = Path(tmp)
+        kept = []
+        for i, (ts, jpeg, dev_w, dev_h) in enumerate(cast):
+            t = ts - origin
+            if t < -0.05 or t > end:
+                continue
+            im = crop_frame(Image.open(io.BytesIO(jpeg)).convert("RGB"), rect, dev_w, dev_h, even)
+            path = tmp / f"f{i:05d}.png"
+            im.save(path)
+            kept.append((max(0.0, t), path))
+        if len(kept) < 2:
+            return None
+        lines = []
+        for k, (t, path) in enumerate(kept):
+            nxt = kept[k + 1][0] if k + 1 < len(kept) else end
+            lines.append(f"file '{path}'\nduration {max(0.001, nxt - t):.4f}")
+        lines.append(f"file '{kept[-1][1]}'")
+        (tmp / "list.txt").write_text("\n".join(lines) + "\n")
+        out = d / f"{name}-film.webm"
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(tmp / "list.txt"),
+               "-vsync", "vfr", "-pix_fmt", "yuv420p", "-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0",
+               "-row-mt", "1", "-cpu-used", "4", str(out)]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"   (video skipped: ffmpeg failed: {r.stderr.strip()[:200]})")
+            return None
+    return out.name
 
 
 def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> ControlReport:
@@ -647,7 +869,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
 
     # ---- E7: Neglect ----
     e7 = Edge(("Idle", "Neglect", "Idle"), "Neglect: the pointer leaves", "Attention clears; the preview stops.")
-    film = [(0.0, b.frame_bytes(rect))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.hover(2, 2)
     rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
@@ -664,11 +886,11 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
               "prefers-reduced-motion collapses the snap token and disables the preview loop; the preview appears statically at the destination, and a click still blends the palette (a colour fade is not motion) while the ghost snaps.")
     b.reduced_motion(True)
     time.sleep(0.2)
-    film = [(0.0, b.frame_bytes(rect))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.hover(x, y); time.sleep(0.4)
     s_rm = ST()
-    film.append((round(time.time() - t0, 3), b.frame_bytes(rect)))
+    film.append((round(time.time() - t0, 3), None))
     t_click = time.time() - t0
     b.click(x, y)
     rows = sample(b, T, 3.6, 0.05, t0=t0, film=film, rect=rect)
@@ -718,7 +940,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     rep.edges.append(e1)
     # E2 activate
     e2 = Edge(("Idle", "Activate", "Idle"), "Activate: the thumb snaps on the snap clock", "A native checkbox toggle; the thumb transitions over --op-motion-snap.")
-    film = [(0.0, b.frame_bytes(rect))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.click(x, y)
     rows = sample(b, S, 0.5, 0.02, t0=t0, film=film, rect=rect)
@@ -740,7 +962,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # E4 reduced motion
     e4 = Edge(("Idle", "Attend", "Idle"), "Reduced motion: static preview", "The loop is off; the preview appears at the destination while attended.")
     b.reduced_motion(True); time.sleep(0.2)
-    film = [(0.0, b.frame_bytes(rect))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.hover(x, y)
     film += burst(b, rect, 0.6, t0=t0, scale=2)
@@ -790,7 +1012,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     # focus-visible
     e2 = Edge(("Idle", "Focus", "Idle"), "Attend: visible focus", "Keyboard-style focus must show a focus ring or equivalent.")
     b.hover(2, 2); time.sleep(0.2)
-    film = [(0.0, b.frame_bytes(rect, scale=1.5))]
+    film = b.film_start(rect)
     t0 = time.time()
     landed = b.js("window.__op.focusVisible()")
     film += burst(b, rect, 0.4, t0=t0)
@@ -808,7 +1030,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     if b.js("window.__op.holdLink()"):
         e3.note = "a navigating link: clicked with navigation suppressed"
     b.hover(x, y); time.sleep(0.15)
-    film = [(0.0, b.frame_bytes(rect, scale=1.5))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.click(x, y)
     film += burst(b, rect, 0.6, t0=t0)
@@ -842,7 +1064,10 @@ a{color:#0b57d0}
 .film{margin:.6rem 0 1rem;display:block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:930px;user-select:none;-webkit-user-select:none;outline:2px solid transparent;outline-offset:2px}
 .film:focus-visible,.film svg.chart:focus-visible{outline-color:#D55E00}
 .film .stagebox{display:flex;flex-direction:column;align-items:center;padding:4px 0 8px}
+.film .stagewrap{position:relative;display:inline-block}
 .film .stage{background-repeat:no-repeat;border:1px solid #e3e3e3;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.film .stagevideo{position:absolute;inset:1px;width:calc(100% - 2px);height:calc(100% - 2px);display:none;object-fit:fill}
+.film .stagevideo.ready{display:block}
 .film .stage.pending{outline:2px dashed #D55E00;outline-offset:2px}
 .film .stagelabel{font-size:.78rem;color:#666;min-height:1.2em;margin-top:.3rem;font-variant-numeric:tabular-nums}
 .film .reelbox{position:relative;overflow:hidden;width:100%;padding:6px 0;border-top:1px solid #eee;touch-action:none}
@@ -871,6 +1096,11 @@ document.querySelectorAll('.film').forEach(f => {
   const reelbox = f.querySelector('.reelbox'), reel = f.querySelector('.reel'), gate = f.querySelector('.gate'), frs = [...f.querySelectorAll('.fr')];
   const slider = f.querySelector('input[type=range]'), label = f.querySelector('.t'), btn = f.querySelector('button.play'), rate = f.querySelector('select');
   const stage = f.querySelector('.stage'), stageLabel = f.querySelector('.stagelabel'), live = f.querySelector('.sr');
+  const video = f.querySelector('.stagevideo');
+  if (video) { video.addEventListener('loadeddata', () => video.classList.add('ready')); }
+  const syncVideo = (t, isPlaying, r) => { if (!video) return; video.playbackRate = r;
+    if (isPlaying) { if (video.paused) video.play().catch(() => {}); } else if (!video.paused) video.pause();
+    if (Math.abs(video.currentTime - t) > (isPlaying ? 0.12 : 0.02)) video.currentTime = t; };
   const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headDot = chart && chart.querySelector('.head-dot'), headT = chart && chart.querySelector('.head-t');
   const played = chart && chart.querySelector('.bar-played'), band = chart && chart.querySelector('.band'), peekLine = chart && chart.querySelector('.peek-line');
   const peek = f.querySelector('.peek'), pframe = peek && peek.querySelector('.pframe'), ptime = peek && peek.querySelector('.ptime');
@@ -891,6 +1121,7 @@ document.querySelectorAll('.film').forEach(f => {
   const announce = (() => { let timer = 0; return msg => { clearTimeout(timer); timer = setTimeout(() => { live.textContent = msg; }, 250); }; })();
   const showStage = (k, tag) => { stage.style.backgroundPosition = (-k * sw) + 'px 0'; stageLabel.textContent = fmt(times[k]) + ' \\u00b7 frame ' + (k + 1) + ' of ' + n + (tag ? ' \\u00b7 ' + tag : ''); };
   const render = () => {
+    syncVideo(tc, playing, parseFloat(rate.value) || 1);
     const k = frameAt(tc);
     const next = Math.min(n - 1, k + 1), span = times[next] - times[k];
     const frac = span > 0 ? Math.min(1, Math.max(0, (tc - times[k]) / span)) : 0;
@@ -1019,7 +1250,7 @@ def render_control(rep: ControlReport, out: Path):
                 f"<h3>Playback{title}</h3>"
                 f"<div class='film' tabindex='0' role='group' aria-label='Playback: {e.title}' data-sheet='{f['sheet']}' data-w='{f['w']}' data-h='{f['h']}' "
                 f"data-times='{json.dumps([round(t, 3) for t in f['times']])}' data-chapters='{json.dumps(f['chapters'])}'>"
-                f"<div class='stagebox'><div class='stage'></div><div class='stagelabel'></div></div>"
+                f"<div class='stagebox'><div class='stagewrap'><div class='stage'></div>{('<video class=' + chr(39) + 'stagevideo' + chr(39) + ' muted playsinline preload=' + chr(39) + 'metadata' + chr(39) + ' src=' + chr(39) + f['video'] + chr(39) + '></video>') if f.get('video') else ''}</div><div class='stagelabel'></div></div>"
                 f"<div class='reelbox'><div class='gate'></div><div class='reel'>{cells}</div></div>"
                 f"<div class='bar'><button type='button' class='play'>Play</button>"
                 f"<select aria-label='speed'><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
@@ -1112,7 +1343,7 @@ def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str
                     "chapters": f["chapters"], "series": [{**sr, "t": [round(t, 3) for t in sr["t"]], "y": [round(v, 2) for v in sr["y"]]} for sr in f["series"]],
                     "ylabel": f["ylabel"]}
             parts.append(f"<h3>Playback{(' <small>' + esc(f['title']) + '</small>') if f.get('title') else ''}</h3>\n"
-                         f"<opt-film id=\"{film_id}\" sheet=\"{f['sheet']}\" title=\"{esc(e.title)}\"><script type=\"application/json\">{json.dumps(data)}</script></opt-film>\n")
+                         f"<opt-film id=\"{film_id}\" sheet=\"{f['sheet']}\"{(' video=' + chr(34) + f['video'] + chr(34)) if f.get('video') else ''} title=\"{esc(e.title)}\"><script type=\"application/json\">{json.dumps(data)}</script></opt-film>\n")
         rows = "".join(f"<tr><td><opt-term scheme=\"outcome\" value=\"{'pass' if c.ok else 'fail'}\"></opt-term></td><td>{esc(c.name)}</td><td>{esc(c.detail)}</td></tr>" for c in e.checks)
         parts.append(f"<h3>Checks</h3>\n<opt-table lined=\"\"><table><thead><tr><th>outcome</th><th>check</th><th>detail</th></tr></thead><tbody>{rows}</tbody></table></opt-table>\n")
     parts.append("</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This report is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n")
@@ -1145,6 +1376,8 @@ def render_integrated(reports: list[ControlReport], statics: list[str], adhoc_ou
         for e in rep.edges:
             if e.film:
                 shutil.copy(adhoc_out / rep.tag / e.film["sheet"], d / e.film["sheet"])
+                if e.film.get("video"):
+                    shutil.copy(adhoc_out / rep.tag / e.film["video"], d / e.film["video"])
         (d / "index.html").write_text(integrated_page(rep, head, nav, prefix))
     (out / "index.html").write_text(integrated_index(reports, statics, head, nav, prefix))
 
@@ -1174,7 +1407,7 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     s0 = b.js(S)
     # E1 play/pause: frames, custom state, the linked machine's token, and the other film untouched
     e1 = Edge(("Paused", "Play", "Playing"), "Play: the clock runs", "Frames advance on real time, the host exposes :state(playing), the machine linked by for= moves its token, and a sibling film is unaffected.")
-    film = [(0.0, b.frame_bytes(rect, scale=1))]
+    film = b.film_start(rect)
     t0 = time.time()
     b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
     film += burst(b, rect, 1.6, fps=8, t0=t0, scale=1)
@@ -1365,6 +1598,37 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   Check("high contrast thickens the strokes", float(more["w1"].rstrip("px")) > float(normal["w1"].rstrip("px")), f"{normal['w1']} -> {more['w1']}"),
                   Check("the emulation is reset afterwards", back["s1"] == normal["s1"] and back["marker"] == normal["marker"])]
     rep.edges.append(e5)
+    # E6 the recorded video on the stage follows the film's clock
+    e6 = Edge(("Paused", "Play", "Playing"), "The stage plays the recording",
+              "A film with a video plays it on its own clock: the video's time tracks the readout while playing, lands exactly on a seek, and pauses with the film.")
+    VS = f"""(() => {{ const f = {F}, sr = f.shadowRoot, v = sr.querySelector('video.stagevideo');
+      return {{present: !!v, ready: v ? v.readyState : -1, shown: v ? getComputedStyle(v).display : null, vt: v ? v.currentTime : null, paused: v ? v.paused : null,
+        t: parseFloat(sr.querySelector('.t').textContent), src: v ? v.currentSrc : null, w: v ? v.videoWidth : 0}}; }})()"""
+    b.js(f"{F}.focus(); 'ok'")
+    key("Home", "Home")
+    v0 = b.js(VS)
+    if v0["present"]:
+        for _ in range(40):
+            if b.js(VS)["ready"] >= 2:
+                break
+            time.sleep(0.1)
+        v0 = b.js(VS)
+        b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
+        time.sleep(0.9)
+        v1 = b.js(VS)
+        b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
+        time.sleep(0.15)
+        v2 = b.js(VS)
+        key("End", "End")
+        time.sleep(0.3)
+        v3 = b.js(VS)
+        e6.checks += [Check("the recording loads and is shown over the stage", v0["ready"] >= 2 and v0["shown"] == "block" and v0["w"] > 0, f"readyState {v0['ready']}, display {v0['shown']}, {v0['w']}px wide"),
+                      Check("while playing the video's time tracks the film's clock", v1["paused"] is False and v1["vt"] > 0.3 and abs(v1["vt"] - v1["t"]) < 0.2, f"video {v1['vt']:.2f}s vs readout {v1['t']:.2f}s"),
+                      Check("pausing the film pauses the video", v2["paused"] is True, f"paused {v2['paused']}"),
+                      Check("a seek lands the video on the film's time", abs(v3["vt"] - v3["t"]) < 0.05 and v3["paused"] is True, f"video {v3['vt']:.2f}s vs readout {v3['t']:.2f}s")]
+    else:
+        e6.checks.append(Check("this film carries a recording", False, "no video element on the stage: the run that produced this page had no screencast or no ffmpeg"))
+    rep.edges.append(e6)
     return rep
 
 # ----------------------------------------------------------------------------
@@ -1385,7 +1649,9 @@ def main():
     server = None
     if args.dist:
         port = free_port()
-        server = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--directory", args.dist],
+        # RangeHTTPServer answers Range requests, which browsers need before they
+        # treat a film's recording as seekable (python's own http.server does not)
+        server = subprocess.Popen([sys.executable, "-m", "RangeHTTPServer", str(port)], cwd=args.dist,
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         base = f"http://127.0.0.1:{port}"
         time.sleep(0.8)
@@ -1401,6 +1667,8 @@ def main():
     adhoc.mkdir(parents=True, exist_ok=True)
     work = out / ".work"
     b = Browser(find_chrome(args.chrome), work)
+    global RECORDER
+    RECORDER = b
     reports, statics, failed = [], [], False
     prefix = "/reports/interactions/"
 

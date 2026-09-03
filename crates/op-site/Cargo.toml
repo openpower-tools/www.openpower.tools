@@ -31,6 +31,8 @@ web-sys = { workspace = true, features = [
   "FontFaceSet",
   "HtmlElement",
   "HtmlHeadElement",
+  "HtmlMediaElement",
+  "HtmlVideoElement",
   "IntersectionObserver",
   "IntersectionObserverEntry",
   "IntersectionObserverInit",
