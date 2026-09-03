@@ -66,7 +66,7 @@ jobs:
         # keyboard events in headless Chrome and renders the evidence; a
         # failing check fails the build. The runner image ships Chrome.
         uses: astral-sh/setup-uv@v5
-      - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions
+      - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --publish
       - uses: actions/upload-artifact@v4
         if: always()
         with:

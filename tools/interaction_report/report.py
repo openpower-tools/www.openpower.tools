@@ -448,7 +448,7 @@ def changed_fraction(a: bytes, b_: bytes) -> float:
     return hist[255] / (ia.size[0] * ia.size[1])
 
 
-def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start"):
+def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title="", chapter0="start", trace=()):
     """Stitches (t, png) frames into a horizontal sprite sheet with a
     timestamp table and, per frame, the fraction of pixels that changed
     since the previous frame - shown as the reel's captions, so a frame
@@ -467,7 +467,10 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
     times = [t for t, _ in frames]
     deltas = [0.0] + [changed_fraction(frames[i - 1][1], frames[i][1]) for i in range(1, len(frames))]
     film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title,
-            "chapters": [[0.0, chapter0]] + [[float(t), label] for t, label in marks]}
+            "chapters": [[0.0, chapter0]] + [[float(t), label] for t, label in marks],
+            "series": [{k: v for k, v in sr.items() if k in ("label", "color", "t", "y", "dash", "lw", "at")} for sr in (series or [])],
+            "ylabel": ylabel,
+            "trace": [[round(float(t), 3), a, i, b] for t, a, i, b in trace]}
     if series:
         t_max = max(max(times), max(max(sr["t"]) for sr in series if sr["t"]))
         film["chart"] = chart_svg(series, t_max, marks, ylabel)
@@ -503,7 +506,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     b.hover(x, y)
     rows = sample(b, T, 2.0, 0.04, film=film, rect=rect)
     ts = [t for t, _ in rows]
-    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", chapter0="preview loop",
+    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", chapter0="preview loop", trace=[(0.0, "Idle", "Attend", "Idle")],
               series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
                       {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     at = next((t for t, s in rows if s["attention"]), None)
@@ -531,6 +534,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     thumb = [abs(s["thumb"] - thumb_on) / span * 100 for _, s in rows]
     gap = max(abs(a - p) for a, p in zip(ghost, pal))
     make_film(e2, film, d, "flight", keys=8, title=f"max ghost-palette gap {gap:.1f} pts", chapter0="flight",
+              trace=[(0.0, "Idle", "Activate", "Toward")] + ([(settled, "Toward", "Finished", "Idle")] if settled else []),
               series=[{"label": "ideal exponential", "color": OKABE["ideal"], "t": ideal_t, "y": ideal, "lw": 1, "dash": True, "at": 0.68},
                       {"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.06},
                       {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
@@ -551,7 +555,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     film = []
     after = sample(b, T, 1.9, 0.05, film=film, rect=rect)
     ts = [t for t, _ in after]
-    make_film(e3, film, d, "settle", keys=5, ylabel="% (opacity)",
+    make_film(e3, film, d, "settle", keys=5, ylabel="% (opacity)", trace=[],
               series=[{"label": "preview opacity (resuming)", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in after], "lw": 2.4, "at": 0.5}])
     resume = max(s["preview_op"] for _, s in after)
     e3.checks += [Check("settled when the blend ended (2.8-3.4s)", settled is not None and 2.8 <= settled <= 3.4, f"flight cleared at {settled}s"),
@@ -585,6 +589,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     ghost = [abs(s["ghost"] - origin_x) / span * 100 for _, s in rows]
     thumb = [abs(s["thumb"] - origin_x) / span * 100 for _, s in rows]
     make_film(e4, film, d, "abort", keys=8, marks=[(t_abort, "abort")], chapter0="flight",
+              trace=[(0.0, "Idle", "Activate", "Toward"), (t_abort, "Toward", "Activate", "Back")] + ([(cleared, "Back", "Finished", "Idle")] if cleared else []),
               series=[{"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.2},
                       {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.3},
                       {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.25}])
@@ -616,6 +621,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     g_to = g_off if before["dark"] else g_on
     pal = [(green(s["bg"]) - g_from) / (g_to - g_from) * 100 for _, s in rows]
     make_film(e6, film, d, "refly", keys=8, marks=[(t_ab, "abort"), (t_re, "fly again")], chapter0="flight",
+              trace=[(0.0, "Idle", "Activate", "Toward"), (t_ab, "Toward", "Activate", "Back"), (t_re, "Back", "Activate", "Toward")] + ([(settled2, "Toward", "Finished", "Idle")] if settled2 else []),
               series=[{"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
                       {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9}])
     e6.checks += [Check("third click re-arms toward the opposite setting", s_re["flight"] and s_re["dark"] != before["dark"]),
@@ -629,7 +635,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     b.hover(2, 2)
     rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
-    make_film(e7, film, d, "neglect", keys=4, ylabel="% (opacity)",
+    make_film(e7, film, d, "neglect", keys=4, ylabel="% (opacity)", trace=[(0.0, "Idle", "Neglect", "Idle")],
               series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4, "at": 0.5}])
     gone = next((t for t, s in rows if not s["attention"]), None)
     e7.checks += [Check("attention custom state cleared", gone is not None and gone < 0.3, f"at {gone}s"),
@@ -651,7 +657,9 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     rows = sample(b, T, 3.6, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
     g_from = green(rows[0][1]["bg"]); g_to = green(rows[-1][1]["bg"])
+    settle_rm = next((t for t, s_ in rows if not s_["flight"]), None)
     make_film(e8, film, d, "reduced", keys=6, marks=[(t_click, "click")], chapter0="hover",
+              trace=[(0.0, "Idle", "Attend", "Idle"), (t_click, "Idle", "Activate", "Toward")] + ([(settle_rm, "Toward", "Finished", "Idle")] if settle_rm else []),
               series=[{"label": "palette (still fades)", "color": OKABE["palette"], "t": ts, "y": [(green(s["bg"]) - g_from) / (g_to - g_from or 1) * 100 for _, s in rows], "lw": 2.6, "at": 0.7},
                       {"label": "ghost (snaps)", "color": OKABE["ghost"], "t": ts, "y": [abs(s["ghost"] - rows[0][1]["ghost"]) / span * 100 for _, s in rows], "at": 0.3}])
     mid = green(rows[len(rows) // 2][1]["bg"])
@@ -684,7 +692,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     b.hover(x, y)
     rows = sample(b, S, 2.0, 0.04, film=film, rect=rect)
     ts = [t for t, _ in rows]
-    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)",
+    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", trace=[(0.0, "Idle", "Attend", "Idle")],
               series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
                       {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     peak = max(s["preview_op"] for _, s in rows)
@@ -700,7 +708,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     lefts = [s["thumb"] for _, s in rows]
     ts = [t for t, _ in rows]
     travel = [abs(l - lefts[0]) / max(1e-6, abs(lefts[-1] - lefts[0])) * 100 for l in lefts]
-    make_film(e2, film, d, "activate", keys=6,
+    make_film(e2, film, d, "activate", keys=6, trace=[(0.0, "Idle", "Activate", "Idle")],
               series=[{"label": "thumb travel", "color": OKABE["thumb"], "t": ts, "y": travel, "lw": 2.4, "at": 0.5}])
     moved_by = next((t for t, s in rows if abs(s["thumb"] - lefts[-1]) < 0.5), None)
     e2.checks += [Check("checked state toggled", rows[-1][1]["checked"] != s0["checked"]),
@@ -720,7 +728,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     b.hover(x, y)
     film += burst(b, rect, 0.6, t0=t0, scale=2)
     s_rm = b.js(S)
-    make_film(e4, film, d, "reduced", keys=3)
+    make_film(e4, film, d, "reduced", keys=3, trace=[(0.0, "Idle", "Attend", "Idle")])
     e4.checks += [Check("static preview shown", s_rm["anim"] == "none" and s_rm["preview_op"] >= 0.8, f"animation {s_rm['anim']}, opacity {s_rm['preview_op']}")]
     b.reduced_motion(False); b.hover(2, 2)
     rep.edges.append(e4)
@@ -753,7 +761,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     b.hover(x, y)
     film += burst(b, rect, 0.5, t0=t0)
     hov = b.js("window.__op.sig()")
-    make_film(e1, film, d, "hover", keys=4)
+    make_film(e1, film, d, "hover", keys=4, trace=[(0.0, "Idle", "Attend", "Idle")])
     if ctrl.get("hover", True):
         e1.checks.append(Check("visible hover affordance", hov != base_sig))
     else:
@@ -770,7 +778,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     landed = b.js("window.__op.focusVisible()")
     film += burst(b, rect, 0.4, t0=t0)
     foc = b.js("window.__op.sig()")
-    make_film(e2, film, d, "focus", keys=3)
+    make_film(e2, film, d, "focus", keys=3, trace=[(0.0, "Idle", "Focus", "Idle")])
     e2.checks += [Check("focusable", bool(landed)), Check("visible focus affordance", foc != base_sig)]
     b.js("window.__op.blur()")
     rep.edges.append(e2)
@@ -788,7 +796,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     b.click(x, y)
     film += burst(b, rect, 0.6, t0=t0)
     after = b.js(expr) if expr else None
-    make_film(e3, film, d, "activate", keys=4)
+    make_film(e3, film, d, "activate", keys=4, trace=[(0.0, "Idle", "Activate", "Idle")])
     if expr:
         e3.checks.append(Check(f"activation changes {kind}", before != after, f"{before} -> {after}"))
     else:
@@ -1033,6 +1041,180 @@ def render_index(reports: list[ControlReport], statics: list[str], out: Path):
     (out / "index.html").write_text("\n".join(html))
 
 
+
+# ----------------------------------------------------------------------------
+# the integrated revision: the same evidence rendered with the site's own
+# elements (opt-film, opt-machine, opt-term, opt-table, opt-kpi ...), so
+# the report exercises the controls it is made of. Its pages take the
+# built site's shared <head> and navigation, exactly as op-pages does.
+# ----------------------------------------------------------------------------
+def site_chrome(base: str) -> tuple[str, str]:
+    """(shared head inner HTML without page-specific tags, nav markup)."""
+    html = urllib.request.urlopen(base + "/").read().decode()
+    head = html[html.index("<head>") + 6:html.index("</head>")]
+    out, rest = "", head
+    while "<title>" in rest:
+        a = rest.index("<title>"); b = rest.index("</title>") + 8
+        out += rest[:a]; rest = rest[b:]
+    head = out + rest
+    head = "".join(chunk for chunk in head.split(">") if "name=\"description\"" not in chunk and "rel=\"canonical\"" not in chunk) if False else \
+        ">".join(chunk for chunk in head.split(">") if "name=\"description\"" not in chunk and "rel=\"canonical\"" not in chunk)
+    nav_start = html.index("<opt-site-nav>"); nav_end = html.index("</opt-site-nav>") + len("</opt-site-nav>")
+    return head, html[nav_start:nav_end]
+
+
+def esc(t: str) -> str:
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;")
+
+
+def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str:
+    total = len(rep.checks); passed = sum(1 for c in rep.checks if c.ok)
+    outcome = "pass" if passed == total else "fail"
+    machine = {"nodes": rep.nodes, "edges": [list(e) for e in rep.machine_edges], "highlight": None}
+    parts = [f"<!doctype html>\n<html lang=\"en\">\n<head>\n<title>{esc(rep.tag)} interaction report: openpower.tools</title>\n"
+             f"<meta name=\"description\" content=\"Every machine edge of {esc(rep.tag)} driven with real input: frames, curves, checks.\" />\n"
+             f"<link rel=\"canonical\" href=\"https://www.openpower.tools{prefix}{rep.tag}/\" />{head}</head>\n<body>\n<opt-theme-toggle></opt-theme-toggle>\n{nav}\n"
+             f"<opt-site-header heading=\"{esc(rep.tag)}\" tagline=\"Interaction report: every edge of its machine, driven with real input.\"></opt-site-header>\n<main>\n"
+             f"<p><a href=\"../\">All controls</a></p>\n"
+             f"<opt-kpi label=\"checks pass\" value=\"{passed} of {total}\"><opt-term scheme=\"outcome\" value=\"{outcome}\"></opt-term></opt-kpi>\n"
+             f"<p>Kind: <code>{rep.kind}</code>. Page under test: <code>{esc(rep.page)}</code>. Every frame and sample comes from real pointer and keyboard events in headless Chromium against the built site; this page is rendered with the site's own elements.</p>\n"
+             f"<h2>The machine</h2>\n<opt-machine><script type=\"application/json\">{json.dumps(machine)}</script></opt-machine>\n"
+             f"<p>Nodes are flight states; loops are inputs that leave the flight alone. Each behaviour below lights the edge it exercises; during playback the machine's own playhead rests on the settled node and travels the edge at each recorded transition.</p>\n"]
+    for i, e in enumerate(rep.edges, 1):
+        film_id = f"film-{i}"
+        m = {"nodes": rep.nodes, "edges": [list(x) for x in rep.machine_edges], "highlight": list(e.key), "trace": e.film["trace"] if e.film else []}
+        parts.append(f"<h2>{i}. {esc(e.title)}</h2>\n<h3>Machine annotated for {esc(e.key[0])} —{esc(e.key[1])}→ {esc(e.key[2])}</h3>\n"
+                     f"<opt-machine for=\"{film_id}\"><script type=\"application/json\">{json.dumps(m)}</script></opt-machine>\n")
+        if e.narrative:
+            parts.append(f"<p>{esc(e.narrative)}</p>\n")
+        if e.note:
+            parts.append(f"<p><em>{esc(e.note)}</em></p>\n")
+        if e.film:
+            f = e.film
+            data = {"w": f["w"], "h": f["h"], "times": [round(t, 3) for t in f["times"]], "deltas": [round(x, 4) for x in f["deltas"]],
+                    "chapters": f["chapters"], "series": [{**sr, "t": [round(t, 3) for t in sr["t"]], "y": [round(v, 2) for v in sr["y"]]} for sr in f["series"]],
+                    "ylabel": f["ylabel"]}
+            parts.append(f"<h3>Playback{(' <small>' + esc(f['title']) + '</small>') if f.get('title') else ''}</h3>\n"
+                         f"<opt-film id=\"{film_id}\" sheet=\"{f['sheet']}\" title=\"{esc(e.title)}\"><script type=\"application/json\">{json.dumps(data)}</script></opt-film>\n")
+        rows = "".join(f"<tr><td><opt-term scheme=\"outcome\" value=\"{'pass' if c.ok else 'fail'}\"></opt-term></td><td>{esc(c.name)}</td><td>{esc(c.detail)}</td></tr>" for c in e.checks)
+        parts.append(f"<h3>Checks</h3>\n<opt-table lined=\"\"><table><thead><tr><th>outcome</th><th>check</th><th>detail</th></tr></thead><tbody>{rows}</tbody></table></opt-table>\n")
+    parts.append("</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This report is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n")
+    return "".join(parts)
+
+
+def integrated_index(reports: list[ControlReport], statics: list[str], head: str, nav: str, prefix: str) -> str:
+    rows = []
+    for r in reports:
+        total, passed = len(r.checks), sum(1 for c in r.checks if c.ok)
+        rows.append(f"<tr><td><a href=\"{r.tag}/\">{esc(r.tag)}</a></td><td>{r.kind}</td><td>{passed} of {total}</td>"
+                    f"<td><opt-term scheme=\"outcome\" value=\"{'pass' if passed == total else 'fail'}\"></opt-term></td></tr>")
+    all_ok = all(all(c.ok for c in r.checks) for r in reports)
+    return (f"<!doctype html>\n<html lang=\"en\">\n<head>\n<title>Interaction reports: openpower.tools</title>\n"
+            f"<meta name=\"description\" content=\"Every control driven through its interaction machine with real input, rendered with the site's own elements.\" />\n"
+            f"<link rel=\"canonical\" href=\"https://www.openpower.tools{prefix}\" />{head}</head>\n<body>\n<opt-theme-toggle></opt-theme-toggle>\n{nav}\n"
+            f"<opt-site-header heading=\"Interaction reports\" tagline=\"Every control, every machine edge, real input - rendered with the controls themselves.\"></opt-site-header>\n<main>\n"
+            f"<opt-kpi label=\"controls\" value=\"{len(reports)}\"><opt-term scheme=\"outcome\" value=\"{'pass' if all_ok else 'fail'}\"></opt-term></opt-kpi>\n"
+            f"<p>Generated by tools/interaction_report/report.py from the code's own machine table. The ad hoc revision of the same evidence, which depends on none of these elements, is kept as a build artifact so gross failures in the controls can still be read.</p>\n"
+            f"<opt-table lined=\"\"><table><thead><tr><th>control</th><th>kind</th><th>checks</th><th>outcome</th></tr></thead><tbody>{''.join(rows)}</tbody></table></opt-table>\n"
+            f"<h2>Declared static</h2><p>{esc(', '.join(statics))}</p>\n</main>\n<opt-site-footer></opt-site-footer>\n</body>\n</html>\n")
+
+
+def render_integrated(reports: list[ControlReport], statics: list[str], adhoc_out: Path, out: Path, base: str, prefix: str):
+    head, nav = site_chrome(base)
+    out.mkdir(parents=True, exist_ok=True)
+    for rep in reports:
+        d = out / rep.tag
+        d.mkdir(parents=True, exist_ok=True)
+        for e in rep.edges:
+            if e.film:
+                shutil.copy(adhoc_out / rep.tag / e.film["sheet"], d / e.film["sheet"])
+        (d / "index.html").write_text(integrated_page(rep, head, nav, prefix))
+    (out / "index.html").write_text(integrated_index(reports, statics, head, nav, prefix))
+
+
+# ----------------------------------------------------------------------------
+# the film kind: opt-film exercised on an integrated page it renders. This
+# is the one level of recursion; the checks are written in plain JS and
+# the frames go to the ad hoc report only.
+# ----------------------------------------------------------------------------
+def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
+    tag = ctrl["tag"]
+    rep = ControlReport(tag=tag, kind="film", page=ctrl["page"], nodes=["Paused", "Playing"],
+                        machine_edges=[("Paused", "Play", "Playing"), ("Playing", "Pause", "Paused"), ("Paused", "Seek", "Paused"), ("Paused", "Peek", "Paused"), ("Paused", "Press", "Paused")])
+    d = out / tag
+    d.mkdir(parents=True, exist_ok=True)
+    b.reduced_motion(False)
+    b.goto(base + ctrl["page"], "document.querySelectorAll('opt-film').length > 1 && !!document.querySelectorAll('opt-film')[1].shadowRoot?.querySelector('.stage')")
+    F = "document.querySelectorAll('opt-film')[1]"
+    M = "document.querySelector('opt-machine[for=\"film-2\"]')"
+    S = f"""(() => {{ const f = {F}, sr = f.shadowRoot; const cur = sr.querySelector('.fr.current'), pend = sr.querySelector('.fr.pending');
+      const st = n => f.matches(':state(' + n + ')'); const tok = {M} && {M}.shadowRoot.querySelector('.token');
+      return {{k: cur ? +cur.dataset.k : -1, pending: pend ? +pend.dataset.k : null, playing: st('playing'), pend_state: st('pending'), peeking: st('peeking'),
+        t: sr.querySelector('.t').textContent, token: tok ? [+tok.getAttribute('cx'), +tok.getAttribute('cy')] : null,
+        other_k: +document.querySelectorAll('opt-film')[0].shadowRoot.querySelector('.fr.current').dataset.k, role: sr.querySelector('.chart').getAttribute('role')}}; }})()"""
+    loc = b.js(f"(() => {{ const el = {F}; el.scrollIntoView({{block: 'center'}}); const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()")
+    rect = loc
+    s0 = b.js(S)
+    # E1 play/pause: frames, custom state, the linked machine's token, and the other film untouched
+    e1 = Edge(("Paused", "Play", "Playing"), "Play: the clock runs", "Frames advance on real time, the host exposes :state(playing), the machine linked by for= moves its token, and a sibling film is unaffected.")
+    film = [(0.0, b.frame_bytes(rect, scale=1))]
+    t0 = time.time()
+    b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
+    film += burst(b, rect, 1.6, fps=8, t0=t0, scale=1)
+    s1 = b.js(S)
+    b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
+    s1b = b.js(S)
+    make_film(e1, film, d, "play", keys=5, trace=[(0.0, "Paused", "Play", "Playing")])
+    e1.checks += [Check("frames advance while playing", s1["k"] > s0["k"], f"{s0['k']} -> {s1['k']}"),
+                  Check("playing exposed as a custom state", s1["playing"] and not s1b["playing"]),
+                  Check("the linked machine's playhead moved", s0["token"] != s1["token"], f"{s0['token']} -> {s1['token']}"),
+                  Check("a sibling film is unaffected", s1["other_k"] == s0["other_k"]),
+                  Check("chart is a slider", s0["role"] == "slider")]
+    rep.edges.append(e1)
+    # E2 keys
+    e2 = Edge(("Paused", "Seek", "Paused"), "Seek by keys", "Home, then . . , -> : YouTube's model, frame by frame.")
+    b.js(f"{F}.focus(); 'ok'")
+    ks = []
+    for key_, code in (("Home", "Home"), (".", None), (".", None), (",", None), ("ArrowRight", "ArrowRight")):
+        b.call("Input.dispatchKeyEvent", type="keyDown", key=key_, **({"code": code} if code else {}))
+        b.call("Input.dispatchKeyEvent", type="keyUp", key=key_, **({"code": code} if code else {}))
+        ks.append(b.js(S)["k"])
+    e2.checks.append(Check("keys step frames as documented", ks == [0, 1, 2, 1, 6], f"{ks}"))
+    rep.edges.append(e2)
+    # E3 peek
+    e3 = Edge(("Paused", "Peek", "Paused"), "Peek: hover without seeking", "The pointer over the chart shows a thumbnail and exposes :state(peeking); the playhead stays.")
+    cr = b.js(f"(() => {{ const r = {F}.shadowRoot.querySelector('.chart').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()")
+    before = b.js(S)
+    b.hover(cr[0] + cr[2] * 0.6, cr[1] + cr[3] * 0.4); time.sleep(0.15)
+    peek = b.js(S)
+    b.hover(2, 2); time.sleep(0.1)
+    after = b.js(S)
+    e3.checks += [Check("peeking exposed while hovering the chart", peek["peeking"] and not after["peeking"]),
+                  Check("peek leaves the playhead alone", peek["t"] == before["t"])]
+    rep.edges.append(e3)
+    # E4 pending seek on the strip
+    e4 = Edge(("Paused", "Press", "Paused"), "Press and drag on the strip", "A pending frame with :state(pending); release seeks, Escape cancels.")
+    b.js(f"{F}.focus(); 'ok'")
+    b.call("Input.dispatchKeyEvent", type="keyDown", key="Home", code="Home"); b.call("Input.dispatchKeyEvent", type="keyUp", key="Home", code="Home")
+    # frames 0..2 share the strip's first page; a frame on another page is clipped and cannot be hit
+    cells = b.js(f"(() => [...{F}.shadowRoot.querySelectorAll('.fr .cell')].slice(0, 3).map(c => {{ const r = c.getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; }}))()")
+    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[1][0], y=cells[1][1], button="left", clickCount=1); time.sleep(0.1)
+    p1 = b.js(S)
+    b.call("Input.dispatchMouseEvent", type="mouseMoved", x=cells[2][0], y=cells[2][1], button="left", buttons=1); time.sleep(0.1)
+    p2 = b.js(S)
+    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[2][0], y=cells[2][1], button="left", clickCount=1); time.sleep(0.1)
+    p3 = b.js(S)
+    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); time.sleep(0.1)
+    b.call("Input.dispatchKeyEvent", type="keyDown", key="Escape", code="Escape"); b.call("Input.dispatchKeyEvent", type="keyUp", key="Escape", code="Escape")
+    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); time.sleep(0.1)
+    p4 = b.js(S)
+    e4.checks += [Check("press marks a pending frame with the custom state", p1["pending"] == 1 and p1["pend_state"], f"pending {p1['pending']}"),
+                  Check("dragging moves the pending frame, not the playhead", p2["pending"] == 2 and p2["k"] == 0, f"pending {p2['pending']}, playhead {p2['k']}"),
+                  Check("release seeks and clears pending", p3["k"] == 2 and p3["pending"] is None and not p3["pend_state"], f"playhead {p3['k']}"),
+                  Check("Escape cancels a press", p4["k"] == 2 and p4["pending"] is None, f"playhead {p4['k']}")]
+    rep.edges.append(e4)
+    return rep
+
 # ----------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser()
@@ -1043,6 +1225,7 @@ def main():
     ap.add_argument("--machine", help="machine table JSON (default: cargo run machine_table)")
     ap.add_argument("--chrome")
     ap.add_argument("--only", help="comma-separated tags")
+    ap.add_argument("--publish", action="store_true", help="copy the integrated revision into <dist>/reports/interactions/ (deploys with the site)")
     args = ap.parse_args()
 
     out = Path(args.out)
@@ -1061,45 +1244,73 @@ def main():
     contract = json.load(open(args.contract))["controls"]
     only = set(args.only.split(",")) if args.only else None
 
+    adhoc = out / "adhoc"
+    integrated = out / "integrated"
+    adhoc.mkdir(parents=True, exist_ok=True)
     work = out / ".work"
     b = Browser(find_chrome(args.chrome), work)
     reports, statics, failed = [], [], False
+    prefix = "/reports/interactions/"
+
+    def run_one(ctrl):
+        nonlocal failed
+        print(f"== {ctrl['tag']} ({ctrl['kind']})", flush=True)
+        try:
+            if ctrl["kind"] == "toggle":
+                rep = run_toggle(b, base, ctrl, adhoc, machine)
+            elif ctrl["kind"] == "switch":
+                rep = run_switch(b, base, ctrl, adhoc)
+            elif ctrl["kind"] == "film":
+                rep = run_film(b, base, ctrl, adhoc)
+            else:
+                rep = run_attention(b, base, ctrl, adhoc)
+        except Exception as exc:  # a crashed run is a failed control, not a crashed report
+            rep = ControlReport(tag=ctrl["tag"], kind=ctrl["kind"], page=ctrl["page"], nodes=["Idle"])
+            e = Edge(("Idle", "Attend", "Idle"), "Run failed", "")
+            e.checks.append(Check("run completes", False, repr(exc)[:300]))
+            rep.edges.append(e)
+        render_control(rep, adhoc)
+        reports.append(rep)
+        for c in rep.checks:
+            if not c.ok:
+                failed = True
+                print(f"   FAIL {c.name}: {c.detail}")
+        print(f"   {sum(1 for c in rep.checks if c.ok)}/{len(rep.checks)} checks pass")
+
     try:
         b.goto(base + "/", "document.readyState === 'complete'")
         b.calibrate_clip()
-        for ctrl in contract:
-            if only and ctrl["tag"] not in only:
-                continue
-            if ctrl["kind"] == "static":
-                statics.append(ctrl["tag"])
-                continue
-            print(f"== {ctrl['tag']} ({ctrl['kind']})", flush=True)
-            try:
-                if ctrl["kind"] == "toggle":
-                    rep = run_toggle(b, base, ctrl, out, machine)
-                elif ctrl["kind"] == "switch":
-                    rep = run_switch(b, base, ctrl, out)
-                else:
-                    rep = run_attention(b, base, ctrl, out)
-            except Exception as exc:  # a crashed run is a failed control, not a crashed report
-                rep = ControlReport(tag=ctrl["tag"], kind=ctrl["kind"], page=ctrl["page"], nodes=["Idle"])
-                e = Edge(("Idle", "Attend", "Idle"), "Run failed", "")
-                e.checks.append(Check("run completes", False, repr(exc)[:300]))
-                rep.edges.append(e)
-            render_control(rep, out)
-            reports.append(rep)
-            for c in rep.checks:
-                if not c.ok:
-                    failed = True
-                    print(f"   FAIL {c.name}: {c.detail}")
-            print(f"   {sum(1 for c in rep.checks if c.ok)}/{len(rep.checks)} checks pass")
-        render_index(reports, statics, out)
+        selected = [c for c in contract if not only or c["tag"] in only]
+        statics = [c["tag"] for c in selected if c["kind"] == "static"]
+        # phase 1: every control except the film, which needs the integrated pages to exist
+        for ctrl in selected:
+            if ctrl["kind"] not in ("static", "film"):
+                run_one(ctrl)
+        render_index(reports, statics, adhoc)
+        # the integrated revision, from the site's own elements
+        render_integrated(reports, statics, adhoc, integrated, base, prefix)
+        if args.publish and args.dist:
+            target = Path(args.dist) / "reports" / "interactions"
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(integrated, target)
+            # phase 2: the film, exercised on an integrated page it renders (one level of recursion)
+            for ctrl in selected:
+                if ctrl["kind"] == "film":
+                    run_one(ctrl)
+            render_index(reports, statics, adhoc)
+            render_integrated(reports, statics, adhoc, integrated, base, prefix)
+            shutil.rmtree(target)
+            shutil.copytree(integrated, target)
+        elif any(c["kind"] == "film" for c in selected):
+            print("   (film kind skipped: needs --dist with --publish so the integrated pages are served)")
     finally:
         b.close()
         if server:
             server.kill()
         shutil.rmtree(work, ignore_errors=True)
-    print(f"report: {out / 'index.html'}")
+    print(f"ad hoc report:     {adhoc / 'index.html'}")
+    print(f"integrated report: {integrated / 'index.html'}" + (f"  (published to {Path(args.dist) / 'reports' / 'interactions'})" if args.publish and args.dist else ""))
     sys.exit(1 if failed else 0)
 
 
