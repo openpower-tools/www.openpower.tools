@@ -17,7 +17,9 @@
 //! frames, J/L ten, 0-9 tenths, Home/End, `<` `>` speed, Escape.
 //!
 //! Internal state is exposed as custom states - `playing`, `pending`,
-//! `peeking` - so a page can style or test against them, the chart is a
+//! `peeking` - so a page can style or test against them; every render
+//! dispatches a composed `opt-film-time` event carrying the clock (an
+//! `opt-machine for="..."` follows it); the chart is a
 //! `role=slider` with value text naming the frame and chapter, and a
 //! polite live region announces seeks.
 
@@ -399,6 +401,15 @@ fn render(dom: &Dom, d: &Data, st: &State) {
     if st.pending.is_none() {
         show_stage(dom, d, k, &d.chapter_at(st.tc).1);
         let _ = dom.stage.class_list().remove_1("pending");
+    }
+    // Broadcast the clock: other projections of the same timeline (the
+    // machine diagram's playhead) follow this composed, bubbling event.
+    let init = web_sys::CustomEventInit::new();
+    init.set_bubbles(true);
+    init.set_composed(true);
+    init.set_detail(&JsValue::from_f64(st.tc));
+    if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("opt-film-time", &init) {
+        let _ = dom.host.dispatch_event(&event);
     }
     let _ = dom.slider.set_attribute("value", &k.to_string());
     let _ = js_sys::Reflect::set(
@@ -985,8 +996,12 @@ impl CustomElement for Film {
                     let Ok(m) = e.dyn_into::<MouseEvent>() else {
                         return;
                     };
+                    // read the pending frame in its own statement: a borrow
+                    // inside an `if let` condition lives through the body and
+                    // would collide with set_pending's borrow_mut
+                    let current = p.state.borrow().pending;
                     if let Some(k) = p.frame_under(&m)
-                        && Some(k) != p.state.borrow().pending
+                        && Some(k) != current
                     {
                         p.set_pending(k);
                     }
