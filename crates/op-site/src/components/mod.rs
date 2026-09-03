@@ -11,10 +11,12 @@ mod checkbox;
 mod chip;
 mod details;
 mod empty_state;
+mod film;
 mod input;
 mod iso;
 mod key_value;
 mod kpi;
+mod machine_diagram;
 mod machine_probes;
 mod pagination;
 mod palette_specimen;
@@ -41,6 +43,8 @@ use web_sys::{HtmlElement, ShadowRoot, ShadowRootInit, ShadowRootMode};
 /// Every element the site defines, registered in order by `main`.
 pub const DEFINITIONS: &[ElementDefinition] = &[
     theme_toggle::DEFINITION,
+    film::DEFINITION,
+    machine_diagram::DEFINITION,
     site_header::DEFINITION,
     starting_points::DEFINITION,
     build_status::DEFINITION,

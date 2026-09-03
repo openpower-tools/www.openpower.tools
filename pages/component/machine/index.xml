@@ -1,0 +1,15 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+      <p>An interaction machine's transition diagram: nodes are the flight states, loops are
+      the inputs that leave the flight alone, and one edge can be highlighted - the
+      interaction reports use it as their organising principle, lighting the edge each
+      behaviour exercises. The data is the machine's own transition table.</p>
+      <h2>Example</h2>
+      <opt:machine>
+        <script type="application/json">{"nodes": ["Idle", "Toward", "Back"], "edges": [["Idle", "Attend", "Idle"], ["Idle", "Neglect", "Idle"], ["Idle", "Activate", "Toward"], ["Toward", "Attend", "Toward"], ["Toward", "Neglect", "Toward"], ["Toward", "Activate", "Back"], ["Toward", "Finished", "Idle"], ["Back", "Attend", "Back"], ["Back", "Neglect", "Back"], ["Back", "Activate", "Toward"], ["Back", "Finished", "Idle"]], "highlight": ["Toward", "Activate", "Back"]}</script>
+      </opt:machine>
+      <h2>Markup</h2>
+      <pre>&lt;opt:machine&gt;
+  &lt;script type="application/json"&gt;{ "nodes": ["Idle", "Toward", "Back"],
+    "edges": [["Idle", "Activate", "Toward"], ...], "highlight": ["Toward", "Activate", "Back"] }&lt;/script&gt;
+&lt;/opt:machine&gt;</pre>
+</opt:body>

@@ -19,6 +19,15 @@
       }
     },
     {
+      "tag": "opt-film",
+      "kind": "film",
+      "page": "/reports/interactions/opt-theme-toggle/",
+      "target": {
+        "host": true
+      },
+      "_": "phase 2: exercised on the integrated report page it renders, which bounds the recursion at one level"
+    },
+    {
       "tag": "opt-button",
       "kind": "attention",
       "page": "/components/palette/",
@@ -224,6 +233,10 @@
     },
     {
       "tag": "opt-timeline",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-machine",
       "kind": "static"
     }
   ]

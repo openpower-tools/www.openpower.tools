@@ -34,6 +34,8 @@ const EXTRA_ATTRS: &[(&str, &[&str])] = &[
     // Read once at connect time rather than observed for reactivity.
     ("table", &["dense", "lined"]),
     ("tab", &["label"]),
+    ("film", &["sheet", "title"]),
+    ("machine", &["for"]),
 ];
 
 fn vocabulary() -> BTreeMap<String, Vec<String>> {

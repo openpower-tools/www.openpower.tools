@@ -214,6 +214,18 @@ pub const PAGES: &[Page] = &[
         "component/chip/index.xml"
     ),
     page!(
+        "component/film",
+        "Film",
+        "Frame-by-frame playback of a recorded interaction: stage, paged strip, chart with playhead.",
+        "component/film/index.xml"
+    ),
+    page!(
+        "component/machine",
+        "Machine",
+        "An interaction machine's transition diagram with one edge highlighted.",
+        "component/machine/index.xml"
+    ),
+    page!(
         "component/progress",
         "Progress",
         "Determinate and indeterminate progress bars.",

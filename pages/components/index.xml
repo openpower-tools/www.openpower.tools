@@ -25,6 +25,8 @@
         <li><a href="/component/kpi/">KPI</a>: single measurements, data-forward</li>
         <li><a href="/component/steps/">Steps</a>: numbered procedures with states</li>
         <li><a href="/component/tree/">Tree</a>: collapsible hierarchies</li>
+        <li><a href="/component/film/">Film</a>: frame-by-frame playback of a recorded interaction</li>
+        <li><a href="/component/machine/">Machine</a>: an interaction machine's transition diagram</li>
       </ul>
       <h2>Controls</h2>
       <ul>
