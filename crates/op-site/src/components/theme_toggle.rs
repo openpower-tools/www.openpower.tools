@@ -74,6 +74,9 @@ struct Ease {
     origin: Option<Mode>,
     /// Handle of the pending settle timeout.
     timer: Option<i32>,
+    /// When the in-flight blend started (`Date::now`), so an abort can
+    /// end the flight state as soon as its shortened reversal is done.
+    started: Option<f64>,
     /// Keeps the settle callback alive until it is replaced by the
     /// next blend (never dropped from inside its own invocation).
     settle: Option<Closure<dyn FnMut()>>,
@@ -270,7 +273,8 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
             if let Some(handle) = state.timer.take() {
                 window.clear_timeout_with_handle(handle);
             }
-            match state.origin.take() {
+            let now = js_sys::Date::now();
+            let settle_ms = match state.origin.take() {
                 // Second click mid-blend: abort. The easing attribute
                 // stays armed, so the palette glides back from wherever
                 // the blend was; CSS transition reversing shortens the
@@ -278,6 +282,14 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
                 Some(origin) => {
                     theme::choose(origin);
                     show(&target, origin);
+                    // CSS shortens the reversal in proportion to how
+                    // far the blend had got, so the flight cannot
+                    // outlast the time already spent in it.
+                    state
+                        .started
+                        .take()
+                        .map_or(theme::EASE_MS, |start| (now - start) as i32)
+                        .clamp(0, theme::EASE_MS)
                 }
                 // First click: store and show the new theme at once
                 // (the thumb slides now) while the palette blends in
@@ -294,17 +306,19 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
                     let _ = target.set_attribute("aria-label", &describing);
                     let _ = target.set_attribute("title", &describing);
                     state.origin = Some(origin);
+                    state.started = Some(now);
+                    theme::EASE_MS
                 }
-            }
-            // Either way a blend is now in flight; settle once it has
-            // run out (abort reversals finish sooner - the attribute
-            // lingering a moment longer changes nothing).
+            };
+            // Either way a blend is now in flight; settle when it is
+            // done, which releases the hover preview again.
             let ease_for_settle = ease.clone();
             let button_for_settle = target.clone();
             let settle = Closure::<dyn FnMut()>::new(move || {
                 let mut state = ease_for_settle.borrow_mut();
                 state.timer = None;
                 state.origin = None;
+                state.started = None;
                 theme::end_easing();
                 let _ = button_for_settle.remove_attribute("data-easing");
                 show(&button_for_settle, theme::current());
@@ -312,7 +326,7 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
             state.timer = window
                 .set_timeout_with_callback_and_timeout_and_arguments_0(
                     settle.as_ref().unchecked_ref(),
-                    theme::EASE_MS + 200,
+                    settle_ms + 200,
                 )
                 .ok();
             state.settle = Some(settle);
