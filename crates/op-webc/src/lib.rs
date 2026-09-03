@@ -135,53 +135,50 @@ function vlq(value) {
   return out;
 }
 export function defineElement(tag, observedAttributes, cls, path, line) {
-  const body = `return class extends HTMLElement {
-  static get observedAttributes() { return observedAttributes; }
-  connectedCallback() { rust(this).connected(); }
-  disconnectedCallback() { rust(this).disconnected(); }
-  adoptedCallback() { rust(this).adopted(); }
-  attributeChangedCallback(name, oldValue, newValue) {
-    rust(this).attributeChanged(name, oldValue, newValue);
-  }
-}`;
   const rust = (el) => (el.__rust ??= cls.create(el));
-  let RustElement;
+  const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
+    static get observedAttributes() { return observedAttributes; }
+    connectedCallback() { rust(this).connected(); }
+    disconnectedCallback() { rust(this).disconnected(); }
+    adoptedCallback() { rust(this).adopted(); }
+    attributeChangedCallback(name, oldValue, newValue) {
+      rust(this).attributeChanged(name, oldValue, newValue);
+    }
+  };
+  const body = "export default " + make.toString() + ";";
+  // Every line of the module maps to the element's DEFINITION in its
+  // Rust source (served under /src/), so the inspector's
+  // jump-to-definition opens the component instead of this glue. The
+  // module is loaded from a blob URL rather than eval'd: source maps
+  // are only applied to scripts that have a real, fetchable URL.
+  const mappings = ["AA" + vlq(line - 1) + "A"];
+  for (let i = body.split("\n").length; i > 1; i--) mappings.push("AAAA");
+  const map = {
+    version: 3,
+    file: tag + ".js",
+    sources: ["/src/" + path],
+    sourcesContent: [null],
+    names: [],
+    mappings: mappings.join(";"),
+  };
+  // No //# sourceURL: it would replace the blob's real URL with an
+  // unfetchable name, and an unfetchable script is exactly what stops
+  // the inspector resolving the map.
+  const source = body
+    + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map));
+  const define = (factory) =>
+    customElements.define(tag, factory(HTMLElement, observedAttributes, rust));
   try {
-    // Each element's class lives in its own little script whose inline
-    // source map points every line at the element's DEFINITION in its
-    // Rust source (served under /src/), so the inspector's
-    // jump-to-definition opens the component, not a JS wrapper.
-    // new Function prepends two header lines; +4 covers everything.
-    const mappings = ["AA" + vlq(line - 1) + "A"];
-    for (let i = body.split("\n").length + 4; i > 1; i--) mappings.push("AAAA");
-    const map = {
-      version: 3,
-      file: tag + ".js",
-      sources: ["/src/" + path],
-      sourcesContent: [null],
-      names: [],
-      mappings: mappings.join(";"),
-    };
-    RustElement = new Function(
-      "HTMLElement", "observedAttributes", "rust",
-      body
-        + "\n//# sourceURL=op-webc/" + tag + ".js"
-        + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
-    )(HTMLElement, observedAttributes, rust);
-  } catch (_csp) {
-    // A Content-Security-Policy without unsafe-eval forbids Function();
-    // fall back to a plain class and lose only the pretty jump target.
-    RustElement = class extends HTMLElement {
-      static get observedAttributes() { return observedAttributes; }
-      connectedCallback() { rust(this).connected(); }
-      disconnectedCallback() { rust(this).disconnected(); }
-      adoptedCallback() { rust(this).adopted(); }
-      attributeChangedCallback(name, oldValue, newValue) {
-        rust(this).attributeChanged(name, oldValue, newValue);
-      }
-    };
+    const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    import(url).then(
+      (module) => define(module.default),
+      // A Content-Security-Policy may forbid blob: scripts; the plain
+      // class behaves identically, only the jump target is lost.
+      () => define(make),
+    );
+  } catch (_blocked) {
+    define(make);
   }
-  customElements.define(tag, RustElement);
 }
 "#;
 
@@ -199,53 +196,50 @@ function vlq(value) {
   return out;
 }
 export function defineElement(tag, observedAttributes, cls, path, line) {
-  const body = `return class extends HTMLElement {
-  static get observedAttributes() { return observedAttributes; }
-  connectedCallback() { rust(this).connected(); }
-  disconnectedCallback() { rust(this).disconnected(); }
-  adoptedCallback() { rust(this).adopted(); }
-  attributeChangedCallback(name, oldValue, newValue) {
-    rust(this).attributeChanged(name, oldValue, newValue);
-  }
-}`;
   const rust = (el) => (el.__rust ??= cls.create(el));
-  let RustElement;
+  const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
+    static get observedAttributes() { return observedAttributes; }
+    connectedCallback() { rust(this).connected(); }
+    disconnectedCallback() { rust(this).disconnected(); }
+    adoptedCallback() { rust(this).adopted(); }
+    attributeChangedCallback(name, oldValue, newValue) {
+      rust(this).attributeChanged(name, oldValue, newValue);
+    }
+  };
+  const body = "export default " + make.toString() + ";";
+  // Every line of the module maps to the element's DEFINITION in its
+  // Rust source (served under /src/), so the inspector's
+  // jump-to-definition opens the component instead of this glue. The
+  // module is loaded from a blob URL rather than eval'd: source maps
+  // are only applied to scripts that have a real, fetchable URL.
+  const mappings = ["AA" + vlq(line - 1) + "A"];
+  for (let i = body.split("\n").length; i > 1; i--) mappings.push("AAAA");
+  const map = {
+    version: 3,
+    file: tag + ".js",
+    sources: ["/src/" + path],
+    sourcesContent: [null],
+    names: [],
+    mappings: mappings.join(";"),
+  };
+  // No //# sourceURL: it would replace the blob's real URL with an
+  // unfetchable name, and an unfetchable script is exactly what stops
+  // the inspector resolving the map.
+  const source = body
+    + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map));
+  const define = (factory) =>
+    customElements.define(tag, factory(HTMLElement, observedAttributes, rust));
   try {
-    // Each element's class lives in its own little script whose inline
-    // source map points every line at the element's DEFINITION in its
-    // Rust source (served under /src/), so the inspector's
-    // jump-to-definition opens the component, not a JS wrapper.
-    // new Function prepends two header lines; +4 covers everything.
-    const mappings = ["AA" + vlq(line - 1) + "A"];
-    for (let i = body.split("\n").length + 4; i > 1; i--) mappings.push("AAAA");
-    const map = {
-      version: 3,
-      file: tag + ".js",
-      sources: ["/src/" + path],
-      sourcesContent: [null],
-      names: [],
-      mappings: mappings.join(";"),
-    };
-    RustElement = new Function(
-      "HTMLElement", "observedAttributes", "rust",
-      body
-        + "\n//# sourceURL=op-webc/" + tag + ".js"
-        + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map)),
-    )(HTMLElement, observedAttributes, rust);
-  } catch (_csp) {
-    // A Content-Security-Policy without unsafe-eval forbids Function();
-    // fall back to a plain class and lose only the pretty jump target.
-    RustElement = class extends HTMLElement {
-      static get observedAttributes() { return observedAttributes; }
-      connectedCallback() { rust(this).connected(); }
-      disconnectedCallback() { rust(this).disconnected(); }
-      adoptedCallback() { rust(this).adopted(); }
-      attributeChangedCallback(name, oldValue, newValue) {
-        rust(this).attributeChanged(name, oldValue, newValue);
-      }
-    };
+    const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    import(url).then(
+      (module) => define(module.default),
+      // A Content-Security-Policy may forbid blob: scripts; the plain
+      // class behaves identically, only the jump target is lost.
+      () => define(make),
+    );
+  } catch (_blocked) {
+    define(make);
   }
-  customElements.define(tag, RustElement);
 }
 "#)]
 extern "C" {
@@ -325,8 +319,13 @@ mod tests {
             "shim does not attach the per-element source map"
         );
         assert!(
-            SHIM.matches("class extends HTMLElement").count() == 2,
-            "mapped class and CSP fallback class expected"
+            SHIM.contains("URL.createObjectURL") && SHIM.contains("import(url)"),
+            "the class module must load from a real URL: source maps are \
+             not applied to eval'd scripts"
+        );
+        assert!(
+            !SHIM.contains("new Function"),
+            "eval'd classes defeat the source map"
         );
         let source = include_str!("lib.rs");
         assert!(source.contains("pub fn connected(&mut self)"));
