@@ -1172,14 +1172,99 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   Check("chart is a slider", s0["role"] == "slider")]
     rep.edges.append(e1)
     # E2 keys
-    e2 = Edge(("Paused", "Seek", "Paused"), "Seek by keys", "Home, then . . , -> : YouTube's model, frame by frame.")
+    e2 = Edge(("Paused", "Seek", "Paused"), "Seek by keys",
+              "Home, then . . , -> : YouTube's model, frame by frame. Shift plus an arrow seeks one second of film time, "
+              "PageDown and PageUp walk the chapters, and Control plus an arrow and Alt plus an arrow alias the chapter keys.")
+
+    def key(name: str, code: str | None = None, mods: int = 0):
+        """One keydown/keyup. mods is the CDP bitmask: Alt 1, Control 2, Meta 4, Shift 8."""
+        p = {"key": name, **({"code": code} if code else {}), **({"modifiers": mods} if mods else {})}
+        b.call("Input.dispatchKeyEvent", type="keyDown", **p)
+        b.call("Input.dispatchKeyEvent", type="keyUp", **p)
+
+    def facts(sel: str) -> str:
+        """Where a film's playhead is, plus where its own JSON says each seek must land."""
+        return f"""(() => {{ const f = {sel}, s = f.querySelector('script[type="application/json"]'), d = JSON.parse(s ? s.textContent : '{{}}');
+      const times = d.times || [0], n = times.length, ch = d.chapters || [[0, 'start']];
+      const tm = (d.series || []).flatMap(sr => sr.t || []).reduce((m, v) => Math.max(m, v), times[n - 1]);
+      const end = Math.max(tm > 0 ? tm : 1, times[n - 1]);
+      const frameAt = x => {{ let k = 0; for (let j = 0; j < n; j++) if (times[j] <= x + 1e-6) k = j; return k; }};
+      const fwd = Math.min(times[0] + 1, end), back = Math.max(0, fwd - 1);
+      const cur = f.shadowRoot && f.shadowRoot.querySelector('.fr.current'), k = cur ? +cur.dataset.k : -1;
+      const t = f.shadowRoot.querySelector('.t').textContent, tc = parseFloat(t);
+      // the chapter the playhead is in, read from the time readout so a seek that lands between
+      // frames counts as the chapter it seeked to; the readout is rounded, hence the 5 ms fuzz
+      let ci = 0; for (let i = 0; i < ch.length; i++) if (ch[i][0] <= tc + 5e-3) ci = i;
+      return {{k, t, n, nch: ch.length, end,
+        sec: frameAt(fwd), sec_t: fwd.toFixed(2) + 's', back: frameAt(back), back_t: back.toFixed(2) + 's',
+        next: frameAt(ch.length > 1 ? ch[1][0] : end), ci, start: frameAt(ch[ci][0]), prev: frameAt(ch[Math.max(0, ci - 1)][0])}}; }})()"""
+
     b.js(f"{F}.focus(); 'ok'")
     ks = []
     for key_, code in (("Home", "Home"), (".", None), (".", None), (",", None), ("ArrowRight", "ArrowRight")):
-        b.call("Input.dispatchKeyEvent", type="keyDown", key=key_, **({"code": code} if code else {}))
-        b.call("Input.dispatchKeyEvent", type="keyUp", key=key_, **({"code": code} if code else {}))
+        key(key_, code)
         ks.append(b.js(S)["k"])
     e2.checks.append(Check("keys step frames as documented", ks == [0, 1, 2, 1, 6], f"{ks}"))
+    # Shift plus an arrow seeks a second of film time, not a count of frames
+    fd = b.js(facts(F))
+    key("Home", "Home"); key("ArrowRight", "ArrowRight", 8)
+    sec = b.js(facts(F))
+    key("ArrowLeft", "ArrowLeft", 8)
+    secb = b.js(facts(F))
+    e2.checks += [Check("Shift+ArrowRight seeks one second of film time",
+                        sec["k"] == fd["sec"] and sec["t"] == fd["sec_t"],
+                        f"frame {sec['k']} at {sec['t']}, expected frame {fd['sec']} at {fd['sec_t']} (film ends at {fd['end']:.2f}s)"),
+                  Check("Shift+ArrowLeft seeks a second back, clamped at the start",
+                        secb["k"] == fd["back"] and secb["t"] == fd["back_t"],
+                        f"frame {secb['k']} at {secb['t']}, expected frame {fd['back']} at {fd['back_t']}")]
+    # the chapter keys want a film with chapters: the first one on this page that has a second
+    cidx = b.js("""(() => { const fs = [...document.querySelectorAll('opt-film')];
+      for (let i = 0; i < fs.length; i++) { const s = fs[i].querySelector('script[type="application/json"]');
+        if (s && (JSON.parse(s.textContent).chapters || []).length > 1) return i; } return -1; })()""")
+    F2 = f"document.querySelectorAll('opt-film')[{cidx if cidx >= 0 else 1}]"
+    b.js(f"{F2}.focus(); 'ok'")
+    fd2 = b.js(facts(F2))
+    e2.note = ((f"Chapter keys run on opt-film[{cidx}], the first film on this page with more than one chapter "
+                f"({fd2['nch']} chapters, {fd2['n']} frames)." if cidx >= 0 else
+                "No film on this page has a second chapter, so the chapter keys run on opt-film[1] "
+                f"({fd2['nch']} chapter, {fd2['n']} frames): with no next chapter PageDown must land on the end.")
+               + " Alt+ArrowLeft is not driven because Chrome may take it as history back.")
+
+    def back_to(f: dict) -> list:
+        """Where PageUp must land from f: the current chapter's start once the playhead is past
+        it, else the previous chapter's. One frame past is the wording's grey zone (past the
+        chapter's first frame, or more than one frame past), so there both answers are allowed."""
+        gap = f["k"] - f["start"]
+        return [f["start"]] if gap > 1 else [f["prev"]] if gap == 0 else [f["start"], f["prev"]]
+
+    def where(f: dict, landed: dict) -> str:
+        return (f"from frame {f['k']}, {f['k'] - f['start']} frames past chapter {f['ci']}, to frame {landed['k']}, "
+                f"expected {' or '.join(str(x) for x in back_to(f))}")
+
+    key("Home", "Home"); key("PageDown", "PageDown")
+    pd = b.js(facts(F2))
+    key("PageUp", "PageUp")
+    pu = b.js(facts(F2))
+    key("PageDown", "PageDown"); key("."); key(".")  # two frames past the chapter start
+    mid = b.js(facts(F2))
+    key("PageUp", "PageUp")
+    pu2 = b.js(facts(F2))
+    key("Home", "Home"); key("ArrowRight", "ArrowRight", 2)
+    ctl_r = b.js(facts(F2))
+    key("ArrowLeft", "ArrowLeft", 2)
+    ctl_l = b.js(facts(F2))
+    key("Home", "Home"); key("ArrowRight", "ArrowRight", 1)
+    alt_r = b.js(facts(F2))
+    e2.checks += [
+        Check("PageDown seeks to the next chapter" if fd2["nch"] > 1 else "PageDown with no next chapter seeks to the end",
+              pd["k"] == fd2["next"],
+              f"frame {pd['k']} at {pd['t']}, expected frame {fd2['next']} of {fd2['n']} ({fd2['nch']} chapters)"),
+        Check("PageUp on a chapter start seeks to the previous chapter", pu["k"] in back_to(pd), where(pd, pu)),
+        Check("PageUp past a chapter start seeks to that chapter's start", pu2["k"] in back_to(mid), where(mid, pu2)),
+        Check("Control+ArrowRight and Alt+ArrowRight alias PageDown", ctl_r["k"] == fd2["next"] and alt_r["k"] == fd2["next"],
+              f"Control {ctl_r['k']}, Alt {alt_r['k']}, expected {fd2['next']}"),
+        Check("Control+ArrowLeft aliases PageUp", ctl_l["k"] in back_to(ctl_r), where(ctl_r, ctl_l))]
+    b.js(f"{F}.focus(); 'ok'")  # the chapter film may be elsewhere on the page: put the film under test back in view
     rep.edges.append(e2)
     # E3 peek
     e3 = Edge(("Paused", "Peek", "Paused"), "Peek: hover without seeking", "The pointer over the chart shows a thumbnail and exposes :state(peeking); the playhead stays.")

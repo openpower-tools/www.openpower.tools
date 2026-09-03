@@ -53,7 +53,14 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Rust lints (wasm target)
-        run: cargo clippy -p op-site -p op-webc --all-targets --target wasm32-unknown-unknown -- -D warnings
+        # Lib and bins only: test targets carry native-only dev-dependencies
+        # (proptest, insta) and are linted by the native workspace run below.
+        run: cargo clippy -p op-site -p op-webc -p op-parts -p op-terms -p op-chart --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Rust lints (native, every target)
+        # The workspace's tests, benches and build tools, which the wasm run
+        # cannot compile.
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Rust tests (native)
         run: cargo test --workspace
