@@ -25,6 +25,12 @@
 //! no flight is running; theme changes without a click (a system
 //! preference flip while no choice is stored) stay instant. The
 //! choice persists via `crate::theme`.
+//!
+//! The hover preview and the in-flight ghost are separate elements on
+//! purpose: the preview is keyframe-animated, and a property coming
+//! off an animation jumps straight to its new base value instead of
+//! transitioning, which silently killed the flight whenever the
+//! pointer was over the control (i.e. always, for a real click).
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -99,11 +105,18 @@ fn show(button: &Element, mode: Mode) {
             Mode::Light => SUN,
         });
     }
-    if let Some(ghost) = button.query_selector(".ghost").ok().flatten() {
-        ghost.set_inner_html(match mode {
-            Mode::Dark => SUN,
-            Mode::Light => MOON,
-        });
+    // Both the hover preview and the in-flight ghost carry the icon
+    // opposite the thumb's: at rest that is the destination a click
+    // would reach, and in flight (where the thumb already shows the
+    // outcome) it is the outgoing icon the ghost carries across.
+    let other = match mode {
+        Mode::Dark => SUN,
+        Mode::Light => MOON,
+    };
+    for class in [".ghost", ".preview"] {
+        if let Some(element) = button.query_selector(class).ok().flatten() {
+            element.set_inner_html(other);
+        }
     }
     button
         .set_attribute("aria-label", &mode.description())
@@ -142,7 +155,7 @@ button {{
   transition: outline-color 0.15s ease;
 }}
 button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
-.thumb, .ghost {{
+.thumb, .ghost, .preview {{
   position: absolute;
   top: 50%;
   translate: 0 -50%;
@@ -160,18 +173,18 @@ button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
   color: var(--op-bg);
   transition: left 0.2s ease;
 }}
-.thumb svg, .ghost svg {{ width: 0.8rem; height: 0.8rem; }}
+.thumb svg, .ghost svg, .preview svg {{ width: 0.8rem; height: 0.8rem; }}
 button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
-.ghost {{
+.ghost, .preview {{
   left: 0.12rem;
   z-index: 0;
   opacity: 0;
   /* the same contrast pairing as the real thumb, only slightly
-     translucent, so its icon is legible mid-flight */
+     translucent, so the icon stays legible over the track */
   background: color-mix(in srgb, var(--op-text) 85%, transparent);
   color: var(--op-bg);
-  transition: opacity 0.25s ease;
 }}
+.ghost {{ transition: opacity 0.25s ease; }}
 button[data-mode=\"dark\"] .ghost {{ left: calc(100% - 1.22rem); }}
 /* In flight the ghost is the progress indicator: it leaves the origin
    side bearing the outgoing icon and rides the palette blend's exact
@@ -195,29 +208,32 @@ button[data-easing] .ghost {{
   70% {{ opacity: 0.9; }}
   100% {{ left: 0.12rem; opacity: 0; }}
 }}
-button[data-mode=\"light\"]:not([data-easing]):hover .ghost,
-button[data-mode=\"light\"]:not([data-easing]):focus-visible .ghost {{
+button[data-mode=\"light\"]:not([data-easing]):hover .preview,
+button[data-mode=\"light\"]:not([data-easing]):focus-visible .preview {{
   animation: ghost-to-dark 1.6s ease-in-out infinite;
 }}
-button[data-mode=\"dark\"]:not([data-easing]):hover .ghost,
-button[data-mode=\"dark\"]:not([data-easing]):focus-visible .ghost {{
+button[data-mode=\"dark\"]:not([data-easing]):hover .preview,
+button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
   animation: ghost-to-light 1.6s ease-in-out infinite;
 }}
 @media (prefers-reduced-motion: reduce) {{
   .thumb {{ transition: none; }}
-  .ghost, button[data-easing] .ghost {{ animation: none !important; transition: none; }}
+  .preview {{ animation: none !important; }}
+  .ghost, button[data-easing] .ghost {{ transition: none; }}
   /* no travel: the preview simply appears at the destination side */
-  button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
+  button[data-mode=\"light\"]:not([data-easing]):hover .preview,
+  button[data-mode=\"light\"]:not([data-easing]):focus-visible .preview {{
     opacity: 0.9;
     left: calc(100% - 1.22rem);
   }}
-  button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visible .ghost {{
+  button[data-mode=\"dark\"]:not([data-easing]):hover .preview,
+  button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
     opacity: 0.9;
     left: 0.12rem;
   }}
 }}
 </style>
-<button type=\"button\" role=\"switch\"><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>",
+<button type=\"button\" role=\"switch\"><span class=\"preview\" aria-hidden=\"true\"></span><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>",
             ease_ms = theme::EASE_MS,
             ease_curve = theme::EASE_CURVE,
             ease_fallback = theme::EASE_CURVE_FALLBACK,
