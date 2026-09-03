@@ -63,18 +63,25 @@ class Browser:
         self.port = free_port()
         self.profile = workdir / "profile"
         self.profile.mkdir(parents=True, exist_ok=True)
+        log = (workdir / "chrome.log").open("wb")
         self.proc = subprocess.Popen(
             [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+             "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
              "--window-size=1280,900", f"--remote-debugging-port={self.port}", "--remote-allow-origins=*",
              f"--user-data-dir={self.profile}", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(50):
-            time.sleep(0.2)
+            stdout=log, stderr=log)
+        # CI runners can take well over ten seconds to bring Chrome up.
+        deadline = time.time() + 90
+        while True:
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/version").read()
+                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/version", timeout=2).read()
                 break
             except Exception:
-                continue
+                if self.proc.poll() is not None:
+                    sys.exit(f"Chrome exited early (code {self.proc.returncode}); see {workdir / 'chrome.log'}")
+                if time.time() > deadline:
+                    sys.exit(f"Chrome did not open its DevTools port within 90s; see {workdir / 'chrome.log'}")
+                time.sleep(0.3)
         target = json.load(urllib.request.urlopen(urllib.request.Request(
             f"http://127.0.0.1:{self.port}/json/new?url=about:blank", method="PUT")))
         self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=60)
