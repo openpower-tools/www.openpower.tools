@@ -501,6 +501,7 @@ name = "op-pages"
 version = "0.1.0"
 dependencies = [
  "op-site",
+ "op-terms",
  "quick-xml",
  "serde",
  "toml",
@@ -518,11 +519,16 @@ dependencies = [
  "js-sys",
  "op-pages",
  "op-parts",
+ "op-terms",
  "op-webc",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
 ]
+
+[[package]]
+name = "op-terms"
+version = "0.1.0"
 
 [[package]]
 name = "op-webc"

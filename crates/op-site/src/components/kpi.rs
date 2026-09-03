@@ -22,19 +22,39 @@ struct Kpi {
 
 const STATES: &[&str] = &["neutral", "info", "ok", "warning", "danger"];
 
+/// The status a KPI shows: a valid `state` attribute wins, otherwise the
+/// severity of the contained term (scheme, value), otherwise none.
+fn state_of(attr: Option<&str>, term: Option<(&str, &str)>) -> Option<&'static str> {
+    if let Some(s) = attr
+        && let Some(known) = STATES.iter().find(|k| **k == s)
+    {
+        return Some(known);
+    }
+    term.map(|(scheme, value)| op_terms::severity_of(scheme, value).name())
+}
+
 impl Kpi {
     fn render(&self) {
         let attr = |name: &str| self.host.get_attribute(name).unwrap_or_default();
         let label = attr("label");
         let value = attr("value");
         let unit = attr("unit");
-        let state = self
+        // A contained <opt-term scheme value> is the semantic classification;
+        // the KPI is one projection of it. An explicit state attribute is
+        // the escape hatch for values that are not terms.
+        let term = self
             .host
-            .get_attribute("state")
-            .filter(|s| STATES.contains(&s.as_str()));
+            .query_selector("opt-term")
+            .ok()
+            .flatten()
+            .and_then(|t| Some((t.get_attribute("scheme")?, t.get_attribute("value")?)));
+        let state = state_of(
+            self.host.get_attribute("state").as_deref(),
+            term.as_ref().map(|(s, v)| (s.as_str(), v.as_str())),
+        );
         // No state: the value stays on the text token. With one, the value
         // takes the status colour (4.5:1 on bg and raised, per palette.rs).
-        let value_colour = match state.as_deref() {
+        let value_colour = match state {
             Some("info") => "var(--op-status-info)",
             Some("ok") => "var(--op-status-ok)",
             Some("warning") => "var(--op-status-warning)",
@@ -80,5 +100,41 @@ impl CustomElement for Kpi {
 
     fn attribute_changed(&mut self, _n: &str, _o: Option<String>, _v: Option<String>) {
         self.render();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state_of;
+
+    #[test]
+    fn a_valid_state_attribute_wins_over_the_term() {
+        assert_eq!(
+            state_of(Some("warning"), Some(("outcome", "pass"))),
+            Some("warning")
+        );
+    }
+
+    #[test]
+    fn the_contained_term_projects_its_severity() {
+        assert_eq!(state_of(None, Some(("outcome", "pass"))), Some("ok"));
+        assert_eq!(state_of(None, Some(("outcome", "fail"))), Some("danger"));
+        assert_eq!(state_of(None, Some(("support", "patched"))), Some("info"));
+        assert_eq!(state_of(None, Some(("flight", "Back"))), Some("warning"));
+    }
+
+    #[test]
+    fn an_unknown_attribute_falls_through_to_the_term_then_to_none() {
+        assert_eq!(
+            state_of(Some("loud"), Some(("outcome", "skipped"))),
+            Some("neutral")
+        );
+        assert_eq!(state_of(Some("loud"), None), None);
+        assert_eq!(state_of(None, None), None);
+    }
+
+    #[test]
+    fn an_unknown_term_is_neutral_not_a_crash() {
+        assert_eq!(state_of(None, Some(("outcome", "maybe"))), Some("neutral"));
     }
 }

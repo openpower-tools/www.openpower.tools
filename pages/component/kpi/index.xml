@@ -9,7 +9,20 @@
         <opt:kpi label="12V rail" value="11.2" unit="V" state="danger"></opt:kpi>
         <opt:kpi label="Uptime" value="212" unit="days" state="info"></opt:kpi>
       </p>
+      <h2>Semantic state</h2>
+      <p>The status colour is a projection of meaning. Put a <a href="/component/term/">term</a>
+      inside the KPI and it takes the term's severity: an outcome of <code>pass</code> shows
+      as ok, <code>fail</code> as danger, <code>skipped</code> as neutral. The
+      <code>state</code> attribute remains for values that are not terms.</p>
+      <p>
+        <opt:kpi label="checks pass" value="23 of 23"><opt:term scheme="outcome" value="pass"></opt:term></opt:kpi>
+        <opt:kpi label="checks pass" value="21 of 23"><opt:term scheme="outcome" value="fail"></opt:term></opt:kpi>
+        <opt:kpi label="ppc64le build" value="patched"><opt:term scheme="support" value="patched"></opt:term></opt:kpi>
+      </p>
       <h2>Markup</h2>
-      <pre>&lt;opt:kpi label="CPU temp" value="52" unit="&amp;deg;C" state="ok"&gt;&lt;/opt:kpi&gt;</pre>
+      <pre>&lt;opt:kpi label="CPU temp" value="52" unit="&amp;deg;C" state="ok"&gt;&lt;/opt:kpi&gt;
+&lt;opt:kpi label="checks pass" value="23 of 23"&gt;
+  &lt;opt:term scheme="outcome" value="pass"&gt;&lt;/opt:term&gt;
+&lt;/opt:kpi&gt;</pre>
 
 </opt:body>

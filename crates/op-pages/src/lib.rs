@@ -226,6 +226,12 @@ pub const PAGES: &[Page] = &[
         "component/machine/index.xml"
     ),
     page!(
+        "component/term",
+        "Term",
+        "A classification named as a term of a controlled vocabulary; its look is a projection.",
+        "component/term/index.xml"
+    ),
+    page!(
         "component/progress",
         "Progress",
         "Determinate and indeterminate progress bars.",

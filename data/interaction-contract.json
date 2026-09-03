@@ -238,6 +238,10 @@
     {
       "tag": "opt-machine",
       "kind": "static"
+    },
+    {
+      "tag": "opt-term",
+      "kind": "static"
     }
   ]
 }

@@ -32,6 +32,7 @@ mod steps;
 mod switch;
 mod table;
 mod tabs;
+mod term;
 mod theme_toggle;
 mod timeline;
 mod tooltip;
@@ -45,6 +46,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     theme_toggle::DEFINITION,
     film::DEFINITION,
     machine_diagram::DEFINITION,
+    term::DEFINITION,
     site_header::DEFINITION,
     starting_points::DEFINITION,
     build_status::DEFINITION,

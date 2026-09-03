@@ -1,0 +1,10 @@
+[package]
+name = "op-terms"
+version = "0.1.0"
+description = "The site's controlled vocabularies: classification terms and the severity each projects to"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

@@ -1,0 +1,15 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+      <p>A classification named as a term of one of the site's controlled vocabularies. The
+      element carries the meaning; its look - the severity the term is contained in - is a
+      projection derived from the vocabulary, never chosen in markup, so a badge cannot
+      disagree with what it says and a new term cannot ship without a place in the graph.</p>
+      <h2>Outcomes</h2>
+      <p><opt:term scheme="outcome" value="pass"/> <opt:term scheme="outcome" value="fail"/> <opt:term scheme="outcome" value="skipped"/></p>
+      <h2>Support on POWER</h2>
+      <p><opt:term scheme="support" value="upstream"/> <opt:term scheme="support" value="patched"/> <opt:term scheme="support" value="in-progress"/> <opt:term scheme="support" value="broken"/> <opt:term scheme="support" value="unsupported"/> <opt:term scheme="support" value="unknown"/></p>
+      <h2>Flight states</h2>
+      <p><opt:term scheme="flight" value="Idle"/> <opt:term scheme="flight" value="Toward"/> <opt:term scheme="flight" value="Back"/></p>
+      <h2>Markup</h2>
+      <pre>&lt;opt:term scheme="outcome" value="pass"/&gt;
+&lt;opt:term scheme="support" value="patched"&gt;Fedora&lt;/opt:term&gt;</pre>
+</opt:body>
