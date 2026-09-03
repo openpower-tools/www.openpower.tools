@@ -10,4 +10,9 @@ repository.workspace = true
 [dependencies]
 wasm-bindgen.workspace = true
 js-sys.workspace = true
-web-sys = { workspace = true, features = ["HtmlElement"] }
+web-sys = { workspace = true, features = [
+  "Element",
+  "Event",
+  "EventTarget",
+  "HtmlElement",
+] }

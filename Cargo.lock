@@ -507,12 +507,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-parts"
+version = "0.1.0"
+
+[[package]]
 name = "op-site"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "js-sys",
  "op-pages",
+ "op-parts",
  "op-webc",
  "wasm-bindgen",
  "wasm-bindgen-futures",

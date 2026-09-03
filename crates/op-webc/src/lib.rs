@@ -19,6 +19,9 @@
 //! itself (for example by setting one of its own observed attributes), or
 //! wasm-bindgen will throw a "recursive use of an object" error.
 
+pub mod attention;
+pub mod machine;
+
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlElement;
 
@@ -137,6 +140,12 @@ function vlq(value) {
 export function defineElement(tag, observedAttributes, cls, path, line) {
   const rust = (el) => (el.__rust ??= cls.create(el));
   const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
+    constructor() {
+      super();
+      // ElementInternals: custom states for CSS (:state()) and default
+      // ARIA semantics, owned by the element rather than stamped on it.
+      this.__internals = this.attachInternals();
+    }
     static get observedAttributes() { return observedAttributes; }
     connectedCallback() { rust(this).connected(); }
     disconnectedCallback() { rust(this).disconnected(); }
@@ -198,6 +207,12 @@ function vlq(value) {
 export function defineElement(tag, observedAttributes, cls, path, line) {
   const rust = (el) => (el.__rust ??= cls.create(el));
   const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
+    constructor() {
+      super();
+      // ElementInternals: custom states for CSS (:state()) and default
+      // ARIA semantics, owned by the element rather than stamped on it.
+      this.__internals = this.attachInternals();
+    }
     static get observedAttributes() { return observedAttributes; }
     connectedCallback() { rust(this).connected(); }
     disconnectedCallback() { rust(this).disconnected(); }
@@ -251,6 +266,33 @@ extern "C" {
         path: &str,
         line: u32,
     );
+}
+
+/// The `ElementInternals` the shim attached to `host` in its constructor
+/// (as a plain value: the pinned web-sys has no binding for it yet).
+pub fn internals(host: &HtmlElement) -> Option<JsValue> {
+    js_sys::Reflect::get(host, &JsValue::from_str("__internals"))
+        .ok()
+        .filter(|v| !v.is_undefined() && !v.is_null())
+}
+
+/// Sets or clears a custom state on `host`, selectable as `:state(name)`
+/// from outside and `:host(:state(name))` inside the shadow tree. Custom
+/// states are how an element exposes INTERNAL state to CSS; attributes
+/// remain the author's configuration surface.
+pub fn set_state(host: &HtmlElement, name: &str, on: bool) {
+    let Some(internals) = internals(host) else {
+        return;
+    };
+    let Ok(states) = js_sys::Reflect::get(&internals, &JsValue::from_str("states")) else {
+        return;
+    };
+    let method = if on { "add" } else { "delete" };
+    if let Ok(function) = js_sys::Reflect::get(&states, &JsValue::from_str(method))
+        && let Ok(function) = function.dyn_into::<js_sys::Function>()
+    {
+        let _ = function.call1(&states, &JsValue::from_str(name));
+    }
 }
 
 /// Registers `definition` with the browser's custom element registry.
@@ -326,6 +368,10 @@ mod tests {
         assert!(
             !SHIM.contains("new Function"),
             "eval'd classes defeat the source map"
+        );
+        assert!(
+            SHIM.contains("this.__internals = this.attachInternals();"),
+            "the shim must attach ElementInternals for custom states"
         );
         let source = include_str!("lib.rs");
         assert!(source.contains("pub fn connected(&mut self)"));

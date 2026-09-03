@@ -95,6 +95,27 @@ code {
 }
 ";
 
+/// Installs `css` as a document-level stylesheet once, keyed by `id`.
+/// For components whose representation must reach light-DOM content
+/// (a native control they wrap): the component still owns the CSS in
+/// Rust, it just lands in the document instead of a shadow tree.
+pub fn document_style(id: &str, css: &str) {
+    let Some(document) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    if document.get_element_by_id(id).is_some() {
+        return;
+    }
+    let Ok(style) = document.create_element("style") else {
+        return;
+    };
+    style.set_id(id);
+    style.set_text_content(Some(css));
+    if let Some(head) = document.head() {
+        let _ = head.append_child(&style);
+    }
+}
+
 /// Attaches an open shadow root to `host` (once) and returns it.
 pub fn shadow_root(host: &HtmlElement) -> ShadowRoot {
     if let Some(existing) = host.shadow_root() {

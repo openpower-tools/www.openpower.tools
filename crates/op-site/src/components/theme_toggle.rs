@@ -1,138 +1,201 @@
 //! `<opt-theme-toggle>`: the theme control as a switch - the site's own
-//! on/off slider metaphor with the IEC numerals swapped for theme
-//! glyphs. The thumb carries the CURRENT theme's icon (moon for dark,
-//! sun for light) knocked out in the page background colour, exactly
-//! like opt-switch's numeral thumb; hovering plays the switch's slow
-//! ghost preview - a second thumb bearing the OTHER icon, in the same
-//! high-contrast pairing as the real one so the destination is
-//! legible, slides toward the state a click would set and fades out
-//! before it ever looks real. Under prefers-reduced-motion the ghost
-//! simply appears at the destination side instead of travelling.
-//! The action is named by a tooltip (title) and aria-label; role=switch
-//! with aria-checked (checked = dark) carries the semantics, and
-//! keyboard focus mirrors hover affordances with an accent outline.
+//! on/off slider with the IEC numerals swapped for theme glyphs. Built
+//! from the shared switch parts (`op_parts`): the solid thumb carries
+//! the CURRENT theme's icon knocked out in page-background colour, the
+//! preview ghost plays where a click would go while the control has
+//! attention, and the progress ghost travels on the palette blend's
+//! clock while a change is in flight.
 //!
-//! A click settles the SOLID thumb instantly on the destination side,
-//! icon and all, at full contrast - the final setting, already
-//! decided. The GHOST then plays progress indicator: it departs the
-//! origin side carrying the outgoing icon and travels on exactly the
-//! palette blend's clock and curve (`crate::motion::BLEND_MS` /
-//! `the motion tokens`, via a `data-easing` attribute armed for the
-//! flight), dissolving into the thumb as both it and the palette
-//! arrive. A second click inside that window aborts: the solid thumb
-//! snaps back and ghost and palette rewind in step through CSS
-//! transition reversing. The hover preview owns the ghost only while
-//! no flight is running; theme changes without a click (a system
-//! preference flip while no choice is stored) stay instant. The
-//! choice persists via `crate::theme`.
-//!
-//! The hover preview and the in-flight ghost are separate elements on
-//! purpose: the preview is keyframe-animated, and a property coming
-//! off an animation jumps straight to its new base value instead of
-//! transitioning, which silently killed the flight whenever the
-//! pointer was over the control (i.e. always, for a real click).
+//! Behaviour is the interaction machine in `op_webc::machine`; this
+//! element only translates. Pointer and visible focus arrive through
+//! the `Attention` controller, clicks arrive as `Activate`, and the
+//! end of the palette blend (observed on `<html>` through
+//! `theme::blend_finished`, forward or reversed) arrives as `Finished`.
+//! Effects leave as custom states on the host - `dark`, `attention`,
+//! `flight` - which the parts CSS keys off via `:host(:state(...))`
+//! and a page may key off via `opt-theme-toggle:state(...)`; as
+//! `role=switch` / `aria-checked` on the inner button; and as the
+//! stored theme choice via `crate::theme`. Nothing timed depends on
+//! `:hover` or on a timer, and no attribute carries internal state.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use op_webc::{CustomElement, ElementDefinition};
+use op_parts::{At, Look, Selectors};
+use op_webc::attention::Attention;
+use op_webc::machine::{Description, Effect, Input, Machine};
+use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement};
 
 use super::{BASE_CSS, shadow_root};
+use crate::motion;
 use crate::theme::{self, Mode};
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-theme-toggle",
     observed_attributes: &[],
-    create: |host| {
-        Box::new(ThemeToggle {
-            host,
-            on_click: None,
-            on_scheme_change: None,
-            ease: Rc::default(),
-        })
-    },
+    create: |host| Box::new(ThemeToggle { host, wiring: None }),
 };
 
-struct ThemeToggle {
-    host: HtmlElement,
-    /// Kept alive for as long as the element exists.
-    on_click: Option<Closure<dyn FnMut(Event)>>,
-    /// Updates the control if the system preference changes while no
-    /// explicit choice is stored.
-    on_scheme_change: Option<Closure<dyn FnMut(Event)>>,
-    /// The in-flight palette blend, shared with the click handler.
-    ease: Rc<RefCell<Ease>>,
-}
+const SELECTORS: Selectors = Selectors {
+    track: "button",
+    on: At::HostState("dark"),
+    attention: &[At::HostState("attention")],
+    flight: Some(At::HostState("flight")),
+    thumb: " .thumb",
+    preview: " .preview",
+    progress: Some(" .ghost"),
+    keyframes: "opt-theme-toggle",
+};
 
-#[derive(Default)]
-struct Ease {
-    /// `Some(origin)` while a click's blend is in flight; the next
-    /// click then aborts back to `origin` instead of toggling onward.
-    origin: Option<Mode>,
-    /// Handle of the pending settle timeout.
-    timer: Option<i32>,
-    /// When the in-flight blend started (`Date::now`), so an abort can
-    /// end the flight state as soon as its shortened reversal is done.
-    started: Option<f64>,
-    /// Keeps the settle callback alive until it is replaced by the
-    /// next blend (never dropped from inside its own invocation).
-    settle: Option<Closure<dyn FnMut()>>,
-}
+const LOOK: Look = Look {
+    off_fill: "var(--op-text)",
+    on_fill: "var(--op-text)",
+    ink: "var(--op-bg)",
+};
 
 const SUN: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><circle cx=\"12\" cy=\"12\" r=\"5\" fill=\"currentColor\"/><g stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><line x1=\"12\" y1=\"1.5\" x2=\"12\" y2=\"4.5\"/><line x1=\"12\" y1=\"19.5\" x2=\"12\" y2=\"22.5\"/><line x1=\"1.5\" y1=\"12\" x2=\"4.5\" y2=\"12\"/><line x1=\"19.5\" y1=\"12\" x2=\"22.5\" y2=\"12\"/><line x1=\"4.6\" y1=\"4.6\" x2=\"6.7\" y2=\"6.7\"/><line x1=\"17.3\" y1=\"17.3\" x2=\"19.4\" y2=\"19.4\"/><line x1=\"4.6\" y1=\"19.4\" x2=\"6.7\" y2=\"17.3\"/><line x1=\"17.3\" y1=\"6.7\" x2=\"19.4\" y2=\"4.6\"/></g></svg>";
 
 const MOON: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path fill=\"currentColor\" d=\"M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z\"/></svg>";
 
-fn show(button: &Element, mode: Mode) {
-    let _ = button.set_attribute(
-        "data-mode",
-        match mode {
-            Mode::Dark => "dark",
-            Mode::Light => "light",
-        },
-    );
-    let _ = button.set_attribute(
-        "aria-checked",
-        if matches!(mode, Mode::Dark) {
-            "true"
-        } else {
-            "false"
-        },
-    );
-    if let Some(thumb) = button.query_selector(".thumb").ok().flatten() {
-        thumb.set_inner_html(match mode {
-            Mode::Dark => MOON,
-            Mode::Light => SUN,
-        });
-    }
-    // Both the hover preview and the in-flight ghost carry the icon
-    // opposite the thumb's: at rest that is the destination a click
-    // would reach, and in flight (where the thumb already shows the
-    // outcome) it is the outgoing icon the ghost carries across.
-    let other = match mode {
-        Mode::Dark => SUN,
-        Mode::Light => MOON,
-    };
-    for class in [".ghost", ".preview"] {
-        if let Some(element) = button.query_selector(class).ok().flatten() {
-            element.set_inner_html(other);
+fn mode_of(on: bool) -> Mode {
+    if on { Mode::Dark } else { Mode::Light }
+}
+
+/// Everything that lives as long as the element: the machine, the DOM
+/// handles the effects act on, and the listeners feeding inputs.
+struct Wiring {
+    /// The listeners below hold their own clones; these keep the
+    /// machine alive with the element and available to future hooks.
+    _machine: Rc<RefCell<Machine>>,
+    /// Bumped per flight so a stale completion cannot settle a newer one.
+    _generation: Rc<Cell<u32>>,
+    _attention: Attention,
+    _on_click: Closure<dyn FnMut(Event)>,
+    _on_scheme_change: Option<Closure<dyn FnMut(Event)>>,
+}
+
+struct ThemeToggle {
+    host: HtmlElement,
+    wiring: Option<Wiring>,
+}
+
+/// The DOM side of the machine: applies effects to the host, the
+/// button and the theme store.
+#[derive(Clone)]
+struct Surface {
+    host: HtmlElement,
+    button: Element,
+}
+
+impl Surface {
+    /// Reflects the setting: custom state, icons, switch semantics.
+    fn show(&self, on: bool) {
+        set_state(&self.host, "dark", on);
+        let mode = mode_of(on);
+        let _ = self
+            .button
+            .set_attribute("aria-checked", if on { "true" } else { "false" });
+        let (current, other) = match mode {
+            Mode::Dark => (MOON, SUN),
+            Mode::Light => (SUN, MOON),
+        };
+        if let Some(thumb) = self.button.query_selector(".thumb").ok().flatten() {
+            thumb.set_inner_html(current);
+        }
+        // Preview and progress ghosts carry the icon opposite the thumb's:
+        // the destination while idle, the outgoing theme in flight.
+        for class in [".preview", ".ghost"] {
+            if let Some(ghost) = self.button.query_selector(class).ok().flatten() {
+                ghost.set_inner_html(other);
+            }
         }
     }
-    button
-        .set_attribute("aria-label", &mode.description())
-        .expect("set aria-label");
-    button
-        .set_attribute("title", &mode.description())
-        .expect("set title");
+
+    fn describe(&self, on: bool, description: Description) {
+        let text = match description {
+            Description::Settled => mode_of(on).description(),
+            Description::Switching => mode_of(on).easing_description(),
+        };
+        let _ = self.button.set_attribute("aria-label", &text);
+        let _ = self.button.set_attribute("title", &text);
+    }
+
+    fn apply(&self, on: bool, effect: Effect) {
+        match effect {
+            Effect::SetOn(value) => {
+                theme::choose(mode_of(value));
+                self.show(value);
+            }
+            Effect::Attention(present) => set_state(&self.host, "attention", present),
+            Effect::Arm => {
+                theme::begin_easing();
+                set_state(&self.host, "flight", true);
+            }
+            Effect::Disarm => {
+                theme::end_easing();
+                set_state(&self.host, "flight", false);
+            }
+            Effect::Describe(description) => self.describe(on, description),
+        }
+    }
+}
+
+/// Feeds one input to the machine and performs the effects; after an
+/// activation, watches the blend so its completion arrives as `Finished`.
+fn dispatch(
+    machine: &Rc<RefCell<Machine>>,
+    generation: &Rc<Cell<u32>>,
+    surface: &Surface,
+    input: Input,
+) {
+    let effects = {
+        let mut m = machine.borrow_mut();
+        m.on(input)
+    };
+    let on = machine.borrow().on;
+    for effect in effects {
+        surface.apply(on, effect);
+    }
+    if input == Input::Activate && machine.borrow().in_flight() {
+        watch_completion(machine, generation, surface);
+    }
+}
+
+/// Awaits the palette blend's `finished` promises (which reject if a
+/// newer activation replaces the transitions, in which case that
+/// activation has started its own watch) and settles the machine. A
+/// timer bounds the wait in case nothing was transitioning to observe.
+fn watch_completion(machine: &Rc<RefCell<Machine>>, generation: &Rc<Cell<u32>>, surface: &Surface) {
+    let this_flight = generation.get().wrapping_add(1);
+    generation.set(this_flight);
+    let finished = theme::blend_finished();
+    let (machine, generation, surface) = (machine.clone(), generation.clone(), surface.clone());
+    wasm_bindgen_futures::spawn_local(async move {
+        let bound = js_sys::Promise::new(&mut |resolve, _| {
+            if let Some(window) = web_sys::window() {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    &resolve,
+                    motion::BLEND_MS + 500,
+                );
+            }
+        });
+        let outcome = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::race(
+            &js_sys::Array::of2(&finished, &bound),
+        ))
+        .await;
+        if outcome.is_ok() && generation.get() == this_flight {
+            dispatch(&machine, &generation, &surface, Input::Finished);
+        }
+    });
 }
 
 impl CustomElement for ThemeToggle {
     fn connected(&mut self) {
-        if self.on_click.is_some() {
-            return; // reconnected: the shadow tree and listener still exist
+        if self.wiring.is_some() {
+            return; // reconnected: shadow tree and listeners still exist
         }
         let shadow = shadow_root(&self.host);
         shadow.set_inner_html(&format!(
@@ -142,194 +205,90 @@ impl CustomElement for ThemeToggle {
   top: 0.75rem;
   right: 0.75rem;
   z-index: 10;
+  font-size: 1rem;
 }}
+{parts}
 button {{
-  position: relative;
-  display: inline-block;
-  width: 2.6rem;
-  height: 1.4rem;
-  padding: 0;
-  border: 1px solid var(--op-border-strong);
-  border-radius: 0.8rem;
-  background: var(--op-raised);
-  cursor: pointer;
   outline: 2px solid transparent;
   outline-offset: 2px;
-  transition: outline-color 0.15s ease;
+  transition: outline-color var(--op-motion-snap) ease;
 }}
-button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
-.thumb, .ghost, .preview {{
-  position: absolute;
-  top: 50%;
-  translate: 0 -50%;
-  width: 1.1rem;
-  height: 1.1rem;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}}
-.thumb {{
-  left: 0.12rem;
-  z-index: 1;
-  background: var(--op-text);
-  color: var(--op-bg);
-  transition: left var(--op-motion-snap) ease;
-}}
-.thumb svg, .ghost svg, .preview svg {{ width: 0.8rem; height: 0.8rem; }}
-button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
-.ghost, .preview {{
-  left: 0.12rem;
-  z-index: 0;
-  opacity: 0;
-  /* the same contrast pairing as the real thumb, only slightly
-     translucent, so the icon stays legible over the track */
-  background: color-mix(in srgb, var(--op-text) 85%, transparent);
-  color: var(--op-bg);
-}}
-.ghost {{ transition: opacity var(--op-motion-fade) ease; }}
-button[data-mode=\"dark\"] .ghost {{ left: calc(100% - 1.22rem); }}
-/* In flight the ghost is the progress indicator: it leaves the origin
-   side bearing the outgoing icon and rides the palette blend's exact
-   clock and curve toward the thumb, which already shows the outcome. */
-button[data-easing] .ghost {{
-  opacity: 0.9;
-  transition-property: left, opacity;
-  transition-duration: var(--op-motion-blend), var(--op-motion-fade);
-  transition-timing-function: var(--op-motion-blend-curve), ease;
-}}
-@keyframes ghost-to-dark {{
-  0% {{ left: 0.12rem; opacity: 0; }}
-  22% {{ opacity: 0.9; }}
-  70% {{ opacity: 0.9; }}
-  100% {{ left: calc(100% - 1.22rem); opacity: 0; }}
-}}
-@keyframes ghost-to-light {{
-  0% {{ left: calc(100% - 1.22rem); opacity: 0; }}
-  22% {{ opacity: 0.9; }}
-  70% {{ opacity: 0.9; }}
-  100% {{ left: 0.12rem; opacity: 0; }}
-}}
-button[data-mode=\"light\"]:not([data-easing]):hover .preview,
-button[data-mode=\"light\"]:not([data-easing]):focus-visible .preview {{
-  animation: ghost-to-dark var(--op-motion-preview) ease-in-out infinite;
-}}
-button[data-mode=\"dark\"]:not([data-easing]):hover .preview,
-button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
-  animation: ghost-to-light var(--op-motion-preview) ease-in-out infinite;
-}}
-@media (prefers-reduced-motion: reduce) {{
-  .thumb {{ transition: none; }}
-  .preview {{ animation: none !important; }}
-  .ghost, button[data-easing] .ghost {{ transition: none; }}
-  /* no travel: the preview simply appears at the destination side */
-  button[data-mode=\"light\"]:not([data-easing]):hover .preview,
-  button[data-mode=\"light\"]:not([data-easing]):focus-visible .preview {{
-    opacity: 0.9;
-    left: calc(100% - 1.22rem);
-  }}
-  button[data-mode=\"dark\"]:not([data-easing]):hover .preview,
-  button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
-    opacity: 0.9;
-    left: 0.12rem;
-  }}
-}}
+:host(:state(attention)) button {{ outline-color: var(--op-accent); }}
+button svg {{ width: 0.8rem; height: 0.8rem; }}
 </style>
-<button type=\"button\" role=\"switch\"><span class=\"preview\" aria-hidden=\"true\"></span><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>"
+<button type=\"button\" role=\"switch\">{markup}</button>",
+            parts = op_parts::css(&SELECTORS, &LOOK),
+            markup = op_parts::SHADOW_MARKUP,
         ));
         let button = shadow
             .query_selector("button")
             .expect("query")
             .expect("button in template");
-        // Start on whatever is in effect: the stored choice, else the system
-        // preference. Nothing is written until the user toggles.
-        show(&button, theme::current());
+        let surface = Surface {
+            host: self.host.clone(),
+            button: button.clone(),
+        };
+        // Start on whatever is in effect: the stored choice, else the
+        // system preference. Nothing is written until the user acts.
+        let on = theme::current() == Mode::Dark;
+        let machine = Rc::new(RefCell::new(Machine::new(on)));
+        let generation = Rc::new(Cell::new(0u32));
+        surface.show(on);
+        surface.describe(on, Description::Settled);
 
-        if let Some(mql) = web_sys::window().and_then(|w| {
-            w.match_media("(prefers-color-scheme: light)")
-                .ok()
-                .flatten()
-        }) {
-            let target = button.clone();
-            let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
-                if theme::stored().is_none() {
-                    show(&target, theme::current());
-                }
-            });
-            let _ =
-                mql.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
-            self.on_scheme_change = Some(closure);
-        }
+        let attention = {
+            let (machine, generation, surface) =
+                (machine.clone(), generation.clone(), surface.clone());
+            Attention::attach(&button, move |present| {
+                let input = if present {
+                    Input::Attend
+                } else {
+                    Input::Neglect
+                };
+                dispatch(&machine, &generation, &surface, input);
+            })
+        };
 
-        let ease = self.ease.clone();
-        let target = button.clone();
-        let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
-            let window = web_sys::window().expect("window");
-            let mut state = ease.borrow_mut();
-            if let Some(handle) = state.timer.take() {
-                window.clear_timeout_with_handle(handle);
-            }
-            let now = js_sys::Date::now();
-            let settle_ms = match state.origin.take() {
-                // Second click mid-blend: abort. The easing attribute
-                // stays armed, so the palette glides back from wherever
-                // the blend was; CSS transition reversing shortens the
-                // return in proportion to how far it had got.
-                Some(origin) => {
-                    theme::choose(origin);
-                    show(&target, origin);
-                    // CSS shortens the reversal in proportion to how
-                    // far the blend had got, so the flight cannot
-                    // outlast the time already spent in it.
-                    state
-                        .started
-                        .take()
-                        .map_or(crate::motion::BLEND_MS, |start| (now - start) as i32)
-                        .clamp(0, crate::motion::BLEND_MS)
-                }
-                // First click: store and show the new theme at once
-                // (the thumb slides now) while the palette blends in
-                // slowly behind it.
-                None => {
-                    let origin = theme::current();
-                    let next = origin.opposite();
-                    theme::begin_easing();
-                    // The thumb rides the blend's clock for the flight.
-                    let _ = target.set_attribute("data-easing", "");
-                    theme::choose(next);
-                    show(&target, next);
-                    let describing = next.easing_description();
-                    let _ = target.set_attribute("aria-label", &describing);
-                    let _ = target.set_attribute("title", &describing);
-                    state.origin = Some(origin);
-                    state.started = Some(now);
-                    crate::motion::BLEND_MS
-                }
-            };
-            // Either way a blend is now in flight; settle when it is
-            // done, which releases the hover preview again.
-            let ease_for_settle = ease.clone();
-            let button_for_settle = target.clone();
-            let settle = Closure::<dyn FnMut()>::new(move || {
-                let mut state = ease_for_settle.borrow_mut();
-                state.timer = None;
-                state.origin = None;
-                state.started = None;
-                theme::end_easing();
-                let _ = button_for_settle.remove_attribute("data-easing");
-                show(&button_for_settle, theme::current());
-            });
-            state.timer = window
-                .set_timeout_with_callback_and_timeout_and_arguments_0(
-                    settle.as_ref().unchecked_ref(),
-                    settle_ms + 200,
-                )
-                .ok();
-            state.settle = Some(settle);
-        });
+        let on_click = {
+            let (machine, generation, surface) =
+                (machine.clone(), generation.clone(), surface.clone());
+            Closure::<dyn FnMut(Event)>::new(move |_event| {
+                dispatch(&machine, &generation, &surface, Input::Activate);
+            })
+        };
         button
-            .add_event_listener_with_callback("click", closure.as_ref().unchecked_ref())
+            .add_event_listener_with_callback("click", on_click.as_ref().unchecked_ref())
             .expect("add click listener");
-        self.on_click = Some(closure);
+
+        // A system preference change while no choice is stored is not an
+        // activation: the setting simply follows, instantly.
+        let on_scheme_change = web_sys::window()
+            .and_then(|w| {
+                w.match_media("(prefers-color-scheme: light)")
+                    .ok()
+                    .flatten()
+            })
+            .map(|mql| {
+                let (machine, surface) = (machine.clone(), surface.clone());
+                let closure = Closure::<dyn FnMut(Event)>::new(move |_event| {
+                    if theme::stored().is_none() {
+                        let on = theme::current() == Mode::Dark;
+                        machine.borrow_mut().on = on;
+                        surface.show(on);
+                        surface.describe(on, Description::Settled);
+                    }
+                });
+                let _ = mql
+                    .add_event_listener_with_callback("change", closure.as_ref().unchecked_ref());
+                closure
+            });
+
+        self.wiring = Some(Wiring {
+            _machine: machine,
+            _generation: generation,
+            _attention: attention,
+            _on_click: on_click,
+            _on_scheme_change: on_scheme_change,
+        });
     }
 }

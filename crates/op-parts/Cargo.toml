@@ -1,0 +1,10 @@
+[package]
+name = "op-parts"
+version = "0.1.0"
+description = "Shared visual parts for switch-like controls, emitted as CSS from one source"
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]

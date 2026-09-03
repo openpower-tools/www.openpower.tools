@@ -5,7 +5,7 @@ cargo-features = ["trim-paths"]
 
 [workspace]
 resolver = "3"
-members = ["crates/op-webc", "crates/op-site", "crates/op-assets", "crates/op-pages"]
+members = ["crates/op-webc", "crates/op-parts", "crates/op-site", "crates/op-assets", "crates/op-pages"]
 
 [workspace.package]
 edition = "2024"
@@ -20,6 +20,7 @@ js-sys = "0.3.104"
 web-sys = "0.3.104"
 console_error_panic_hook = "0.1.7"
 op-webc = { path = "crates/op-webc" }
+op-parts = { path = "crates/op-parts" }
 op-pages = { path = "crates/op-pages" }
 
 # Size-oriented, reproducible release profile for the wasm binary. Trunk runs

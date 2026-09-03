@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+op-parts.workspace = true
 op-webc.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
@@ -24,6 +25,7 @@ web-sys = { workspace = true, features = [
   "EventTarget",
   "FontFaceSet",
   "HtmlElement",
+  "HtmlHeadElement",
   "IntersectionObserver",
   "IntersectionObserverEntry",
   "IntersectionObserverInit",

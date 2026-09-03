@@ -8,6 +8,7 @@
 //! value before first paint; it must agree with [`STORAGE_KEY`] and the
 //! stored values here (a test checks that).
 
+use wasm_bindgen::JsCast;
 use web_sys::Storage;
 
 /// Storage keys are namespaced (owner scheme, 2026-09-02, no migration
@@ -136,6 +137,44 @@ pub fn begin_easing() {
         root.set_attribute(EASING_ATTRIBUTE, "")
             .expect("set easing attribute");
     }
+}
+
+/// Resolves when the armed blend's transitions on `<html>` have run to
+/// completion - forward, or reversed and shortened after an abort - so
+/// a control can observe the end of the change instead of guessing it
+/// with a timer. Rejects (as the browser's `finished` promises do) if
+/// the transitions are replaced by a newer flight, and resolves at once
+/// when nothing is transitioning.
+pub fn blend_finished() -> js_sys::Promise {
+    let Some(root) = document_root() else {
+        return js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED);
+    };
+    // Transitions are created at style resolution; force one so that
+    // getAnimations() sees them right after the attribute flip.
+    if let Some(style) = web_sys::window().and_then(|w| w.get_computed_style(&root).ok().flatten())
+    {
+        let _ = style.get_property_value("--op-bg");
+    }
+    // Element.getAnimations() is behind web-sys's unstable cfg; reach it
+    // through Reflect rather than flag the whole build unstable.
+    let animations = js_sys::Reflect::get(&root, &wasm_bindgen::JsValue::from_str("getAnimations"))
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .and_then(|f| f.call0(&root).ok())
+        .and_then(|list| list.dyn_into::<js_sys::Array>().ok())
+        .unwrap_or_default();
+    if animations.length() == 0 {
+        return js_sys::Promise::resolve(&wasm_bindgen::JsValue::UNDEFINED);
+    }
+    let finished = js_sys::Array::new();
+    for animation in animations.iter() {
+        if let Ok(promise) =
+            js_sys::Reflect::get(&animation, &wasm_bindgen::JsValue::from_str("finished"))
+        {
+            finished.push(&promise);
+        }
+    }
+    js_sys::Promise::all(&finished)
 }
 
 /// Disarms the blend so later theme changes (system preference shifts)
