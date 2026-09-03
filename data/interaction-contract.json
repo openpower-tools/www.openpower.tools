@@ -1,0 +1,230 @@
+{
+  "_": "Every element the site defines, with how the interaction report exercises it. kind: toggle = the switch-like machine with a timed flight; switch = the switch-like parts on a native input (instant); attention = hover / visible-focus / activate deltas; static = no interaction. A Rust test fails if a definition is missing here.",
+  "controls": [
+    {
+      "tag": "opt-theme-toggle",
+      "kind": "toggle",
+      "page": "/",
+      "target": {
+        "shadow": "button"
+      },
+      "seed_theme": "dark"
+    },
+    {
+      "tag": "opt-switch",
+      "kind": "switch",
+      "page": "/component/switch/",
+      "target": {
+        "light": "opt-switch input"
+      }
+    },
+    {
+      "tag": "opt-button",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "shadow": "button"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-chip",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "shadow": "button.body"
+      },
+      "activate": "aria-pressed"
+    },
+    {
+      "tag": "opt-tabs",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "shadow": "[role=tab][aria-selected=false]"
+      },
+      "activate": "aria-selected"
+    },
+    {
+      "tag": "opt-details",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "shadow": "summary"
+      },
+      "activate": "details-open"
+    },
+    {
+      "tag": "opt-tree",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "summary"
+      },
+      "activate": "details-open"
+    },
+    {
+      "tag": "opt-tooltip",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "a, button, [tabindex]"
+      },
+      "activate": "none",
+      "reveals": "[role=tooltip]"
+    },
+    {
+      "tag": "opt-source",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "shadow": "button"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-breadcrumb",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "a"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-pagination",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "a, button"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-input",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "input, textarea"
+      },
+      "activate": "none",
+      "hover": false
+    },
+    {
+      "tag": "opt-select",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "select"
+      },
+      "activate": "none",
+      "hover": false
+    },
+    {
+      "tag": "opt-checkbox",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "input"
+      },
+      "activate": "checked",
+      "hover": false
+    },
+    {
+      "tag": "opt-card",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "a"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-site-nav",
+      "kind": "attention",
+      "page": "/components/palette/",
+      "target": {
+        "any": "a"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-starting-points",
+      "kind": "attention",
+      "page": "/",
+      "target": {
+        "any": "a"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-site-footer",
+      "kind": "attention",
+      "page": "/",
+      "target": {
+        "any": "a"
+      },
+      "activate": "none"
+    },
+    {
+      "tag": "opt-tab",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-badge",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-build-status",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-callout",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-empty-state",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-key-value",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-kpi",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-machine-probes",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-palette-specimen",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-progress",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-scene",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-site-header",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-steps",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-table",
+      "kind": "static"
+    },
+    {
+      "tag": "opt-timeline",
+      "kind": "static"
+    }
+  ]
+}

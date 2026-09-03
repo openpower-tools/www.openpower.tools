@@ -90,6 +90,7 @@ impl Chip {
   border-radius: 1em 0 0 1em;
 }}
 button.body {{ cursor: pointer; }}
+button.body:hover {{ color: var(--op-link-hover); }}
 :host(:not([removable])) .body {{ border-radius: 1em; }}
 .dot {{
   width: 0.55em;

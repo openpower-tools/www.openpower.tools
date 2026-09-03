@@ -528,6 +528,10 @@ opt-tree summary {
   list-style-type: "\25B8  ";
 }
 
+opt-tree summary:hover {
+  color: var(--op-link-hover);
+}
+
 opt-tree details[open] > summary {
   list-style-type: "\25BE  ";
 }

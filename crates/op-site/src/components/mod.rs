@@ -133,6 +133,22 @@ mod definition_tests {
     /// a real workspace file: the shim maps the element's class onto it
     /// and the site serves it under `/src/`, so a wrong path breaks the
     /// inspector's jump-to-definition silently.
+    /// Every element must say how the interaction report exercises it
+    /// (`data/interaction-contract.json`), even if only to declare it
+    /// static: a control nobody thought to drive is exactly how a
+    /// hover-only defect ships.
+    #[test]
+    fn every_definition_is_in_the_interaction_contract() {
+        let contract = include_str!("../../../../data/interaction-contract.json");
+        for definition in DEFINITIONS {
+            assert!(
+                contract.contains(&format!("\"tag\": \"{}\"", definition.tag)),
+                "{} is missing from data/interaction-contract.json",
+                definition.tag
+            );
+        }
+    }
+
     #[test]
     fn every_definition_names_its_real_source_file() {
         let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
