@@ -26,6 +26,7 @@ import base64
 import json
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -38,8 +39,23 @@ from pathlib import Path
 import websocket
 
 STORAGE_KEY = "tools.openpower.sites.www.storage.version.1.configuration.version.1.ux.theme.current"
-OKABE = {"ghost": "#0072B2", "palette": "#E69F00", "thumb": "#009E73", "preview": "#CC79A7",
-         "ideal": "#000000", "mark": "#D55E00", "muted": "#888888"}
+# The chart series palette lives in styles/theme.css as --op-series-N tokens (six Okabe-Ito
+# hues fitted per theme by op-colour's fit_series). Films name a series by its number; the site's
+# elements colour it from the tokens. The ad hoc revision, which must not depend on the site,
+# draws with the light theme's values read from the same file.
+SERIES = {"palette": 1, "thumb": 2, "ghost": 3, "preview": 4, "ideal": 5}
+OKABE = {"mark": "#D55E00"}
+
+
+def series_hex() -> dict:
+    """--op-series-N of the light theme, from styles/theme.css."""
+    css = (Path(__file__).resolve().parents[2] / "styles" / "theme.css").read_text()
+    block = css[css.index(':root[data-theme="light"]'):]
+    block = block[:block.index("}")]
+    found = dict(re.findall(r"--op-series-(\d): (#[0-9A-Fa-f]{6})", block))
+    if len(found) != 6:
+        raise SystemExit("styles/theme.css: expected six --op-series-N tokens in the light theme")
+    return {int(k): v for k, v in found.items()}
 
 
 # ----------------------------------------------------------------------------
@@ -380,10 +396,11 @@ def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progres
     for sr in series:
         pts = " ".join(f"{x_of(t):.1f},{y_of(max(ymin, min(ymax, v))):.1f}" for t, v in zip(sr["t"], sr["y"]))
         dash = ' stroke-dasharray="5 4"' if sr.get("dash") else ""
-        out.append(f'<polyline points="{pts}" fill="none" stroke="{sr["color"]}" stroke-width="{sr.get("lw", 1.8)}"{dash} stroke-linejoin="round"/>')
+        colour = series_hex()[sr["series"]]
+        out.append(f'<polyline points="{pts}" fill="none" stroke="{colour}" stroke-width="{sr.get("lw", 1.8)}"{dash} stroke-linejoin="round"/>')
         if sr.get("label") and sr["t"]:
             i = min(len(sr["t"]) - 1, int(len(sr["t"]) * sr.get("at", 0.85)))
-            out.append(f'<text x="{x_of(sr["t"][i]) + 4:.1f}" y="{y_of(sr["y"][i]) - 5:.1f}" fill="{sr["color"]}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">{sr["label"]}</text>')
+            out.append(f'<text x="{x_of(sr["t"][i]) + 4:.1f}" y="{y_of(sr["y"][i]) - 5:.1f}" fill="{colour}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">{sr["label"]}</text>')
     # a YouTube-style bar under the axis: played portion, chapter dividers
     # (the machine's marks), and a band for the hovered chapter
     by = CHART_H - 10
@@ -468,7 +485,7 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
     deltas = [0.0] + [changed_fraction(frames[i - 1][1], frames[i][1]) for i in range(1, len(frames))]
     film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title,
             "chapters": [[0.0, chapter0]] + [[float(t), label] for t, label in marks],
-            "series": [{k: v for k, v in sr.items() if k in ("label", "color", "t", "y", "dash", "lw", "at")} for sr in (series or [])],
+            "series": [{k: v for k, v in sr.items() if k in ("label", "series", "t", "y", "dash", "lw", "at")} for sr in (series or [])],
             "ylabel": ylabel,
             "trace": [[round(float(t), 3), a, i, b] for t, a, i, b in trace]}
     if series:
@@ -507,8 +524,8 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     rows = sample(b, T, 2.0, 0.04, film=film, rect=rect)
     ts = [t for t, _ in rows]
     make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", chapter0="preview loop", trace=[(0.0, "Idle", "Attend", "Idle")],
-              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
-                      {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
+              series=[{"label": "preview opacity", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
+                      {"label": "preview left (% of track)", "series": SERIES["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     at = next((t for t, s in rows if s["attention"]), None)
     peak = max(s["preview_op"] for _, s in rows)
     e1.checks += [Check("attention custom state set", at is not None and at < 0.3, f"at {at}s"),
@@ -535,11 +552,11 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     gap = max(abs(a - p) for a, p in zip(ghost, pal))
     make_film(e2, film, d, "flight", keys=8, title=f"max ghost-palette gap {gap:.1f} pts", chapter0="flight",
               trace=[(0.0, "Idle", "Activate", "Toward")] + ([(settled, "Toward", "Finished", "Idle")] if settled else []),
-              series=[{"label": "ideal exponential", "color": OKABE["ideal"], "t": ideal_t, "y": ideal, "lw": 1, "dash": True, "at": 0.68},
-                      {"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.06},
-                      {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
-                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9},
-                      {"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 1, "dash": True, "at": 0.3}])
+              series=[{"label": "ideal exponential", "series": SERIES["ideal"], "t": ideal_t, "y": ideal, "lw": 1, "dash": True, "at": 0.68},
+                      {"label": "solid thumb", "series": SERIES["thumb"], "t": ts, "y": thumb, "at": 0.06},
+                      {"label": "palette", "series": SERIES["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
+                      {"label": "progress ghost", "series": SERIES["ghost"], "t": ts, "y": ghost, "at": 0.9},
+                      {"label": "preview opacity", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 1, "dash": True, "at": 0.3}])
     early = [s["preview_op"] for t, s in rows if t < 2.0]
     e2.checks += [Check("flight custom state armed on click", first["flight"]),
                   Check("setting flipped at once", first["dark"] is False and first["checked"] == "false"),
@@ -556,7 +573,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     after = sample(b, T, 1.9, 0.05, film=film, rect=rect)
     ts = [t for t, _ in after]
     make_film(e3, film, d, "settle", keys=5, ylabel="% (opacity)", trace=[],
-              series=[{"label": "preview opacity (resuming)", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in after], "lw": 2.4, "at": 0.5}])
+              series=[{"label": "preview opacity (resuming)", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in after], "lw": 2.4, "at": 0.5}])
     resume = max(s["preview_op"] for _, s in after)
     e3.checks += [Check("settled when the blend ended (2.8-3.4s)", settled is not None and 2.8 <= settled <= 3.4, f"flight cleared at {settled}s"),
                   Check("palette arrived", green(rows[-1][1]["bg"]) == g_off and abs(g_off - g_on) > 100),
@@ -590,9 +607,9 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     thumb = [abs(s["thumb"] - origin_x) / span * 100 for _, s in rows]
     make_film(e4, film, d, "abort", keys=8, marks=[(t_abort, "abort")], chapter0="flight",
               trace=[(0.0, "Idle", "Activate", "Toward"), (t_abort, "Toward", "Activate", "Back")] + ([(cleared, "Back", "Finished", "Idle")] if cleared else []),
-              series=[{"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.2},
-                      {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.3},
-                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.25}])
+              series=[{"label": "solid thumb", "series": SERIES["thumb"], "t": ts, "y": thumb, "at": 0.2},
+                      {"label": "palette", "series": SERIES["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.3},
+                      {"label": "progress ghost", "series": SERIES["ghost"], "t": ts, "y": ghost, "at": 0.25}])
     first_after = next((s for t, s in rows if t > t_abort), None)
     e4.checks += [Check("setting restored immediately on abort", first_after is not None and first_after["dark"] == origin_dark),
                   Check("flight stays armed for the reversal", bool(first_after and first_after["flight"]), "first sample after the abort click")]
@@ -622,8 +639,8 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     pal = [(green(s["bg"]) - g_from) / (g_to - g_from) * 100 for _, s in rows]
     make_film(e6, film, d, "refly", keys=8, marks=[(t_ab, "abort"), (t_re, "fly again")], chapter0="flight",
               trace=[(0.0, "Idle", "Activate", "Toward"), (t_ab, "Toward", "Activate", "Back"), (t_re, "Back", "Activate", "Toward")] + ([(settled2, "Toward", "Finished", "Idle")] if settled2 else []),
-              series=[{"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
-                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9}])
+              series=[{"label": "palette", "series": SERIES["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
+                      {"label": "progress ghost", "series": SERIES["ghost"], "t": ts, "y": ghost, "at": 0.9}])
     e6.checks += [Check("third click re-arms toward the opposite setting", s_re["flight"] and s_re["dark"] != before["dark"]),
                   Check("the new flight settles on its own clock", settled2 is not None and settled2 - t_re < 3.6, f"{settled2 - t_re:.2f}s after the third click" if settled2 else "never")]
     rep.edges.append(e6)
@@ -636,7 +653,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
     make_film(e7, film, d, "neglect", keys=4, ylabel="% (opacity)", trace=[(0.0, "Idle", "Neglect", "Idle")],
-              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4, "at": 0.5}])
+              series=[{"label": "preview opacity", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4, "at": 0.5}])
     gone = next((t for t, s in rows if not s["attention"]), None)
     e7.checks += [Check("attention custom state cleared", gone is not None and gone < 0.3, f"at {gone}s"),
                   Check("preview hidden once unattended", rows[-1][1]["preview_op"] < 0.05, f"opacity {rows[-1][1]['preview_op']}")]
@@ -660,8 +677,8 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     settle_rm = next((t for t, s_ in rows if not s_["flight"]), None)
     make_film(e8, film, d, "reduced", keys=6, marks=[(t_click, "click")], chapter0="hover",
               trace=[(0.0, "Idle", "Attend", "Idle"), (t_click, "Idle", "Activate", "Toward")] + ([(settle_rm, "Toward", "Finished", "Idle")] if settle_rm else []),
-              series=[{"label": "palette (still fades)", "color": OKABE["palette"], "t": ts, "y": [(green(s["bg"]) - g_from) / (g_to - g_from or 1) * 100 for _, s in rows], "lw": 2.6, "at": 0.7},
-                      {"label": "ghost (snaps)", "color": OKABE["ghost"], "t": ts, "y": [abs(s["ghost"] - rows[0][1]["ghost"]) / span * 100 for _, s in rows], "at": 0.3}])
+              series=[{"label": "palette (still fades)", "series": SERIES["palette"], "t": ts, "y": [(green(s["bg"]) - g_from) / (g_to - g_from or 1) * 100 for _, s in rows], "lw": 2.6, "at": 0.7},
+                      {"label": "ghost (snaps)", "series": SERIES["ghost"], "t": ts, "y": [abs(s["ghost"] - rows[0][1]["ghost"]) / span * 100 for _, s in rows], "at": 0.3}])
     mid = green(rows[len(rows) // 2][1]["bg"])
     e8.checks += [Check("static preview shown while attended", s_rm["preview_anim"] == "none" and s_rm["preview_op"] >= 0.8, f"animation {s_rm['preview_anim']}, opacity {s_rm['preview_op']}"),
                   Check("ghost snaps to the destination", abs(rows[1][1]["ghost"] - rows[-1][1]["ghost"]) < 1.0),
@@ -693,8 +710,8 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     rows = sample(b, S, 2.0, 0.04, film=film, rect=rect)
     ts = [t for t, _ in rows]
     make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)", trace=[(0.0, "Idle", "Attend", "Idle")],
-              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
-                      {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
+              series=[{"label": "preview opacity", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
+                      {"label": "preview left (% of track)", "series": SERIES["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     peak = max(s["preview_op"] for _, s in rows)
     e1.checks += [Check("preview animation plays", any(s["anim"].startswith("opt-switch-preview") for _, s in rows)),
                   Check("preview reaches legible opacity", peak >= 0.8, f"peak {peak}")]
@@ -709,7 +726,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     ts = [t for t, _ in rows]
     travel = [abs(l - lefts[0]) / max(1e-6, abs(lefts[-1] - lefts[0])) * 100 for l in lefts]
     make_film(e2, film, d, "activate", keys=6, trace=[(0.0, "Idle", "Activate", "Idle")],
-              series=[{"label": "thumb travel", "color": OKABE["thumb"], "t": ts, "y": travel, "lw": 2.4, "at": 0.5}])
+              series=[{"label": "thumb travel", "series": SERIES["thumb"], "t": ts, "y": travel, "lw": 2.4, "at": 0.5}])
     moved_by = next((t for t, s in rows if abs(s["thumb"] - lefts[-1]) < 0.5), None)
     e2.checks += [Check("checked state toggled", rows[-1][1]["checked"] != s0["checked"]),
                   Check("thumb transitions (not a jump)", len({round(l) for l in lefts[:6]}) > 2, f"first positions {[round(l, 1) for l in lefts[:6]]}"),

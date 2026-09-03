@@ -58,6 +58,23 @@
 
   --op-raised: #131A26;
   --op-pole-base: #000000;
+
+  /* Chart series: Okabe-Ito hues fitted in two OKLCH lightness bands, tested in palette.rs. */
+  /* orange */
+  --op-series-1: #E7A000;
+  /* bluish green */
+  --op-series-2: #49F3BA;
+  /* blue */
+  --op-series-3: #ABD9FF;
+  /* reddish purple */
+  --op-series-4: #F682C5;
+  /* sky blue */
+  --op-series-5: #37BCFF;
+  /* olive */
+  --op-series-6: #E3D846;
+  --op-band: #3A445A;
+  --op-playhead: #EB6424;
+  --op-peek: #ADB8C6;
 }
 
 /* No explicit choice: follow the system. */
@@ -86,6 +103,23 @@
 
   --op-raised: #FFFFFF;
   --op-pole-base: #FFFFFF;
+
+  /* Chart series: Okabe-Ito hues fitted in two OKLCH lightness bands, tested in palette.rs. */
+  /* orange */
+  --op-series-1: #8F6200;
+  /* bluish green */
+  --op-series-2: #009C73;
+  /* blue */
+  --op-series-3: #008BD8;
+  /* reddish purple */
+  --op-series-4: #A93C7F;
+  /* sky blue */
+  --op-series-5: #0074A4;
+  /* olive */
+  --op-series-6: #918800;
+  --op-band: #FDF1ED;
+  --op-playhead: #E75019;
+  --op-peek: #635A4F;
   }
 }
 
@@ -114,6 +148,23 @@
 
   --op-raised: #FFFFFF;
   --op-pole-base: #FFFFFF;
+
+  /* Chart series: Okabe-Ito hues fitted in two OKLCH lightness bands, tested in palette.rs. */
+  /* orange */
+  --op-series-1: #8F6200;
+  /* bluish green */
+  --op-series-2: #009C73;
+  /* blue */
+  --op-series-3: #008BD8;
+  /* reddish purple */
+  --op-series-4: #A93C7F;
+  /* sky blue */
+  --op-series-5: #0074A4;
+  /* olive */
+  --op-series-6: #918800;
+  --op-band: #FDF1ED;
+  --op-playhead: #E75019;
+  --op-peek: #635A4F;
 }
 
 /*
@@ -150,13 +201,24 @@
 @property --op-status-danger { syntax: "<color>"; inherits: true; initial-value: #E4756A; }
 @property --op-raised { syntax: "<color>"; inherits: true; initial-value: #131A26; }
 @property --op-pole-base { syntax: "<color>"; inherits: true; initial-value: #000000; }
+@property --op-series-1 { syntax: "<color>"; inherits: true; initial-value: #E7A000; }
+@property --op-series-2 { syntax: "<color>"; inherits: true; initial-value: #49F3BA; }
+@property --op-series-3 { syntax: "<color>"; inherits: true; initial-value: #ABD9FF; }
+@property --op-series-4 { syntax: "<color>"; inherits: true; initial-value: #F682C5; }
+@property --op-series-5 { syntax: "<color>"; inherits: true; initial-value: #37BCFF; }
+@property --op-series-6 { syntax: "<color>"; inherits: true; initial-value: #E3D846; }
+@property --op-band { syntax: "<color>"; inherits: true; initial-value: #3A445A; }
+@property --op-playhead { syntax: "<color>"; inherits: true; initial-value: #EB6424; }
+@property --op-peek { syntax: "<color>"; inherits: true; initial-value: #ADB8C6; }
 
 :root[data-op-theme-easing] {
   transition-property: --op-bg, --op-surface, --op-text, --op-muted,
     --op-link, --op-link-hover, --op-accent, --op-highlight, --op-focus,
     --op-border, --op-border-strong, --op-code-bg, --op-status-neutral,
     --op-status-info, --op-status-ok, --op-status-warning,
-    --op-status-danger, --op-raised, --op-pole-base;
+    --op-status-danger, --op-raised, --op-pole-base, --op-series-1,
+    --op-series-2, --op-series-3, --op-series-4, --op-series-5, --op-series-6,
+    --op-band, --op-playhead, --op-peek;
   transition-duration: var(--op-motion-blend);
   transition-timing-function: var(--op-motion-blend-curve);
 }

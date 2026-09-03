@@ -45,7 +45,8 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
 /// One sampled series drawn on the chart.
 struct Series {
     label: String,
-    color: String,
+    /// Palette series 1 to 6 (`--op-series-N`); by position when absent.
+    index: usize,
     t: Vec<f64>,
     y: Vec<f64>,
     dash: bool,
@@ -102,9 +103,10 @@ impl Data {
             .collect::<Vec<_>>();
         let series = js_sys::Array::from(&get(&v, "series"))
             .iter()
-            .map(|s| Series {
+            .enumerate()
+            .map(|(i, s)| Series {
                 label: text(&s, "label"),
-                color: text(&s, "color"),
+                index: (num(&s, "series", i as f64 + 1.0).round() as usize).clamp(1, SERIES_TOKENS),
                 t: nums(&s, "t"),
                 y: nums(&s, "y"),
                 dash: get(&s, "dash").as_bool().unwrap_or(false),
@@ -187,6 +189,19 @@ impl Data {
 }
 
 // ---- the chart: drawn by op-chart, moved here -------------------------
+/// How many `--op-series-N` tokens the palette defines.
+const SERIES_TOKENS: usize = 6;
+
+/// Series lines and labels take their colour from the palette tokens; the
+/// markup carries only the class.
+const SERIES_CSS: &str = "
+.chart .series-1 { stroke: var(--op-series-1); } .chart .serieslabel.series-1 { fill: var(--op-series-1); }
+.chart .series-2 { stroke: var(--op-series-2); } .chart .serieslabel.series-2 { fill: var(--op-series-2); }
+.chart .series-3 { stroke: var(--op-series-3); } .chart .serieslabel.series-3 { fill: var(--op-series-3); }
+.chart .series-4 { stroke: var(--op-series-4); } .chart .serieslabel.series-4 { fill: var(--op-series-4); }
+.chart .series-5 { stroke: var(--op-series-5); } .chart .serieslabel.series-5 { fill: var(--op-series-5); }
+.chart .series-6 { stroke: var(--op-series-6); } .chart .serieslabel.series-6 { fill: var(--op-series-6); }";
+
 /// The film's data as a chart spec: one axis for every series, chapters as
 /// marks, and the colours exactly as the data passes them.
 fn spec_of(d: &Data) -> op_chart::Spec {
@@ -207,7 +222,7 @@ fn spec_of(d: &Data) -> op_chart::Spec {
             .iter()
             .map(|s| op_chart::Series {
                 label: s.label.clone(),
-                colour: s.color.clone(),
+                index: s.index,
                 points: s.t.iter().copied().zip(s.y.iter().copied()).collect(),
                 dash: s.dash,
                 width: s.lw,
@@ -685,6 +700,7 @@ impl CustomElement for Film {
 .chart .grid {{ stroke: var(--op-border); }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
 .chart .mark {{ stroke: var(--op-accent); stroke-dasharray: 3 3; }} .chart .marklabel {{ fill: var(--op-accent); }}
 .chart .serieslabel {{ font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+{SERIES_CSS}
 .chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 .chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
 .chart .peek-line {{ stroke: var(--op-muted); stroke-dasharray: 3 3; }}
@@ -1090,13 +1106,13 @@ impl CustomElement for Film {
 
 #[cfg(test)]
 mod chart_reference {
-    //! The chart as it rendered before its extraction into op-chart, pinned
-    //! in the snapshot files: the extraction must reproduce those elements.
+    //! Fixtures shaped like the films the report tool emits, and the
+    //! film-side rules over them.
     use super::*;
 
     fn series(
         label: &str,
-        color: &str,
+        index: usize,
         t: &[f64],
         y: &[f64],
         dash: bool,
@@ -1105,7 +1121,7 @@ mod chart_reference {
     ) -> Series {
         Series {
             label: label.to_owned(),
-            color: color.to_owned(),
+            index,
             t: t.to_vec(),
             y: y.to_vec(),
             dash,
@@ -1126,7 +1142,7 @@ mod chart_reference {
             chapters: vec![(0.0, "start".to_owned()), (1.2, "settle".to_owned())],
             series: vec![series(
                 "thumb travel",
-                "#009E73",
+                2,
                 &times,
                 &[0.0, 8.0, 30.0, 61.0, 84.0, 95.0, 99.0, 100.0],
                 false,
@@ -1162,77 +1178,33 @@ mod chart_reference {
                 (3.03, "settled".to_owned()),
             ],
             series: vec![
-                series("ghost left %", "#0072B2", &t, &ghost, false, 2.4, 0.5),
-                series("palette blend %", "#E69F00", &t, &palette, true, 1.8, 0.85),
+                series("ghost left %", 3, &t, &ghost, false, 2.4, 0.5),
+                series("palette blend %", 1, &t, &palette, true, 1.8, 0.85),
             ],
             ylabel: "% (opacity, left)".to_owned(),
             t_max: 3.7,
         }
     }
 
-    /// Elements of an SVG string in document order, each tag with the text
-    /// that follows it; `<g>` wrappers are dropped so grouping is free.
-    fn elements(svg: &str) -> Vec<String> {
-        let mut out = Vec::new();
-        let mut rest = svg;
-        while let Some(i) = rest.find('<') {
-            let after = &rest[i..];
-            let end = after.find('>').expect("closed tag") + 1;
-            let tag = &after[..end];
-            let text_end = after[end..].find('<').map_or(after.len(), |j| end + j);
-            let text = &after[end..text_end];
-            if !(tag.starts_with("<g ") || tag == "</g>") {
-                out.push(format!("{tag}{text}"));
-            }
-            rest = &after[text_end..];
-        }
-        out
-    }
-
-    /// The markup inside an insta snapshot file, after its header.
-    fn pinned(snap: &str) -> &str {
-        let body = snap
-            .find("\n---\n")
-            .map(|i| &snap[i + 5..])
-            .expect("snapshot header");
-        body.trim_end()
-    }
-
-    /// op-chart must emit exactly the elements chart_svg emitted before the
-    /// extraction, in order, except the playhead (now one group at the axis
-    /// origin) and the readout (now in the axis band, not over the data).
     #[test]
-    fn op_chart_reproduces_the_pinned_chart() {
-        let cases = [
-            (
-                demo(),
-                include_str!(
-                    "snapshots/op_site__components__film__chart_reference__demo_chart_is_pinned.snap"
-                ),
-            ),
-            (
-                flight(),
-                include_str!(
-                    "snapshots/op_site__components__film__chart_reference__flight_chart_is_pinned.snap"
-                ),
-            ),
-        ];
-        for (data, snap) in cases {
-            let new = op_chart::render(&spec_of(&data), op_chart::Layout::film(data.t_max)).svg;
-            let old = pinned(snap);
-            let moved = |e: &String| {
-                e.contains("class=\"head\"")
-                    || e.contains("class=\"head-dot\"")
-                    || e.contains("class=\"head-t\"")
-            };
-            let before: Vec<String> = elements(old).into_iter().filter(|e| !moved(e)).collect();
-            let after: Vec<String> = elements(&new).into_iter().filter(|e| !moved(e)).collect();
-            assert!(before.len() > 20);
-            assert_eq!(before, after);
-            assert!(old.contains("<line class=\"head\" x1=\"46\" x2=\"46\""));
-            assert!(new.contains("<g class=\"playhead\" transform=\"translate(46.0 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
-            assert!(old.contains("<text class=\"head-t\" x=\"50.0\" y=\"214.0\">0.00s</text>"));
-            assert!(new.contains("<text class=\"head-t\" x=\"4\" y=\"250.0\">0.00s</text>"));
+    fn every_series_carries_its_palette_class_and_the_stylesheet_maps_it() {
+        let d = flight();
+        let svg = op_chart::render(&spec_of(&d), op_chart::Layout::film(d.t_max)).svg;
+        assert!(svg.contains("class=\"series-3\"") && svg.contains("class=\"series-1\""));
+        let d = demo();
+        let svg = op_chart::render(&spec_of(&d), op_chart::Layout::film(d.t_max)).svg;
+        assert!(
+            svg.contains("<polyline class=\"series-2\"")
+                && svg.contains("class=\"serieslabel series-2\"")
+        );
+        assert!(!svg.contains("stroke=\"#") && !svg.contains("fill=\"#"));
+        for n in 1..=SERIES_TOKENS {
+            assert!(SERIES_CSS.contains(&format!(
+                ".chart .series-{n} {{ stroke: var(--op-series-{n}); }}"
+            )));
+            assert!(SERIES_CSS.contains(&format!(
+                ".serieslabel.series-{n} {{ fill: var(--op-series-{n}); }}"
+            )));
         }
     }
 

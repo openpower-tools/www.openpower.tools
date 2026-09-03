@@ -53,3 +53,4 @@ web-sys = { workspace = true, features = [
 
 [dev-dependencies]
 op-pages.workspace = true
+op-colour.workspace = true

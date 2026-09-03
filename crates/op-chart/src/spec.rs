@@ -14,9 +14,10 @@ pub struct Chapter {
 pub struct Series {
     /// Direct label drawn near the point at `label_at`; empty for none.
     pub label: String,
-    /// The stroke as the spec passes it. Empty means `currentColor`; this
-    /// crate never invents a colour of its own.
-    pub colour: String,
+    /// Which palette series this is, 1 to 6: the emitter writes the class
+    /// `series-N` and the consumer's stylesheet maps it to `--op-series-N`.
+    /// This crate never writes a colour.
+    pub index: usize,
     /// `(t, value)` pairs in time order; values are clamped to the layout's
     /// value domain when drawn.
     pub points: Vec<(f64, f64)>,

@@ -65,6 +65,33 @@ const REQUIRED_PAIRS: &[(&str, &str, f64)] = &[
     ("--op-status-warning", "--op-raised", 4.5),
     ("--op-status-danger", "--op-raised", 4.5),
     ("--op-status-neutral", "--op-raised", 3.0),
+    // chart paints are graphical objects on every backdrop (WCAG 1.4.11)
+    ("--op-series-1", "--op-bg", 3.0),
+    ("--op-series-1", "--op-surface", 3.0),
+    ("--op-series-1", "--op-raised", 3.0),
+    ("--op-series-2", "--op-bg", 3.0),
+    ("--op-series-2", "--op-surface", 3.0),
+    ("--op-series-2", "--op-raised", 3.0),
+    ("--op-series-3", "--op-bg", 3.0),
+    ("--op-series-3", "--op-surface", 3.0),
+    ("--op-series-3", "--op-raised", 3.0),
+    ("--op-series-4", "--op-bg", 3.0),
+    ("--op-series-4", "--op-surface", 3.0),
+    ("--op-series-4", "--op-raised", 3.0),
+    ("--op-series-5", "--op-bg", 3.0),
+    ("--op-series-5", "--op-surface", 3.0),
+    ("--op-series-5", "--op-raised", 3.0),
+    ("--op-series-6", "--op-bg", 3.0),
+    ("--op-series-6", "--op-surface", 3.0),
+    ("--op-series-6", "--op-raised", 3.0),
+    ("--op-playhead", "--op-bg", 3.0),
+    ("--op-playhead", "--op-surface", 3.0),
+    ("--op-playhead", "--op-raised", 3.0),
+    ("--op-peek", "--op-bg", 3.0),
+    ("--op-peek", "--op-surface", 3.0),
+    ("--op-peek", "--op-raised", 3.0),
+    // the chapter band is drawn behind the axis readout and mark labels
+    ("--op-text", "--op-band", 4.5),
 ];
 
 fn contrast(a: &str, b: &str) -> f64 {
@@ -169,6 +196,190 @@ fn each_theme_uses_every_colour_of_its_source_palette() {
                 values.iter().any(|v| v.eq_ignore_ascii_case(colour)),
                 "{theme}: source colour {colour} is not used"
             );
+        }
+    }
+}
+
+/// The chart series palette: six Okabe-Ito hues fitted in two OKLCH
+/// lightness bands per theme by `op-colour`'s `fit_series`. These tests
+/// regenerate the numbers from the tokens rather than trusting the fit.
+///
+/// The floors are project conventions, not standards: the CIEDE2000
+/// separations follow the Palettailor and PaletteGuard practice (10 in
+/// normal vision, 8 after simulation), the APCA levels are the author's
+/// drafts (45 as the floor for 2 px strokes on the dark surfaces, 60 the
+/// target), and WCAG 3's draft names no algorithm. A few units of slack
+/// are built into the CVD floor because Machado and Brettel differ at
+/// the margins.
+#[cfg(test)]
+mod chart_series {
+    use super::{dark, light};
+    use op_colour::{Deficiency, Lab, Oklch, Srgb, apca_lc, ciede2000, simulate};
+    use std::collections::BTreeMap;
+
+    const SERIES: usize = 6;
+    const MIN_PAIR_NORMAL: f64 = 10.0;
+    const MIN_PAIR_CVD: f64 = 8.0;
+    const MIN_TO_SURFACE: f64 = 20.0;
+    const DARK_APCA_FLOOR: f64 = 45.0;
+    /// Okabe-Ito hue angles in OKLCH, in token order, and the band each sits in.
+    const HUES: [(f64, char); SERIES] = [
+        (77.0, 'A'),
+        (166.0, 'B'),
+        (244.0, 'B'),
+        (346.0, 'A'),
+        (236.0, 'A'),
+        (105.0, 'B'),
+    ];
+    const HUE_TOLERANCE: f64 = 3.0;
+
+    fn series(tokens: &BTreeMap<String, String>) -> Vec<Srgb> {
+        (1..=SERIES)
+            .map(|n| {
+                let hex = &tokens[&format!("--op-series-{n}")];
+                Srgb::from_hex(hex)
+                    .unwrap_or_else(|| panic!("--op-series-{n} is not #RRGGBB: {hex}"))
+            })
+            .collect()
+    }
+
+    fn themes() -> [(&'static str, BTreeMap<String, String>); 2] {
+        [("dark", dark()), ("light", light())]
+    }
+
+    #[test]
+    fn every_pair_stays_apart_in_normal_and_deficient_vision() {
+        for (theme, tokens) in themes() {
+            let s = series(&tokens);
+            for i in 0..SERIES {
+                for j in i + 1..SERIES {
+                    let d = ciede2000(Lab::from_srgb(s[i]), Lab::from_srgb(s[j]));
+                    assert!(
+                        d >= MIN_PAIR_NORMAL,
+                        "{theme}: series {} vs {} only {d:.1} apart",
+                        i + 1,
+                        j + 1
+                    );
+                    for dfc in Deficiency::ALL {
+                        let e = ciede2000(
+                            Lab::from_srgb(simulate(s[i], dfc)),
+                            Lab::from_srgb(simulate(s[j], dfc)),
+                        );
+                        assert!(
+                            e >= MIN_PAIR_CVD,
+                            "{theme}: series {} vs {} only {e:.1} apart under {}",
+                            i + 1,
+                            j + 1,
+                            dfc.name()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_series_stands_off_the_surface() {
+        for (theme, tokens) in themes() {
+            let surface = Srgb::from_hex(&tokens["--op-surface"]).unwrap();
+            for (n, c) in series(&tokens).iter().enumerate() {
+                let d = ciede2000(Lab::from_srgb(*c), Lab::from_srgb(surface));
+                assert!(
+                    d >= MIN_TO_SURFACE,
+                    "{theme}: series {} is only {d:.1} from the surface",
+                    n + 1
+                );
+            }
+        }
+    }
+
+    /// 2 px strokes on the dark surfaces: WCAG 3:1 alone lands at Lc 31 to
+    /// 37 there, the thin-line case the WCAG text says to exceed.
+    #[test]
+    fn dark_theme_series_reach_apca_45_on_every_backdrop() {
+        let tokens = dark();
+        for backdrop in ["--op-bg", "--op-surface", "--op-raised"] {
+            let b = Srgb::from_hex(&tokens[backdrop]).unwrap();
+            for (n, c) in series(&tokens).iter().enumerate() {
+                let lc = apca_lc(*c, b).abs();
+                assert!(
+                    lc >= DARK_APCA_FLOOR,
+                    "dark: series {} on {backdrop} is Lc {lc:.0}",
+                    n + 1
+                );
+            }
+        }
+    }
+
+    /// The design: each token keeps its Okabe-Ito hue, and the six sit in
+    /// exactly two lightness bands with the intended membership.
+    #[test]
+    fn hues_are_okabe_ito_and_lightness_forms_two_bands() {
+        for (theme, tokens) in themes() {
+            let oklch: Vec<Oklch> = series(&tokens)
+                .iter()
+                .map(|c| Oklch::from_srgb(*c))
+                .collect();
+            for (n, (o, (hue, _))) in oklch.iter().zip(HUES).enumerate() {
+                let diff = (o.h - hue).abs().min(360.0 - (o.h - hue).abs());
+                assert!(
+                    diff <= HUE_TOLERANCE,
+                    "{theme}: series {} hue {:.0} is not {hue:.0}",
+                    n + 1,
+                    o.h
+                );
+            }
+            let band = |ch: char| {
+                oklch
+                    .iter()
+                    .zip(HUES)
+                    .filter(|(_, (_, b))| *b == ch)
+                    .map(|(o, _)| o.l)
+                    .collect::<Vec<_>>()
+            };
+            let (a, b) = (band('A'), band('B'));
+            let spread = |v: &[f64]| {
+                v.iter().cloned().fold(f64::MIN, f64::max)
+                    - v.iter().cloned().fold(f64::MAX, f64::min)
+            };
+            assert!(
+                spread(&a) < 0.02 && spread(&b) < 0.02,
+                "{theme}: bands are not flat: {a:?} {b:?}"
+            );
+            let (ma, mb) = (
+                a.iter().sum::<f64>() / a.len() as f64,
+                b.iter().sum::<f64>() / b.len() as f64,
+            );
+            assert!(
+                (ma - mb).abs() >= 0.08,
+                "{theme}: the two bands are too close: {ma:.3} {mb:.3}"
+            );
+        }
+    }
+
+    #[test]
+    fn tokens_are_the_quantised_srgb_form_of_their_oklch_fit() {
+        for (theme, tokens) in themes() {
+            for (n, c) in series(&tokens).iter().enumerate() {
+                // a token sits at the gamut edge by construction, so the round trip may
+                // overshoot by float error: anything under half a quantisation step is
+                // the same hex value, and that is the check
+                let back = Oklch::from_srgb(*c).to_srgb();
+                let step = 0.5 / 255.0;
+                for ch in [back.r, back.g, back.b] {
+                    assert!(
+                        (-step..=1.0 + step).contains(&ch),
+                        "{theme}: series {} leaves the gamut by more than a quantisation step: {back:?}",
+                        n + 1
+                    );
+                }
+                assert_eq!(
+                    back.quantised().to_hex(),
+                    c.to_hex(),
+                    "{theme}: series {} does not round-trip",
+                    n + 1
+                );
+            }
         }
     }
 }

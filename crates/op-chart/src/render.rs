@@ -106,25 +106,20 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
         } else {
             ""
         };
-        let stroke = if s.colour.is_empty() {
-            "currentColor"
-        } else {
-            s.colour.as_str()
-        };
         out.push_str(&format!(
-            "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\"{dash} stroke-linejoin=\"round\"/>",
+            "<polyline class=\"series-{}\" points=\"{}\" fill=\"none\" stroke-width=\"{}\"{dash} stroke-linejoin=\"round\"/>",
+            s.index,
             pts.join(" "),
-            escape(stroke),
             s.width
         ));
         if !s.label.is_empty() && !s.points.is_empty() {
             let i = ((s.points.len() as f64 * s.label_at) as usize).min(s.points.len() - 1);
             let (t, v) = s.points[i];
             out.push_str(&format!(
-                "<text class=\"serieslabel\" x=\"{:.1}\" y=\"{:.1}\" fill=\"{}\">{}</text>",
+                "<text class=\"serieslabel series-{}\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
+                s.index,
                 l.x_of(t) + 4.0,
                 l.y_of(v) - 5.0,
-                escape(stroke),
                 escape(&s.label)
             ));
         }
@@ -186,7 +181,7 @@ pub(crate) mod fixtures {
 
     fn series(
         label: &str,
-        colour: &str,
+        index: usize,
         t: &[f64],
         y: &[f64],
         dash: bool,
@@ -195,7 +190,7 @@ pub(crate) mod fixtures {
     ) -> Series {
         Series {
             label: label.to_owned(),
-            colour: colour.to_owned(),
+            index,
             points: t.iter().copied().zip(y.iter().copied()).collect(),
             dash,
             width,
@@ -220,7 +215,7 @@ pub(crate) mod fixtures {
             chapters: vec![chapter(0.0, "start"), chapter(1.2, "settle")],
             series: vec![series(
                 "thumb travel",
-                "#009E73",
+                2,
                 &times,
                 &[0.0, 8.0, 30.0, 61.0, 84.0, 95.0, 99.0, 100.0],
                 false,
@@ -252,8 +247,8 @@ pub(crate) mod fixtures {
                 chapter(3.03, "settled"),
             ],
             series: vec![
-                series("ghost left %", "#0072B2", &t, &ghost, false, 2.4, 0.5),
-                series("palette blend %", "#E69F00", &t, &palette, true, 1.8, 0.85),
+                series("ghost left %", 3, &t, &ghost, false, 2.4, 0.5),
+                series("palette blend %", 1, &t, &palette, true, 1.8, 0.85),
             ],
         }
     }
@@ -295,29 +290,21 @@ mod tests {
     }
 
     #[test]
-    fn the_emitter_invents_no_colour_of_its_own() {
-        let mut spec = flight();
-        for s in &mut spec.series {
-            s.colour.clear();
-        }
-        let svg = film(&spec).svg;
+    fn the_emitter_writes_no_colour_at_all() {
+        let svg = film(&flight()).svg;
         let found = paints(&svg);
         assert!(!found.is_empty());
         for p in &found {
             assert!(
-                p == "none" || p == "currentColor" || p.starts_with("var("),
-                "colour literal {p} in the markup"
+                p == "none",
+                "paint {p} in the markup: colours belong to the stylesheet"
             );
         }
-        // and with colours given, the only literals are exactly those
-        let svg = film(&flight()).svg;
-        let literals: std::collections::BTreeSet<String> = paints(&svg)
-            .into_iter()
-            .filter(|p| p != "none" && p != "currentColor" && !p.starts_with("var("))
-            .collect();
-        let given: std::collections::BTreeSet<String> =
-            flight().series.iter().map(|s| s.colour.clone()).collect();
-        assert_eq!(literals, given);
+        // every series is addressed by its class, line and label alike
+        assert!(svg.contains("<polyline class=\"series-3\""));
+        assert!(svg.contains("<polyline class=\"series-1\""));
+        assert!(svg.contains("<text class=\"serieslabel series-3\""));
+        assert!(svg.contains("<text class=\"serieslabel series-1\""));
     }
 
     #[test]
