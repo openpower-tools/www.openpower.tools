@@ -75,6 +75,82 @@ def series_hex() -> dict:
     return {int(k): v for k, v in found.items()}
 
 
+def _srgb_to_lab(rgb):
+    def lin(c):
+        c /= 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (lin(v) for v in rgb)
+    x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047
+    y = (0.2126729 * r + 0.7151522 * g + 0.0721750 * b)
+    z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883
+
+    def f(t):
+        d = 6 / 29
+        return t ** (1 / 3) if t > d ** 3 else t / (3 * d * d) + 4 / 29
+    fx, fy, fz = f(x), f(y), f(z)
+    return (116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz))
+
+
+def ciede2000(lab1, lab2):
+    """CIEDE2000 (Sharma, Wu and Dalal 2005), the same formula op-colour carries."""
+    L1, a1, b1 = lab1
+    L2, a2, b2 = lab2
+    c1, c2 = math.hypot(a1, b1), math.hypot(a2, b2)
+    cb = (c1 + c2) / 2
+    g = 0.5 * (1 - math.sqrt(cb ** 7 / (cb ** 7 + 25 ** 7)))
+    a1p, a2p = (1 + g) * a1, (1 + g) * a2
+    c1p, c2p = math.hypot(a1p, b1), math.hypot(a2p, b2)
+
+    def hp(a, b):
+        return 0.0 if a == 0 and b == 0 else math.degrees(math.atan2(b, a)) % 360
+    h1p, h2p = hp(a1p, b1), hp(a2p, b2)
+    dLp, dCp = L2 - L1, c2p - c1p
+    if c1p * c2p == 0:
+        dhp = 0.0
+    else:
+        d = h2p - h1p
+        dhp = d if abs(d) <= 180 else (d - 360 if d > 180 else d + 360)
+    dHp = 2 * math.sqrt(c1p * c2p) * math.sin(math.radians(dhp / 2))
+    Lbp, Cbp = (L1 + L2) / 2, (c1p + c2p) / 2
+    if c1p * c2p == 0:
+        hbp = h1p + h2p
+    else:
+        sm = h1p + h2p
+        hbp = sm / 2 if abs(h1p - h2p) <= 180 else ((sm + 360) / 2 if sm < 360 else (sm - 360) / 2)
+    T = (1 - 0.17 * math.cos(math.radians(hbp - 30)) + 0.24 * math.cos(math.radians(2 * hbp))
+         + 0.32 * math.cos(math.radians(3 * hbp + 6)) - 0.20 * math.cos(math.radians(4 * hbp - 63)))
+    dth = 30 * math.exp(-(((hbp - 275) / 25) ** 2))
+    rc = 2 * math.sqrt(Cbp ** 7 / (Cbp ** 7 + 25 ** 7))
+    sl = 1 + 0.015 * (Lbp - 50) ** 2 / math.sqrt(20 + (Lbp - 50) ** 2)
+    sc = 1 + 0.045 * Cbp
+    sh = 1 + 0.015 * Cbp * T
+    rt = -math.sin(math.radians(2 * dth)) * rc
+    return math.sqrt((dLp / sl) ** 2 + (dCp / sc) ** 2 + (dHp / sh) ** 2 + rt * (dCp / sc) * (dHp / sh))
+
+
+# the port is checked against two of Sharma's published pairs before any run relies on it
+for _p, _q, _want in (((50.0, 2.6772, -79.7751), (50.0, 0.0, -82.7485), 2.0425), ((50.0, 2.5, 0.0), (73.0, 25.0, -18.0), 27.1492)):
+    if abs(ciede2000(_p, _q) - _want) > 1e-3:
+        raise SystemExit(f"ciede2000 port drifted: {ciede2000(_p, _q)} vs {_want}")
+
+# The film kind's screenshot matrix: an emulation name and how to enter it.
+MATRIX = [
+    ("none", {"media": [], "vision": "none"}),
+    ("forced-light", {"media": [{"name": "forced-colors", "value": "active"}, {"name": "prefers-color-scheme", "value": "light"}], "vision": "none"}),
+    ("forced-dark", {"media": [{"name": "forced-colors", "value": "active"}, {"name": "prefers-color-scheme", "value": "dark"}], "vision": "none"}),
+    ("deuteranopia", {"media": [], "vision": "deuteranopia"}),
+    ("protanopia", {"media": [], "vision": "protanopia"}),
+    ("tritanopia", {"media": [], "vision": "tritanopia"}),
+    ("achromatopsia", {"media": [], "vision": "achromatopsia"}),
+]
+MATRIX_RESET = {"media": [{"name": "forced-colors", "value": "none"}, {"name": "prefers-color-scheme", "value": "dark"}], "vision": "none"}
+# The palette test holds CIEDE2000 8 under Machado's model, and Chrome's
+# emulation, a separate implementation, renders the same floor (8.9 at its
+# closest, tritanopia, on the toggle's flight film).
+MIN_SERIES_SEPARATION = 8.0
+FFMPEG_NOTED = False
+
+
 # ----------------------------------------------------------------------------
 # infrastructure
 # ----------------------------------------------------------------------------
@@ -393,6 +469,7 @@ class Edge:
     curves: list = field(default_factory=list)  # (caption, relpath)
     checks: list = field(default_factory=list)
     note: str = ""
+    matrix: list = field(default_factory=list)  # (emulation, relpath) screenshots of the chart
     film: dict | None = None  # {sheet, times, w, h, keys: [(caption, relpath)]}
 
 
@@ -679,7 +756,13 @@ def write_video(cast: list, rect, origin: float, times: list, d: Path, name: str
     (same margin, resized to the sheet's cell), and encode it as VP9 WebM at
     the frames' own timestamps (variable frame rate), aligned to the sheet's
     clock. Returns the file name, or None when there is nothing to encode."""
-    if len(cast) < 2 or rect is None or not shutil.which("ffmpeg"):
+    if not shutil.which("ffmpeg"):
+        global FFMPEG_NOTED
+        if not FFMPEG_NOTED:
+            print("   (no ffmpeg on PATH: films keep their sheets but carry no recording)")
+            FFMPEG_NOTED = True
+        return None
+    if len(cast) < 2 or rect is None:
         return None
     from PIL import Image
     import io
@@ -1064,6 +1147,8 @@ a{color:#0b57d0}
 .film{margin:.6rem 0 1rem;display:block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:930px;user-select:none;-webkit-user-select:none;outline:2px solid transparent;outline-offset:2px}
 .film:focus-visible,.film svg.chart:focus-visible{outline-color:#D55E00}
 .film .stagebox{display:flex;flex-direction:column;align-items:center;padding:4px 0 8px}
+.matrix{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:.6rem;margin:.4rem 0 1rem}
+.matrix figure{margin:0}.matrix img{width:100%;height:auto;border:1px solid #e3e3e3}.matrix figcaption{font-size:.78rem;color:#666}
 .film .stagewrap{position:relative;display:inline-block}
 .film .stage{background-repeat:no-repeat;border:1px solid #e3e3e3;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 .film .stagevideo{position:absolute;inset:1px;width:calc(100% - 2px);height:calc(100% - 2px);display:none;object-fit:fill}
@@ -1270,6 +1355,9 @@ def render_control(rep: ControlReport, out: Path):
             parts.append(f"<h3>{c}</h3><img class='curve' src='{p}' alt='{c}'>")
         parts.append("<h3>Checks</h3><table>" + "".join(
             f"<tr><td class='{'ok' if c.ok else 'fail'}'>{'pass' if c.ok else 'FAIL'}</td><td>{c.name}</td><td>{c.detail}</td></tr>" for c in e.checks) + "</table>")
+        if e.matrix:
+            parts.append("<h4>The chart under every emulation</h4><div class='matrix'>" + "".join(
+                f"<figure><img src='{fn}' alt='the chart under {mode}' loading='lazy'><figcaption>{mode}</figcaption></figure>" for mode, fn in e.matrix) + "</div>")
     parts.append(PLAYER_JS)
     parts.append("</body></html>")
     (d / "index.html").write_text("\n".join(parts))
@@ -1344,6 +1432,9 @@ def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str
                     "ylabel": f["ylabel"]}
             parts.append(f"<h3>Playback{(' <small>' + esc(f['title']) + '</small>') if f.get('title') else ''}</h3>\n"
                          f"<opt-film id=\"{film_id}\" sheet=\"{f['sheet']}\"{(' video=' + chr(34) + f['video'] + chr(34)) if f.get('video') else ''} title=\"{esc(e.title)}\"><script type=\"application/json\">{json.dumps(data)}</script></opt-film>\n")
+        if e.matrix:
+            cells = "".join(f"<figure style=\"margin:0\"><img src=\"{fn}\" alt=\"the chart under {esc(mode)}\" loading=\"lazy\" style=\"width:100%;height:auto;border:1px solid var(--op-border)\"><figcaption>{esc(mode)}</figcaption></figure>" for mode, fn in e.matrix)
+            parts.append(f"<h3>The chart under every emulation</h3>\n<div style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem\">{cells}</div>\n")
         rows = "".join(f"<tr><td><opt-term scheme=\"outcome\" value=\"{'pass' if c.ok else 'fail'}\"></opt-term></td><td>{esc(c.name)}</td><td>{esc(c.detail)}</td></tr>" for c in e.checks)
         parts.append(f"<h3>Checks</h3>\n<opt-table lined=\"\"><table><thead><tr><th>outcome</th><th>check</th><th>detail</th></tr></thead><tbody>{rows}</tbody></table></opt-table>\n")
     parts.append("</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This report is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n")
@@ -1378,6 +1469,8 @@ def render_integrated(reports: list[ControlReport], statics: list[str], adhoc_ou
                 shutil.copy(adhoc_out / rep.tag / e.film["sheet"], d / e.film["sheet"])
                 if e.film.get("video"):
                     shutil.copy(adhoc_out / rep.tag / e.film["video"], d / e.film["video"])
+            for _, fn in e.matrix:
+                shutil.copy(adhoc_out / rep.tag / fn, d / fn)
         (d / "index.html").write_text(integrated_page(rep, head, nav, prefix))
     (out / "index.html").write_text(integrated_index(reports, statics, head, nav, prefix))
 
@@ -1629,6 +1722,88 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     else:
         e6.checks.append(Check("this film carries a recording", False, "no video element on the stage: the run that produced this page had no screencast or no ffmpeg"))
     rep.edges.append(e6)
+    # E7 the chart under every emulation: a screenshot each, and the series must stay apart in all of them
+    e7 = Edge(("Paused", "Peek", "Paused"), "Colour vision and forced palettes",
+              "The chart captured under forced colours with both system palettes and under the four vision deficiencies; in each, the rendered series stay pairwise apart (CIEDE2000 at least 8), or, where every stroke is one system colour, their dash patterns differ.")
+    from PIL import Image
+    import io
+    GEOM = f"""(() => {{ const sr = {F}.shadowRoot, svg = sr.querySelector('svg.chart'); const r = svg.getBoundingClientRect(); const vb = svg.viewBox.baseVal;
+      const series = [...sr.querySelectorAll('polyline[class^=series]')].map(p => {{ const cls = p.getAttribute('class');
+        const sw = sr.querySelector('line.swatch.' + cls);
+        // the end label's swatch is a solid stroke in the series colour that label spreading keeps clear of every other series;
+        // without one (an unlabelled series) fall back to the polyline's own points
+        const pts = sw ? [[(+sw.getAttribute('x1') + +sw.getAttribute('x2')) / 2, +sw.getAttribute('y1')]] : p.getAttribute('points').split(' ').map(s => s.split(',').map(Number));
+        const paint = getComputedStyle(sw || p).stroke;
+        return {{cls, dash: getComputedStyle(p).strokeDasharray, pts, probe: sw ? 'swatch' : 'line', paint}}; }});
+      const surface = getComputedStyle(sr.host).backgroundColor;
+      return {{rect: [r.x, r.y, r.width, r.height], vb: [vb.width, vb.height], series, surface, scroll: [window.scrollX, window.scrollY]}}; }})()"""
+    b.js(f"{F}.scrollIntoView({{block: 'center'}}); 'ok'")
+    # the pointer's last position left the film peeking; the thumbnail would cover the chart's edge
+    b.hover(2, 2)
+    time.sleep(0.3)
+    geom = b.js(GEOM)
+    rx, ry, rw, rh = geom["rect"]
+    sx, sy = rw / geom["vb"][0], rh / geom["vb"][1]
+    files = []
+    probes = {}  # series class -> the pixel proven to be its own stroke in the unemulated capture
+
+    def rgb_of(css):
+        return tuple(int(v) for v in re.findall(r"\d+", css)[:3]) if css and css.startswith("rgb") else None
+    for mode, how in MATRIX + [("reset", MATRIX_RESET)]:
+        b.call("Emulation.setEmulatedMedia", features=how["media"])
+        b.call("Emulation.setEmulatedVisionDeficiency", type=how["vision"])
+        time.sleep(0.25)
+        if mode == "reset":
+            break
+        x0 = rx + (geom["scroll"][0] if b.clip_uses_page_coords else 0)
+        y0 = ry + (geom["scroll"][1] if b.clip_uses_page_coords else 0)
+        shot = b.call("Page.captureScreenshot", format="png", clip={"x": x0, "y": y0, "width": rw, "height": rh, "scale": 1.0})
+        png = base64.b64decode(shot["data"])
+        (d / f"matrix-{mode}.png").write_bytes(png)
+        files.append((mode, f"matrix-{mode}.png"))
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        ksx, ksy = img.width / rw, img.height / rh
+        surface = tuple(int(v) for v in re.findall(r"\d+", geom["surface"])[:3]) if geom["surface"].startswith("rgb") else (0, 0, 0)
+        # the rendered colour of each series, read at a pixel proven (in the unemulated
+        # capture) to carry that series' own stroke, so no neighbour can be read instead
+        colours, dashes = {}, {}
+        for sr in geom["series"]:
+            dashes[sr["cls"]] = sr["dash"]
+            if mode == "none":
+                want = rgb_of(sr["paint"])
+                # a stroke edge is anti-aliased, so accept a pixel within a small
+                # distance of the paint; a neighbouring element's colour is far beyond it
+                best, best_d = None, 8.0
+                for (px, py) in sr["pts"]:
+                    ix, iy = int(px * sx * ksx), int(py * sy * ksy)
+                    for dx in range(-2, 3):
+                        for dy in range(-2, 3):
+                            if 0 <= ix + dx < img.width and 0 <= iy + dy < img.height and want:
+                                c = img.getpixel((ix + dx, iy + dy))
+                                dist = ciede2000(_srgb_to_lab(c), _srgb_to_lab(want))
+                                if dist < best_d:
+                                    best, best_d = (ix + dx, iy + dy), dist
+                if best:
+                    probes[sr["cls"]] = best
+            if sr["cls"] in probes:
+                colours[sr["cls"]] = img.getpixel(probes[sr["cls"]])
+        names = sorted(colours)
+        worst, worst_pair = float("inf"), ""
+        for i in range(len(names)):
+            for j in range(i + 1, len(names)):
+                dist = ciede2000(_srgb_to_lab(colours[names[i]]), _srgb_to_lab(colours[names[j]]))
+                if dist < worst:
+                    worst, worst_pair = dist, f"{names[i]} vs {names[j]}"
+        if mode.startswith("forced") or mode == "achromatopsia":
+            # one system colour, or no hue at all: identity rests on the dash table
+            distinct = len(set(dashes.values())) == len(dashes)
+            e7.checks.append(Check(f"{mode}: dashes tell the series apart", distinct and len(dashes) >= 2,
+                                   f"{len(dashes)} series, dashes {sorted(set(dashes.values()))}"))
+        else:
+            e7.checks.append(Check(f"{mode}: rendered series stay pairwise apart", len(names) >= 2 and worst >= MIN_SERIES_SEPARATION,
+                                   f"{len(names)} of {len(geom['series'])} series probed; closest pair {worst_pair} at dE00 {worst:.1f}" if names else "no series probed"))
+    e7.matrix = files
+    rep.edges.append(e7)
     return rep
 
 # ----------------------------------------------------------------------------

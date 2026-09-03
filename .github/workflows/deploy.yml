@@ -68,6 +68,9 @@ jobs:
       - name: Build site
         run: trunk build --release
 
+      - name: Install ffmpeg (the report encodes each film's screencast as VP9 WebM)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+
       - name: Interaction report (real-input harness over every control)
         # Drives each control through its machine edges with CDP mouse and
         # keyboard events in headless Chrome and renders the evidence; a

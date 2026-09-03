@@ -482,3 +482,25 @@ Each phase is sized for one engineer and ends with a check that can fail.
 - Chartability, Elavsky, Fizz Studio, n.d., https://chartability.fizz.studio/ : heuristics overview and audit statistics. [R]
 - Vertical Temperature Slider Example: duplicative screen reader text, aria-practices issue 3257, W3C, 2025, https://github.com/w3c/aria-practices/issues/3257 : duplicate value readout and fix. [R]
 - prefers-reduced-motion media feature, MDN, n.d., https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion : values and OS settings. [R]
+
+## Phase 1 close-out (2026-09-04)
+
+Delivered: the series, band, playhead and peek tokens in both themes, fitted
+by op-colour's `fit_series` and re-derived by the palette test (WCAG 3:1 on
+every backdrop, APCA Lc 45 on the dark backdrops, CIEDE2000 10 in normal
+vision and 8 after simulated deficiency, the two-band structure and the
+Okabe-Ito hues); the chart emitter writes series classes only; the dash
+table, markers, direct end labels with halos and greedy placement; the
+forced-colours, high-contrast and print rules; and real-render checks in
+the film kind of the interaction report, including a screenshot matrix
+under forced colours with both system palettes and under the four vision
+deficiencies, with a separability check on the rendered strokes.
+
+Two departures from the phase as written. The `--op-grid` alias to the
+border token was dropped: the chart reads `--op-border` directly, and an
+alias would fail the specimen and easing-registration tests for no benefit.
+The resvg pixel tests are deferred: the browser real-render checks already
+assert what they would (computed paints, dash visibility, halos, and now
+the rendered stroke colours under every emulation), and resvg would add a
+heavy build dependency for a weaker oracle. Revisit if a check ever needs
+to run without a browser.

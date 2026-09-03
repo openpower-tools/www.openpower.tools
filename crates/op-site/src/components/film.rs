@@ -205,6 +205,22 @@ const SERIES_CSS: &str = "
 /// to a system colour here: series, axes and text on CanvasText with the
 /// dashes and markers carrying identity, the played region and playhead on
 /// Highlight, the band as an outline.
+/// Print keeps no palette: everything goes to print blacks and greys on
+/// white, the dashes and markers carry identity, and the band is an
+/// outline. Backgrounds are forced to print so the halos still work.
+const PRINT_CSS: &str = "
+@media print {
+  .chart { print-color-adjust: exact; -webkit-print-color-adjust: exact; background: white; }
+  .chart polyline[class^=series], .chart .swatch, .chart .tick, .chart .mark, .chart .chapter { stroke: black; }
+  .chart .marker { display: inline; stroke: black; fill: white; }
+  .chart .axis, .chart .marklabel, .chart .endlabel, .chart .head-t { fill: black; stroke: white; }
+  .chart .grid { stroke: #bbbbbb; }
+  .chart .band { fill: none; stroke: black; stroke-dasharray: 4 3; opacity: 1; }
+  .chart .bar-bg { fill: #dddddd; } .chart .bar-played { fill: #555555; }
+  .chart .head { stroke: black; } .chart .head-dot { fill: black; }
+  .chart .peek-line { display: none; }
+}";
+
 const FORCED_COLOURS_CSS: &str = "
 @media (forced-colors: active) {
   .chart { forced-color-adjust: auto; background: Canvas; }
@@ -759,10 +775,11 @@ impl CustomElement for Film {
 .chart .grid {{ stroke: var(--op-border); }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
 .chart .mark {{ stroke: var(--op-accent); stroke-dasharray: 3 3; }} .chart .marklabel {{ fill: var(--op-accent); }}
 .chart .endlabel {{ fill: var(--op-text); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 3; }}
-.chart .swatch {{ stroke-width: 3; }}
+.chart .swatch {{ stroke-width: 3; shape-rendering: crispEdges; }}
 .chart .marker {{ display: none; fill: var(--op-surface); stroke-width: 1.5; stroke-dasharray: none; }} .chart .marker.shown {{ display: inline; }}
 {SERIES_CSS}
 {FORCED_COLOURS_CSS}
+{PRINT_CSS}
 @media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart polyline[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
 .chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 .chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
@@ -1297,6 +1314,24 @@ mod chart_reference {
             assert!(FORCED_COLOURS_CSS.contains(system));
         }
         assert!(!FORCED_COLOURS_CSS.contains("var(--op-series"));
+        // print: the same paints mapped to print blacks and greys on white, identity by dash and marker
+        for class in [
+            "polyline[class^=series]",
+            ".marker",
+            ".endlabel",
+            ".grid",
+            ".band",
+            ".bar-played",
+            ".head",
+            "print-color-adjust: exact",
+        ] {
+            assert!(PRINT_CSS.contains(class), "{class} has no print rule");
+        }
+        assert!(PRINT_CSS.starts_with("\n@media print {"));
+        assert!(!PRINT_CSS.contains("var(--op-series"));
+        // the print rule never overrides the series dash table
+        assert!(!PRINT_CSS.contains("polyline.series-"));
+        assert!(PRINT_CSS.contains(".chart .marker { display: inline;"));
     }
 
     #[test]
