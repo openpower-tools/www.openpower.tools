@@ -6,7 +6,9 @@
       Hover the chart or the strip to peek without moving the playhead; press the chart to
       scrub; press a strip frame and drag to choose, release to seek, Escape to cancel.
       Keys while focused follow the familiar model: Space or K, comma and period to step
-      frames, arrows, J and L, digits, Home and End, the angle brackets for speed.</p>
+      frames, arrows, J and L, Shift with an arrow for one second, Page Up and Page Down
+      by chapter (Ctrl or Alt with an arrow does the same), digits, Home and End, the
+      angle brackets for speed.</p>
       <h2>Example</h2>
       <opt:film sheet="/opt-film-demo.png" title="Eight frames of a theme flight">
         <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"]], "ylabel": "progress %", "series": [{"label": "palette", "color": "#E69F00", "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "color": "#0072B2", "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "color": "#009E73", "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>

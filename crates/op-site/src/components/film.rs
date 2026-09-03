@@ -14,7 +14,9 @@
 //! playhead does not move); pressing the chart scrubs; pressing a strip
 //! frame and dragging chooses a pending frame, release seeks, Escape
 //! cancels. Keys while focused: Space/K, `,` `.` frame step, arrows five
-//! frames, J/L ten, 0-9 tenths, Home/End, `<` `>` speed, Escape.
+//! frames, J/L ten, Shift+arrow one second, PageUp/PageDown by chapter
+//! (Ctrl or Alt with an arrow as an alias), 0-9 tenths, Home/End, `<` `>`
+//! speed, Escape.
 //!
 //! Internal state is exposed as custom states - `playing`, `pending`,
 //! `peeking` - so a page can style or test against them; every render
@@ -162,138 +164,57 @@ impl Data {
     fn end(&self) -> f64 {
         self.t_max.max(self.times.last().copied().unwrap_or(0.0))
     }
-}
 
-// ---- the chart, an SVG with a playhead and a chapter bar --------------
-const CW: f64 = 900.0;
-const CH: f64 = 268.0;
-const ML: f64 = 46.0;
-const MR: f64 = 14.0;
-const MT: f64 = 16.0;
-const MB: f64 = 48.0;
-const YMIN: f64 = -4.0;
-const YMAX: f64 = 106.0;
-
-fn x_of(d: &Data, t: f64) -> f64 {
-    ML + (t / d.t_max).clamp(0.0, 1.0) * (CW - ML - MR)
-}
-
-fn y_of(v: f64) -> f64 {
-    MT + (YMAX - v.clamp(YMIN, YMAX)) / (YMAX - YMIN) * (CH - MT - MB)
-}
-
-fn chart_svg(d: &Data) -> String {
-    let mut out = format!(
-        "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 {CW} {CH}\" tabindex=\"0\" role=\"slider\" aria-label=\"playhead\" aria-valuemin=\"0\" aria-valuemax=\"{:.2}\" aria-valuenow=\"0\" aria-valuetext=\"0.00 seconds\">",
-        d.end()
-    );
-    for v in [0.0, 25.0, 50.0, 75.0, 100.0] {
-        let y = y_of(v);
-        let w = if v == 0.0 || v == 100.0 { 1.0 } else { 0.5 };
-        out.push_str(&format!("<line class=\"grid\" x1=\"{ML}\" x2=\"{:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\" stroke-width=\"{w}\"/>", CW - MR));
-        out.push_str(&format!(
-            "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{v:.0}</text>",
-            ML - 6.0,
-            y + 4.0
-        ));
+    /// Start of the chapter after `t`, if there is one.
+    fn next_chapter_start(&self, t: f64) -> Option<f64> {
+        self.chapters.iter().map(|c| c.0).find(|&c| c > t + 1e-6)
     }
-    let step = if d.t_max <= 5.0 { 0.5 } else { 1.0 };
-    let mut t = 0.0;
-    while t <= d.t_max + 1e-9 {
-        let x = x_of(d, t);
-        out.push_str(&format!(
-            "<line class=\"tick\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"/>",
-            CH - MB,
-            CH - MB + 4.0
-        ));
-        out.push_str(&format!(
-            "<text class=\"axis\" x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{t}s</text>",
-            CH - MB + 16.0
-        ));
-        t += step;
-    }
-    let mid_y = (CH - MB + MT) / 2.0;
-    out.push_str(&format!(
-        "<text class=\"axis\" x=\"14\" y=\"{mid_y:.1}\" transform=\"rotate(-90 14 {mid_y:.1})\" text-anchor=\"middle\">{}</text>",
-        escape(&d.ylabel)
-    ));
-    for (tm, label) in d.chapters.iter().skip(1) {
-        let x = x_of(d, *tm);
-        out.push_str(&format!(
-            "<line class=\"mark\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{MT}\" y2=\"{:.1}\"/>",
-            CH - MB
-        ));
-        out.push_str(&format!(
-            "<text class=\"marklabel\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
-            x + 4.0,
-            MT + 10.0,
-            escape(label)
-        ));
-    }
-    for s in &d.series {
-        let pts: Vec<String> =
-            s.t.iter()
-                .zip(&s.y)
-                .map(|(t, v)| format!("{:.1},{:.1}", x_of(d, *t), y_of(*v)))
-                .collect();
-        let dash = if s.dash {
-            " stroke-dasharray=\"5 4\""
-        } else {
-            ""
-        };
-        out.push_str(&format!(
-            "<polyline points=\"{}\" fill=\"none\" stroke=\"{}\" stroke-width=\"{}\"{dash} stroke-linejoin=\"round\"/>",
-            pts.join(" "),
-            escape(&s.color),
-            s.lw
-        ));
-        if !s.label.is_empty() && !s.t.is_empty() {
-            let i = ((s.t.len() as f64 * s.at) as usize).min(s.t.len() - 1);
-            out.push_str(&format!(
-                "<text class=\"serieslabel\" x=\"{:.1}\" y=\"{:.1}\" fill=\"{}\">{}</text>",
-                x_of(d, s.t[i]) + 4.0,
-                y_of(s.y[i]) - 5.0,
-                escape(&s.color),
-                escape(&s.label)
-            ));
+
+    /// Where a previous-chapter key lands: the current chapter's start when
+    /// the playhead has moved past the chapter's first frame, otherwise the
+    /// previous chapter's start (or the beginning).
+    fn prev_chapter_start(&self, t: f64) -> f64 {
+        let current = self.chapter_at(t).0;
+        if self.frame_at(t) > self.frame_at(current) {
+            return current;
         }
+        self.chapters
+            .iter()
+            .map(|c| c.0)
+            .filter(|&c| c < current - 1e-6)
+            .fold(0.0, f64::max)
     }
-    let by = CH - 10.0;
-    out.push_str(&format!(
-        "<rect class=\"band\" x=\"{ML}\" y=\"{MT}\" width=\"0\" height=\"{:.1}\"/>",
-        CH - MB - MT
-    ));
-    out.push_str(&format!(
-        "<rect class=\"bar-bg\" x=\"{ML}\" y=\"{by}\" width=\"{:.1}\" height=\"4\" rx=\"2\"/>",
-        CW - ML - MR
-    ));
-    out.push_str(&format!(
-        "<rect class=\"bar-played\" x=\"{ML}\" y=\"{by}\" width=\"0\" height=\"4\" rx=\"2\"/>"
-    ));
-    for (tm, _) in d.chapters.iter().skip(1) {
-        let x = x_of(d, *tm);
-        out.push_str(&format!(
-            "<rect class=\"chapter\" x=\"{:.1}\" y=\"{:.1}\" width=\"2\" height=\"10\"/>",
-            x - 1.0,
-            by - 3.0
-        ));
+}
+
+// ---- the chart: drawn by op-chart, moved here -------------------------
+/// The film's data as a chart spec: one axis for every series, chapters as
+/// marks, and the colours exactly as the data passes them.
+fn spec_of(d: &Data) -> op_chart::Spec {
+    op_chart::Spec {
+        end: d.t_max,
+        duration: d.end(),
+        ylabel: d.ylabel.clone(),
+        chapters: d
+            .chapters
+            .iter()
+            .map(|(t, label)| op_chart::Chapter {
+                t: *t,
+                label: label.clone(),
+            })
+            .collect(),
+        series: d
+            .series
+            .iter()
+            .map(|s| op_chart::Series {
+                label: s.label.clone(),
+                colour: s.color.clone(),
+                points: s.t.iter().copied().zip(s.y.iter().copied()).collect(),
+                dash: s.dash,
+                width: s.lw,
+                label_at: s.at,
+            })
+            .collect(),
     }
-    out.push_str(&format!("<line class=\"peek-line\" x1=\"{ML}\" x2=\"{ML}\" y1=\"{MT}\" y2=\"{:.1}\" visibility=\"hidden\"/>", CH - MB));
-    out.push_str(&format!(
-        "<line class=\"head\" x1=\"{ML}\" x2=\"{ML}\" y1=\"{MT}\" y2=\"{:.1}\"/>",
-        by + 4.0
-    ));
-    out.push_str(&format!(
-        "<circle class=\"head-dot\" cx=\"{ML}\" cy=\"{:.1}\" r=\"5\"/>",
-        by + 2.0
-    ));
-    out.push_str(&format!(
-        "<text class=\"head-t\" x=\"{:.1}\" y=\"{:.1}\">0.00s</text>",
-        ML + 4.0,
-        CH - MB - 6.0
-    ));
-    out.push_str("</svg>");
-    out
 }
 
 // ---- state and DOM ---------------------------------------------------
@@ -320,6 +241,8 @@ struct Dom {
     play: Element,
     rate: Element,
     chart: Option<Element>,
+    /// The geometry the chart was drawn with, for hit-testing and the playhead.
+    layout: op_chart::Layout,
     peek: Option<HtmlElement>,
     pframe: Option<HtmlElement>,
     ptime: Option<Element>,
@@ -419,20 +342,17 @@ fn render(dom: &Dom, d: &Data, st: &State) {
     );
     dom.time_label.set_text_content(Some(&fmt(st.tc)));
     if let Some(chart) = &dom.chart {
-        let x = x_of(d, st.tc);
-        if let Some(head) = dom.q(".head") {
-            let _ = head.set_attribute("x1", &format!("{x:.1}"));
-            let _ = head.set_attribute("x2", &format!("{x:.1}"));
-        }
-        if let Some(dot) = dom.q(".head-dot") {
-            let _ = dot.set_attribute("cx", &format!("{x:.1}"));
+        let x = dom.layout.x_of(st.tc);
+        // one transform carries the line, the dot and the readout together
+        if let Some(playhead) = dom.q(".playhead") {
+            let _ = playhead.set_attribute("transform", &format!("translate({x:.1} 0)"));
         }
         if let Some(label) = dom.q(".head-t") {
-            let _ = label.set_attribute("x", &format!("{:.1}", x + 4.0));
             label.set_text_content(Some(&fmt(st.tc)));
         }
         if let Some(played) = dom.q(".bar-played") {
-            let _ = played.set_attribute("width", &format!("{:.1}", (x - ML).max(0.0)));
+            let _ =
+                played.set_attribute("width", &format!("{:.1}", (x - dom.layout.left).max(0.0)));
         }
         let _ = chart.set_attribute("aria-valuenow", &format!("{:.2}", st.tc));
         let _ = chart.set_attribute(
@@ -455,7 +375,7 @@ fn show_peek(dom: &Dom, d: &Data, t: f64, anchor_x: Option<f64>) {
         return;
     };
     let k = d.frame_at(t);
-    let x = x_of(d, t);
+    let x = dom.layout.x_of(t);
     if let Some(line) = dom.q(".peek-line") {
         let _ = line.set_attribute("x1", &format!("{x:.1}"));
         let _ = line.set_attribute("x2", &format!("{x:.1}"));
@@ -469,10 +389,13 @@ fn show_peek(dom: &Dom, d: &Data, t: f64, anchor_x: Option<f64>) {
         .map(|ch| ch.0)
         .unwrap_or(d.end());
     if let Some(band) = dom.q(".band") {
-        let _ = band.set_attribute("x", &format!("{:.1}", x_of(d, c.0)));
+        let _ = band.set_attribute("x", &format!("{:.1}", dom.layout.x_of(c.0)));
         let _ = band.set_attribute(
             "width",
-            &format!("{:.1}", (x_of(d, next_c) - x_of(d, c.0)).max(0.0)),
+            &format!(
+                "{:.1}",
+                (dom.layout.x_of(next_c) - dom.layout.x_of(c.0)).max(0.0)
+            ),
         );
     }
     let _ = pframe.style().set_property(
@@ -482,7 +405,7 @@ fn show_peek(dom: &Dom, d: &Data, t: f64, anchor_x: Option<f64>) {
     ptime.set_text_content(Some(&format!("{} · {}", fmt(d.times[k]), c.1)));
     peek.set_hidden(false);
     let rect = chart.get_bounding_client_rect();
-    let px = anchor_x.unwrap_or_else(|| x * (rect.width() / CW));
+    let px = anchor_x.unwrap_or_else(|| x * (rect.width() / dom.layout.width));
     let _ = peek.style().set_property("left", &format!("{px}px"));
     set_state(&dom.host, "peeking", true);
 }
@@ -573,6 +496,29 @@ impl Player {
         self.seek_to(self.data.times[j]);
     }
 
+    /// Shift plus an arrow: one second of film time either way.
+    fn jump_seconds(&self, dt: f64) {
+        self.pause();
+        let t = self.state.borrow().tc + dt;
+        self.seek_to(t);
+    }
+
+    /// Page Down: the next chapter's start, or the end when there is none.
+    fn chapter_next(&self) {
+        self.pause();
+        let t = self.state.borrow().tc;
+        let target = self.data.next_chapter_start(t).unwrap_or(self.data.end());
+        self.seek_to(target);
+    }
+
+    /// Page Up: back to the chapter start, then to the previous chapter.
+    fn chapter_prev(&self) {
+        self.pause();
+        let t = self.state.borrow().tc;
+        let target = self.data.prev_chapter_start(t);
+        self.seek_to(target);
+    }
+
     fn set_pending(&self, k: usize) {
         self.state.borrow_mut().pending = Some(k);
         self.render();
@@ -610,8 +556,9 @@ impl Player {
             return 0.0;
         };
         let r = chart.get_bounding_client_rect();
-        let px = (f64::from(e.client_x()) - r.left()) * (CW / r.width());
-        ((px - ML) / (CW - ML - MR) * self.data.t_max).clamp(0.0, self.data.end())
+        let layout = self.dom.layout;
+        let px = (f64::from(e.client_x()) - r.left()) * (layout.width / r.width());
+        layout.t_at(px).clamp(0.0, self.data.end())
     }
 
     fn frame_under(&self, e: &MouseEvent) -> Option<usize> {
@@ -692,10 +639,11 @@ impl CustomElement for Film {
                 )
             })
             .collect();
+        let layout = op_chart::Layout::film(data.t_max);
         let chart = if data.series.is_empty() {
             String::new()
         } else {
-            chart_svg(&data)
+            op_chart::render(&spec_of(&data)).svg
         };
         let peek = if chart.is_empty() {
             String::new()
@@ -749,7 +697,7 @@ impl CustomElement for Film {
 <div class=\"stagebox\" part=\"stage\"><div class=\"stage\" style=\"width:{stage_w}px;height:{stage_h}px;background-image:url('{sheet}');background-size:{}px {stage_h}px\"></div><div class=\"stagelabel\"></div></div>
 <div class=\"reelbox\" part=\"reel\"><div class=\"gate\"></div><div class=\"reel\">{cells}</div></div>
 <div class=\"bar\"><button type=\"button\" class=\"play\">Play</button><select aria-label=\"speed\"><option value=\"1\">1x</option><option value=\"0.5\">0.5x</option><option value=\"0.25\">0.25x</option></select><input type=\"range\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"frame\"><span class=\"t\"></span><span class=\"n\">{n} frames; captions give the share of pixels changed since the previous frame</span></div>
-<details class=\"keys\"><summary>Keys</summary><dl><dt>Space, K</dt><dd>play / pause</dd><dt>, .</dt><dd>previous / next frame</dd><dt>← →</dt><dd>five frames back / forward</dd><dt>J L</dt><dd>ten frames back / forward</dd><dt>0-9</dt><dd>seek to 0-90 %</dd><dt>Home End</dt><dd>first / last frame</dd><dt>&lt; &gt;</dt><dd>slower / faster</dd><dt>Esc</dt><dd>cancel a pending seek on the strip</dd></dl><p>Hover the chart or the strip to peek without moving the playhead; press and drag across the strip to choose a frame and release to seek.</p></details>
+<details class=\"keys\"><summary>Keys</summary><dl><dt>Space, K</dt><dd>play / pause</dd><dt>, .</dt><dd>previous / next frame</dd><dt>← →</dt><dd>five frames back / forward</dd><dt>J L</dt><dd>ten frames back / forward</dd><dt>Shift ← →</dt><dd>one second back / forward</dd><dt>PgUp PgDn</dt><dd>previous / next chapter (also Ctrl or Alt with an arrow)</dd><dt>0-9</dt><dd>seek to 0-90 %</dd><dt>Home End</dt><dd>first / last frame</dd><dt>&lt; &gt;</dt><dd>slower / faster</dd><dt>Esc</dt><dd>cancel a pending seek on the strip</dd></dl><p>Hover the chart or the strip to peek without moving the playhead; press and drag across the strip to choose a frame and release to seek.</p></details>
 <div class=\"chartbox\">{chart}{peek}</div><span class=\"sr\" aria-live=\"polite\"></span>",
             stage_w * n as f64,
             n - 1,
@@ -805,6 +753,7 @@ impl CustomElement for Film {
             play,
             rate,
             chart: q(".chart"),
+            layout,
             peek: qh(".peek"),
             pframe: qh(".pframe"),
             ptime: q(".ptime"),
@@ -1027,7 +976,34 @@ impl CustomElement for Film {
                     };
                     let key = ke.key();
                     let n = p.data.times.len() as i64;
+                    // Ctrl or Alt with an arrow aliases the chapter keys, as
+                    // YouTube does; Shift with an arrow is the larger jump.
+                    let chapter_alias = ke.ctrl_key() || ke.alt_key();
                     let handled = match key.as_str() {
+                        "ArrowRight" if chapter_alias => {
+                            p.chapter_next();
+                            true
+                        }
+                        "ArrowLeft" if chapter_alias => {
+                            p.chapter_prev();
+                            true
+                        }
+                        "ArrowRight" if ke.shift_key() => {
+                            p.jump_seconds(1.0);
+                            true
+                        }
+                        "ArrowLeft" if ke.shift_key() => {
+                            p.jump_seconds(-1.0);
+                            true
+                        }
+                        "PageDown" => {
+                            p.chapter_next();
+                            true
+                        }
+                        "PageUp" => {
+                            p.chapter_prev();
+                            true
+                        }
                         " " | "k" | "K" => {
                             if p.state.borrow().playing {
                                 p.pause()
@@ -1109,5 +1085,177 @@ impl CustomElement for Film {
             _player: player,
             _closures: closures,
         });
+    }
+}
+
+#[cfg(test)]
+mod chart_reference {
+    //! The chart as it rendered before its extraction into op-chart, pinned
+    //! in the snapshot files: the extraction must reproduce those elements.
+    use super::*;
+
+    fn series(
+        label: &str,
+        color: &str,
+        t: &[f64],
+        y: &[f64],
+        dash: bool,
+        lw: f64,
+        at: f64,
+    ) -> Series {
+        Series {
+            label: label.to_owned(),
+            color: color.to_owned(),
+            t: t.to_vec(),
+            y: y.to_vec(),
+            dash,
+            lw,
+            at,
+        }
+    }
+
+    /// The demo film on /component/film/: eight frames, one series.
+    pub(crate) fn demo() -> Data {
+        let times = [0.0, 0.2, 0.45, 0.8, 1.2, 1.7, 2.3, 3.0];
+        Data {
+            sheet: "/opt-film-demo.png".to_owned(),
+            w: 220.0,
+            h: 140.0,
+            times: times.to_vec(),
+            deltas: vec![0.0, 0.12, 0.31, 0.5, 0.42, 0.2, 0.08, 0.0],
+            chapters: vec![(0.0, "start".to_owned()), (1.2, "settle".to_owned())],
+            series: vec![series(
+                "thumb travel",
+                "#009E73",
+                &times,
+                &[0.0, 8.0, 30.0, 61.0, 84.0, 95.0, 99.0, 100.0],
+                false,
+                2.4,
+                0.85,
+            )],
+            ylabel: "progress %".to_owned(),
+            t_max: 3.0,
+        }
+    }
+
+    /// A toggle flight: two series, a dashed one, a label with an angle
+    /// bracket to escape, and a long time axis that switches the tick step.
+    pub(crate) fn flight() -> Data {
+        let t: Vec<f64> = (0..=37).map(|i| f64::from(i) * 0.1).collect();
+        let ghost: Vec<f64> = t
+            .iter()
+            .map(|x| (100.0 * (1.0 - (-x * 1.4).exp())).min(100.0))
+            .collect();
+        let palette: Vec<f64> = t
+            .iter()
+            .map(|x| (100.0 * (x / 3.0).clamp(0.0, 1.0)).min(100.0))
+            .collect();
+        Data {
+            sheet: "flight-film.png".to_owned(),
+            w: 320.0,
+            h: 180.0,
+            times: t.clone(),
+            deltas: t.iter().map(|x| (x * 3.0).sin().abs() * 0.4).collect(),
+            chapters: vec![
+                (0.0, "flight".to_owned()),
+                (1.5, "abort <early>".to_owned()),
+                (3.03, "settled".to_owned()),
+            ],
+            series: vec![
+                series("ghost left %", "#0072B2", &t, &ghost, false, 2.4, 0.5),
+                series("palette blend %", "#E69F00", &t, &palette, true, 1.8, 0.85),
+            ],
+            ylabel: "% (opacity, left)".to_owned(),
+            t_max: 3.7,
+        }
+    }
+
+    /// Elements of an SVG string in document order, each tag with the text
+    /// that follows it; `<g>` wrappers are dropped so grouping is free.
+    fn elements(svg: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut rest = svg;
+        while let Some(i) = rest.find('<') {
+            let after = &rest[i..];
+            let end = after.find('>').expect("closed tag") + 1;
+            let tag = &after[..end];
+            let text_end = after[end..].find('<').map_or(after.len(), |j| end + j);
+            let text = &after[end..text_end];
+            if !(tag.starts_with("<g ") || tag == "</g>") {
+                out.push(format!("{tag}{text}"));
+            }
+            rest = &after[text_end..];
+        }
+        out
+    }
+
+    /// The markup inside an insta snapshot file, after its header.
+    fn pinned(snap: &str) -> &str {
+        let body = snap
+            .find("\n---\n")
+            .map(|i| &snap[i + 5..])
+            .expect("snapshot header");
+        body.trim_end()
+    }
+
+    /// op-chart must emit exactly the elements chart_svg emitted before the
+    /// extraction, in order, except the playhead (now one group at the axis
+    /// origin) and the readout (now in the axis band, not over the data).
+    #[test]
+    fn op_chart_reproduces_the_pinned_chart() {
+        let cases = [
+            (
+                demo(),
+                include_str!(
+                    "snapshots/op_site__components__film__chart_reference__demo_chart_is_pinned.snap"
+                ),
+            ),
+            (
+                flight(),
+                include_str!(
+                    "snapshots/op_site__components__film__chart_reference__flight_chart_is_pinned.snap"
+                ),
+            ),
+        ];
+        for (data, snap) in cases {
+            let new = op_chart::render(&spec_of(&data)).svg;
+            let old = pinned(snap);
+            let moved = |e: &String| {
+                e.contains("class=\"head\"")
+                    || e.contains("class=\"head-dot\"")
+                    || e.contains("class=\"head-t\"")
+            };
+            let before: Vec<String> = elements(old).into_iter().filter(|e| !moved(e)).collect();
+            let after: Vec<String> = elements(&new).into_iter().filter(|e| !moved(e)).collect();
+            assert!(before.len() > 20);
+            assert_eq!(before, after);
+            assert!(old.contains("<line class=\"head\" x1=\"46\" x2=\"46\""));
+            assert!(new.contains("<g class=\"playhead\" transform=\"translate(46 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
+            assert!(old.contains("<text class=\"head-t\" x=\"50.0\" y=\"214.0\">0.00s</text>"));
+            assert!(new.contains("<text class=\"head-t\" x=\"4\" y=\"236.0\">0.00s</text>"));
+        }
+    }
+
+    #[test]
+    fn chapter_keys_land_on_chapter_starts() {
+        let d = flight(); // chapters at 0, 1.5 and 3.03; frames every 0.1 s
+        assert_eq!(d.next_chapter_start(0.0), Some(1.5));
+        assert_eq!(d.next_chapter_start(1.5), Some(3.03));
+        assert_eq!(d.next_chapter_start(3.5), None);
+        // exactly on a chapter start: the previous chapter
+        assert_eq!(d.prev_chapter_start(1.5), 0.0);
+        assert_eq!(d.prev_chapter_start(3.03), 1.5);
+        // past the chapter's first frame: back to the chapter start
+        assert_eq!(d.prev_chapter_start(1.7), 1.5);
+        assert_eq!(d.prev_chapter_start(0.3), 0.0);
+        assert_eq!(d.prev_chapter_start(3.6), 3.03);
+    }
+
+    #[test]
+    fn the_layout_the_film_keeps_matches_the_chart_it_drew() {
+        let d = flight();
+        let r = op_chart::render(&spec_of(&d));
+        assert_eq!(r.layout, op_chart::Layout::film(d.t_max));
+        assert_eq!(r.layout.t_at(r.layout.x_of(1.5)), 1.5);
     }
 }

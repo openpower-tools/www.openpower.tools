@@ -11,6 +11,7 @@ repository.workspace = true
 op-parts.workspace = true
 op-webc.workspace = true
 op-terms.workspace = true
+op-chart.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
@@ -52,3 +53,4 @@ web-sys = { workspace = true, features = [
 
 [dev-dependencies]
 op-pages.workspace = true
+insta.workspace = true

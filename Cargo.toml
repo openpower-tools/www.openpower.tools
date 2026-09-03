@@ -5,7 +5,7 @@ cargo-features = ["trim-paths"]
 
 [workspace]
 resolver = "3"
-members = ["crates/op-webc", "crates/op-parts", "crates/op-terms", "crates/op-site", "crates/op-assets", "crates/op-pages"]
+members = ["crates/op-webc", "crates/op-parts", "crates/op-terms", "crates/op-chart", "crates/op-site", "crates/op-assets", "crates/op-pages"]
 
 [workspace.package]
 edition = "2024"
@@ -14,6 +14,9 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/openpower-tools/www.openpower.tools"
 
 [workspace.dependencies]
+op-chart = { path = "crates/op-chart" }
+insta = "1"
+proptest = { version = "1", default-features = false, features = ["std"] }
 wasm-bindgen = "0.2.127"
 wasm-bindgen-futures = "0.4.54"
 js-sys = "0.3.104"
