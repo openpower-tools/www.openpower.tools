@@ -806,7 +806,7 @@ a{color:#0b57d0}
 .film .stagebox{display:flex;justify-content:center;padding:4px 0 8px}
 .film .stage{background-repeat:no-repeat;border:1px solid #e3e3e3;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 .film .reelbox{position:relative;overflow:hidden;width:100%;padding:6px 0;border-top:1px solid #eee}
-.film .gate{position:absolute;left:50%;top:0;bottom:0;width:0;border-left:2px dashed #D55E00;opacity:.55;pointer-events:none;z-index:2}
+.film .gate{position:absolute;left:0;top:0;bottom:0;width:0;margin-left:-1px;border-left:2px solid #D55E00;opacity:.75;pointer-events:none;z-index:2}
 .film .reel{display:flex;gap:8px;align-items:flex-start;will-change:transform}
 .film .fr{margin:0;flex:none;cursor:pointer;text-align:center}
 .film .fr .cell{background-repeat:no-repeat;border:1px solid #e3e3e3;box-sizing:content-box}
@@ -821,7 +821,7 @@ a{color:#0b57d0}
 PLAYER_JS = """<script>
 document.querySelectorAll('.film').forEach(f => {
   const times = JSON.parse(f.dataset.times), n = times.length, w = +f.dataset.w, h = +f.dataset.h;
-  const reelbox = f.querySelector('.reelbox'), reel = f.querySelector('.reel'), frs = [...f.querySelectorAll('.fr')];
+  const reelbox = f.querySelector('.reelbox'), reel = f.querySelector('.reel'), gate = f.querySelector('.gate'), frs = [...f.querySelectorAll('.fr')];
   const slider = f.querySelector('input'), label = f.querySelector('.t'), btn = f.querySelector('button'), rate = f.querySelector('select');
   const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headT = chart && chart.querySelector('.head-t');
   const x0 = chart ? +chart.dataset.x0 : 0, x1 = chart ? +chart.dataset.x1 : 1, t1 = chart ? +chart.dataset.t1 : times[n - 1];
@@ -849,10 +849,18 @@ document.querySelectorAll('.film').forEach(f => {
     // fractional position between frames, so the reel glides on playback
     const next = Math.min(n - 1, k + 1), span = times[next] - times[k];
     const frac = span > 0 ? Math.min(1, Math.max(0, (tc - times[k]) / span)) : 0;
-    // measured from the DOM, so borders, gaps and caption widths cannot drift the gate
+    // The strip stays still and is paged; the marker travels across the
+    // page and restarts at the left when the strip pages forward. All
+    // positions are measured from the DOM so borders and captions cannot
+    // drift the marker.
     const mid = j => frs[j].offsetLeft + frs[j].offsetWidth / 2;
-    const pos = mid(k) + frac * (mid(next) - mid(k));
-    reel.style.transform = 'translateX(' + (reelbox.clientWidth / 2 - pos) + 'px)';
+    const pitch = n > 1 ? frs[1].offsetLeft - frs[0].offsetLeft : frs[0].offsetWidth;
+    const perPage = Math.max(1, Math.floor(reelbox.clientWidth / pitch));
+    const page = Math.floor(k / perPage), pageLeft = frs[page * perPage].offsetLeft;
+    reel.style.transform = 'translateX(' + (-pageLeft) + 'px)';
+    const samePage = Math.floor(next / perPage) === page;
+    const pos = mid(k) + (samePage ? frac * (mid(next) - mid(k)) : 0);
+    gate.style.left = (pos - pageLeft) + 'px';
     frs.forEach((fr, j) => fr.classList.toggle('current', j === k));
     stage.style.backgroundPosition = (-k * sw) + 'px 0';
     slider.value = k; label.textContent = tc.toFixed(2) + 's';
@@ -911,7 +919,7 @@ def render_control(rep: ControlReport, out: Path):
                 f"<div class='bar'><button type='button'>Play</button>"
                 f"<select><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
                 f"<input type='range' min='0' max='{len(f['times']) - 1}' value='0'><span class='t'></span>"
-                f"<span class='n'>{len(f['times'])} frames; captions give the share of pixels changed since the previous frame</span></div>"
+                f"<span class='n'>{len(f['times'])} frames; captions give the share of pixels changed since the previous frame; the marker pages the strip rather than scrolling it</span></div>"
                 + (f"<div class='chartbox'>{f['chart']}</div>" if f.get("chart") else "")
                 + "</div>")
         if e.frames:
