@@ -95,22 +95,104 @@ fn parse(json: &str) -> Option<Graph> {
     })
 }
 
-/// A point along an edge at parameter `s` in 0..=1, by the same
-/// geometry `svg` draws: straight for forward adjacent edges, quadratic
-/// below otherwise, a cubic loop for self edges.
-pub fn point_on_edge(nodes: &[String], from: &str, to: &str, s: f64) -> (f64, f64) {
-    let n = nodes.len();
-    let pos = |name: &str| -> (f64, f64) {
-        if n == 1 {
-            (180.0, 120.0)
-        } else {
-            let i = nodes.iter().position(|x| x == name).unwrap_or(0);
-            (150.0 + i as f64 * 240.0, 120.0)
+/// Vertical spacing of the diagram: node centres, node radius, and the
+/// lanes below the nodes that carry backward and long edges.
+const NODE_Y: f64 = 120.0;
+const NODE_R: f64 = 36.0;
+const LANE_FIRST: f64 = 60.0;
+const LANE_STEP: f64 = 34.0;
+const CORNER: f64 = 12.0;
+
+fn node_pos(nodes: &[String], name: &str) -> (f64, f64) {
+    if nodes.len() == 1 {
+        (180.0, NODE_Y)
+    } else {
+        let i = nodes.iter().position(|x| x == name).unwrap_or(0);
+        (150.0 + i as f64 * 240.0, NODE_Y)
+    }
+}
+
+fn index_of(nodes: &[String], name: &str) -> usize {
+    nodes.iter().position(|x| x == name).unwrap_or(0)
+}
+
+/// Whether an edge is drawn as a straight line between neighbours (true)
+/// or routed through a lane below the nodes (false). Loops are neither.
+fn straight(nodes: &[String], from: &str, to: &str) -> bool {
+    let (i, j) = (index_of(nodes, from), index_of(nodes, to));
+    j == i + 1
+}
+
+/// The lane of every routed edge: the first lane free of any edge whose
+/// span strictly overlaps, shorter spans first, so two edges never share a
+/// run. Edges that only touch at a node do share a lane; their drops sit on
+/// opposite sides of that node.
+pub fn lanes(
+    nodes: &[String],
+    edges: &[(String, String, String)],
+) -> Vec<((String, String), usize)> {
+    let mut routed: Vec<(usize, usize, String, String)> = edges
+        .iter()
+        .filter(|(f, _, t)| f != t && !straight(nodes, f, t))
+        .map(|(f, _, t)| {
+            let (i, j) = (index_of(nodes, f), index_of(nodes, t));
+            (i.min(j), i.max(j), f.clone(), t.clone())
+        })
+        .collect();
+    routed.sort_by_key(|(lo, hi, f, t)| (hi - lo, *lo, f.clone(), t.clone()));
+    routed.dedup();
+    let mut assigned: Vec<(usize, usize, usize)> = Vec::new(); // (lo, hi, lane)
+    let mut out = Vec::new();
+    for (lo, hi, f, t) in routed {
+        let mut lane = 0;
+        while assigned
+            .iter()
+            .any(|(alo, ahi, l)| *l == lane && lo < *ahi && *alo < hi)
+        {
+            lane += 1;
         }
+        assigned.push((lo, hi, lane));
+        out.push(((f, t), lane));
+    }
+    out
+}
+
+fn lane_of(lanes: &[((String, String), usize)], from: &str, to: &str) -> usize {
+    lanes
+        .iter()
+        .find(|((f, t), _)| f == from && t == to)
+        .map_or(0, |(_, l)| *l)
+}
+
+/// The corner points of a routed edge: down from the source, along the
+/// lane, up into the target. Drops move outward with the lane so several
+/// edges leaving one node never share a vertical.
+fn route(nodes: &[String], from: &str, to: &str, lane: usize) -> [(f64, f64); 4] {
+    let (x1, y1) = node_pos(nodes, from);
+    let (x2, _) = node_pos(nodes, to);
+    let dx = 10.0 + lane as f64 * 6.0;
+    let (sx, ex) = if x2 > x1 {
+        (x1 + dx, x2 - dx)
+    } else {
+        (x1 - dx, x2 + dx)
     };
-    let r = 36.0;
-    let (x1, y1) = pos(from);
-    let (x2, y2) = pos(to);
+    let ly = y1 + NODE_R + LANE_FIRST + lane as f64 * LANE_STEP;
+    [(sx, y1 + NODE_R), (sx, ly), (ex, ly), (ex, y1 + NODE_R)]
+}
+
+/// A point along an edge at parameter `s` in 0..=1, by the same geometry
+/// `svg` draws: a straight line between neighbours, a lane run for routed
+/// edges (by arc length), a cubic loop for self edges.
+pub fn point_on_edge(
+    nodes: &[String],
+    lanes: &[((String, String), usize)],
+    from: &str,
+    to: &str,
+    s: f64,
+) -> (f64, f64) {
+    let r = NODE_R;
+    let (x1, y1) = node_pos(nodes, from);
+    let (x2, _) = node_pos(nodes, to);
     let s = s.clamp(0.0, 1.0);
     if from == to {
         // cubic loop above the node, as drawn
@@ -126,28 +208,32 @@ pub fn point_on_edge(nodes: &[String], from: &str, to: &str, s: f64) -> (f64, f6
             u * u * u * p0.1 + 3.0 * u * u * s * p1.1 + 3.0 * u * s * s * p2.1 + s * s * s * p3.1,
         );
     }
-    let forward = x2 > x1;
-    let adjacent = (nodes.iter().position(|x| x == from).unwrap_or(0) as i64
-        - nodes.iter().position(|x| x == to).unwrap_or(0) as i64)
-        .abs()
-        == 1;
-    if forward && adjacent {
+    if straight(nodes, from, to) {
         let (ax, bx) = (x1 + r, x2 - r);
         return (ax + (bx - ax) * s, y1);
     }
-    let depth = if adjacent { 70.0 } else { 105.0 };
-    let cy = y1 + depth;
-    let (sx, ex) = if forward {
-        (x1 + 8.0, x2 - 8.0)
-    } else {
-        (x1 - 8.0, x2 + 8.0)
-    };
-    let (p0, c, p2) = ((sx, y1 + r), ((x1 + x2) / 2.0, cy + 40.0), (ex, y2 + r));
-    let u = 1.0 - s;
-    (
-        u * u * p0.0 + 2.0 * u * s * c.0 + s * s * p2.0,
-        u * u * p0.1 + 2.0 * u * s * c.1 + s * s * p2.1,
-    )
+    let pts = route(nodes, from, to, lane_of(lanes, from, to));
+    let seg = |a: (f64, f64), b: (f64, f64)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    let lens = [
+        seg(pts[0], pts[1]),
+        seg(pts[1], pts[2]),
+        seg(pts[2], pts[3]),
+    ];
+    let total: f64 = lens.iter().sum();
+    let mut d = s * total;
+    for k in 0..3 {
+        if d <= lens[k] || k == 2 {
+            let f = if lens[k] > 0.0 {
+                (d / lens[k]).clamp(0.0, 1.0)
+            } else {
+                1.0
+            };
+            let (a, b) = (pts[k], pts[k + 1]);
+            return (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
+        }
+        d -= lens[k];
+    }
+    pts[3]
 }
 
 /// Where the token sits at time `t` given a trace: on the destination
@@ -155,7 +241,12 @@ pub fn point_on_edge(nodes: &[String], from: &str, to: &str, s: f64) -> (f64, f6
 /// while it is being traversed, on the origin node before any.
 pub const TRAVERSE_SECONDS: f64 = 0.35;
 
-pub fn token_at(nodes: &[String], trace: &[(f64, String, String, String)], t: f64) -> (f64, f64) {
+pub fn token_at(
+    nodes: &[String],
+    lanes: &[((String, String), usize)],
+    trace: &[(f64, String, String, String)],
+    t: f64,
+) -> (f64, f64) {
     let mut current: Option<&(f64, String, String, String)> = None;
     for row in trace {
         if row.0 <= t + 1e-6 {
@@ -168,14 +259,14 @@ pub fn token_at(nodes: &[String], trace: &[(f64, String, String, String)], t: f6
                 .first()
                 .map(|r| r.1.as_str())
                 .unwrap_or_else(|| nodes.first().map(String::as_str).unwrap_or(""));
-            point_on_edge(nodes, start, start, 0.0)
+            point_on_edge(nodes, lanes, start, start, 0.0)
         }
         Some((t0, from, _input, to)) => {
             let s = ((t - t0) / TRAVERSE_SECONDS).clamp(0.0, 1.0);
             if from == to && s >= 1.0 {
-                return point_on_edge(nodes, to, to, 0.0);
+                return point_on_edge(nodes, lanes, to, to, 0.0);
             }
-            point_on_edge(nodes, from, to, s)
+            point_on_edge(nodes, lanes, from, to, s)
         }
     }
 }
@@ -200,11 +291,16 @@ pub fn svg(
             (150.0 + i as f64 * 240.0, 120.0)
         }
     };
-    let r = 36.0;
+    let r = NODE_R;
+    let lane_table = lanes(nodes, edges);
+    let deepest = lane_table.iter().map(|(_, l)| *l).max();
+    let height = deepest.map_or(250.0, |l| {
+        (NODE_Y + r + LANE_FIRST + l as f64 * LANE_STEP + 18.0).max(250.0)
+    });
     let is_hl =
         |f: &str, i: &str, t: &str| highlight.is_some_and(|h| h.0 == f && h.1 == i && h.2 == t);
     let mut out = format!(
-        "<svg viewBox=\"0 0 {width} 250\" width=\"{width}\" height=\"250\" role=\"img\" aria-label=\"interaction machine\"><defs><marker id=\"a\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10z\" class=\"arrow\"/></marker><marker id=\"ah\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10z\" class=\"arrow hl\"/></marker></defs>"
+        "<svg viewBox=\"0 0 {width} {height}\" width=\"{width}\" height=\"{height}\" role=\"img\" aria-label=\"interaction machine\"><defs><marker id=\"a\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10z\" class=\"arrow\"/></marker><marker id=\"ah\" viewBox=\"0 0 10 10\" refX=\"9\" refY=\"5\" markerWidth=\"8\" markerHeight=\"8\" orient=\"auto-start-reverse\"><path d=\"M0 0L10 5L0 10z\" class=\"arrow hl\"/></marker></defs>"
     );
     let mut loops: Vec<(String, Vec<String>)> = Vec::new();
     for (f, i, t) in edges {
@@ -223,10 +319,7 @@ pub fn svg(
         let (x1, y1) = pos(f);
         let (x2, y2) = pos(t);
         let forward = x2 > x1;
-        let adjacent = (nodes.iter().position(|x| x == f).unwrap_or(0) as i64
-            - nodes.iter().position(|x| x == t).unwrap_or(0) as i64)
-            .abs()
-            == 1;
+        let adjacent = straight(nodes, f, t);
         let class = if hl { "edge hl" } else { "edge" };
         let marker = if hl { "ah" } else { "a" };
         let (path, lx, ly) = if forward && adjacent {
@@ -236,23 +329,31 @@ pub fn svg(
                 y1 - 10.0,
             )
         } else {
-            let depth = if adjacent { 70.0 } else { 105.0 };
-            let cy = y1 + depth;
-            let (sx, ex) = if forward {
-                (x1 + 8.0, x2 - 8.0)
-            } else {
-                (x1 - 8.0, x2 + 8.0)
-            };
+            // down from the source, along its lane, up into the target, with
+            // rounded corners; the label sits above the run, off the stroke
+            let lane = lane_of(&lane_table, f, t);
+            let [p0, p1, p2, p3] = route(nodes, f, t, lane);
+            let dir = if p2.0 > p1.0 { 1.0 } else { -1.0 };
             let path = format!(
-                "M{sx} {} Q{} {} {ex} {}",
-                y1 + r,
-                (x1 + x2) / 2.0,
-                cy + 40.0,
-                y2 + r
+                "M{} {} L{} {} Q{} {} {} {} L{} {} Q{} {} {} {} L{} {}",
+                p0.0,
+                p0.1,
+                p1.0,
+                p1.1 - CORNER,
+                p1.0,
+                p1.1,
+                p1.0 + dir * CORNER,
+                p1.1,
+                p2.0 - dir * CORNER,
+                p2.1,
+                p2.0,
+                p2.1,
+                p2.0,
+                p2.1 - CORNER,
+                p3.0,
+                p3.1
             );
-            let lx = (sx + 2.0 * (x1 + x2) / 2.0 + ex) / 4.0;
-            let ly = (y1 + r + 2.0 * (cy + 40.0) + y2 + r) / 4.0 + 4.0;
-            (path, lx, ly)
+            (path, (p1.0 + p2.0) / 2.0, p1.1 - 7.0)
         };
         out.push_str(&format!(
             "<path d=\"{path}\" class=\"{class}\" marker-end=\"url(#{marker})\"/>"
@@ -353,9 +454,10 @@ svg {{ max-width: 100%; height: auto; }}
             let token = shadow.query_selector(".token").ok().flatten();
             let nodes = graph.nodes.clone();
             let trace = graph.trace.clone();
+            let lane_table = lanes(&nodes, &graph.edges);
             move |t: f64| {
                 if let Some(token) = &token {
-                    let (x, y) = token_at(&nodes, &trace, t);
+                    let (x, y) = token_at(&nodes, &lane_table, &trace, t);
                     let _ = token.set_attribute("cx", &format!("{x:.1}"));
                     let _ = token.set_attribute("cy", &format!("{y:.1}"));
                 }
@@ -394,6 +496,59 @@ mod tests {
         x.to_owned()
     }
 
+    /// The toggle's machine: three flight states, every input.
+    fn toggle() -> (Vec<String>, Vec<(String, String, String)>) {
+        let nodes = vec![s("Idle"), s("Toward"), s("Back")];
+        let edges = vec![
+            (s("Idle"), s("Attend"), s("Idle")),
+            (s("Idle"), s("Activate"), s("Toward")),
+            (s("Toward"), s("Activate"), s("Back")),
+            (s("Toward"), s("Finished"), s("Idle")),
+            (s("Back"), s("Activate"), s("Toward")),
+            (s("Back"), s("Finished"), s("Idle")),
+        ];
+        (nodes, edges)
+    }
+
+    /// Routed edges never share a run, labels sit above their run, and the
+    /// diagram grows to hold the deepest lane.
+    #[test]
+    fn routed_edges_take_distinct_lanes_and_labels_sit_above_their_runs() {
+        let (nodes, edges) = toggle();
+        let table = lanes(&nodes, &edges);
+        let lane = |f: &str, t: &str| lane_of(&table, f, t);
+        // the two short backward edges only touch at Toward and share lane 0;
+        // the long one spans both and takes the next lane
+        assert_eq!(lane("Toward", "Idle"), 0);
+        assert_eq!(lane("Back", "Toward"), 0);
+        assert_eq!(lane("Back", "Idle"), 1);
+        let out = svg(&nodes, &edges, None);
+        // every routed label is 7 px above its lane's run and no two lanes coincide
+        let runs: Vec<f64> = (0..=1)
+            .map(|l| NODE_Y + NODE_R + LANE_FIRST + l as f64 * LANE_STEP)
+            .collect();
+        for run in &runs {
+            assert!(
+                out.contains(&format!(
+                    "y=\"{}\" text-anchor=\"middle\" class=\"label\"",
+                    run - 7.0
+                )),
+                "label above run {run}"
+            );
+        }
+        assert!(out.contains(&format!(
+            "viewBox=\"0 0 780 {}\"",
+            NODE_Y + NODE_R + LANE_FIRST + LANE_STEP + 18.0
+        )));
+        // the drops of the two edges meeting at Toward sit on opposite sides of it
+        let [p0, ..] = route(&nodes, "Toward", "Idle", 0);
+        let [.., p3] = route(&nodes, "Back", "Toward", 0);
+        let (tx, _) = node_pos(&nodes, "Toward");
+        assert!(p0.0 < tx && p3.0 > tx);
+        // a lane run stays clear of the run above it by the lane step
+        assert!(runs[1] - runs[0] >= 30.0);
+    }
+
     #[test]
     fn highlights_exactly_the_requested_edge_and_its_nodes() {
         let nodes = vec![s("Idle"), s("Toward"), s("Back")];
@@ -421,36 +576,37 @@ mod tests {
 
     #[test]
     fn the_token_rests_on_nodes_and_travels_edges_on_the_trace_clock() {
-        let nodes = vec![s("Idle"), s("Toward"), s("Back")];
+        let (nodes, edges) = toggle();
+        let lanes = lanes(&nodes, &edges);
         let trace = vec![
             (1.0, s("Idle"), s("Activate"), s("Toward")),
             (4.0, s("Toward"), s("Finished"), s("Idle")),
         ];
-        let idle = point_on_edge(&nodes, "Idle", "Idle", 0.0);
-        let toward = point_on_edge(&nodes, "Toward", "Toward", 0.0);
+        let idle = point_on_edge(&nodes, &lanes, "Idle", "Idle", 0.0);
+        let toward = point_on_edge(&nodes, &lanes, "Toward", "Toward", 0.0);
         assert_eq!(
-            token_at(&nodes, &trace, 0.0),
+            token_at(&nodes, &lanes, &trace, 0.0),
             idle,
             "before any transition: on the start node"
         );
-        let mid = token_at(&nodes, &trace, 1.0 + TRAVERSE_SECONDS / 2.0);
+        let mid = token_at(&nodes, &lanes, &trace, 1.0 + TRAVERSE_SECONDS / 2.0);
         assert!(
             idle.0 < mid.0 && mid.0 < toward.0,
             "halfway through the traversal window: between the nodes"
         );
         assert_eq!(
-            token_at(&nodes, &trace, 2.5),
-            point_on_edge(&nodes, "Idle", "Toward", 1.0),
+            token_at(&nodes, &lanes, &trace, 2.5),
+            point_on_edge(&nodes, &lanes, "Idle", "Toward", 1.0),
             "settled at the destination"
         );
-        let back = token_at(&nodes, &trace, 4.0 + TRAVERSE_SECONDS / 2.0);
+        let back = token_at(&nodes, &lanes, &trace, 4.0 + TRAVERSE_SECONDS / 2.0);
         assert!(
             back.1 > 120.0,
             "the return edge is drawn below the nodes, so the token dips"
         );
         assert_eq!(
-            token_at(&nodes, &trace, 9.0),
-            point_on_edge(&nodes, "Toward", "Idle", 1.0)
+            token_at(&nodes, &lanes, &trace, 9.0),
+            point_on_edge(&nodes, &lanes, "Toward", "Idle", 1.0)
         );
     }
 
