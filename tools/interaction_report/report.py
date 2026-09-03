@@ -439,8 +439,9 @@ def changed_fraction(a: bytes, b_: bytes) -> float:
 
 def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title=""):
     """Stitches (t, png) frames into a horizontal sprite sheet with a
-    timestamp table, and picks evenly spaced key frames for the static
-    strip, each captioned with how much changed since the previous key."""
+    timestamp table and, per frame, the fraction of pixels that changed
+    since the previous frame - shown as the reel's captions, so a frame
+    that did not change says so instead of merely looking repeated."""
     from PIL import Image
     import io
     if not frames:
@@ -453,20 +454,8 @@ def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, serie
         sheet.paste(im, (i * w, 0))
     sheet.save(d / f"{name}-film.png", optimize=True)
     times = [t for t, _ in frames]
-    picks = sorted({round(i * (len(frames) - 1) / max(1, keys - 1)) for i in range(keys)})
-    key_list = []
-    prev = None
-    for k in picks:
-        p = d / f"{name}-key{k}.png"
-        images[k].save(p)
-        if prev is None:
-            cap = f"t={times[k]:.2f}s"
-        else:
-            delta = changed_fraction(frames[prev][1], frames[k][1])
-            cap = f"t={times[k]:.2f}s ({delta * 100:.0f}% of pixels changed)" if delta > 0.001 else f"t={times[k]:.2f}s (identical)"
-        key_list.append((cap, p.name))
-        prev = k
-    film = {"sheet": f"{name}-film.png", "times": times, "w": w, "h": h, "keys": key_list, "title": title}
+    deltas = [0.0] + [changed_fraction(frames[i - 1][1], frames[i][1]) for i in range(1, len(frames))]
+    film = {"sheet": f"{name}-film.png", "times": times, "deltas": deltas, "w": w, "h": h, "title": title}
     if series:
         t_max = max(max(times), max(max(sr["t"]) for sr in series if sr["t"]))
         film["chart"] = chart_svg(series, t_max, marks, ylabel)
@@ -813,7 +802,16 @@ table{border-collapse:collapse;font-size:.9rem}td,th{padding:.25rem .6rem;border
 .ok{color:#1b7f3b;font-weight:600}.fail{color:#b3261e;font-weight:700}
 p.note{color:#444;max-width:70ch}.machine{margin:.4rem 0 1rem}.summary{padding:.6rem .9rem;background:#fff;border:1px solid #ddd;display:inline-block}
 a{color:#0b57d0}
-.film{margin:.6rem 0 1rem;display:inline-block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:100%;user-select:none;-webkit-user-select:none}
+.film{margin:.6rem 0 1rem;display:block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:930px;user-select:none;-webkit-user-select:none}
+.film .stagebox{display:flex;justify-content:center;padding:4px 0 8px}
+.film .stage{background-repeat:no-repeat;border:1px solid #e3e3e3;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.film .reelbox{position:relative;overflow:hidden;width:100%;padding:6px 0;border-top:1px solid #eee}
+.film .gate{position:absolute;left:50%;top:0;bottom:0;width:0;border-left:2px dashed #D55E00;opacity:.55;pointer-events:none;z-index:2}
+.film .reel{display:flex;gap:8px;align-items:flex-start;will-change:transform}
+.film .fr{margin:0;flex:none;cursor:pointer;text-align:center}
+.film .fr .cell{background-repeat:no-repeat;border:1px solid #e3e3e3;box-sizing:content-box}
+.film .fr.current .cell{outline:2px solid #D55E00;outline-offset:1px}
+.film .fr figcaption{font-size:.72rem;color:#666;font-variant-numeric:tabular-nums;white-space:nowrap}
 .film .chartbox{margin-top:.6rem}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block;touch-action:none}
 .film .view{background-repeat:no-repeat;image-rendering:auto;display:block;max-width:100%}
 .film .bar{display:flex;gap:.6rem;align-items:center;margin-top:.4rem;font-size:.85rem}
@@ -823,20 +821,40 @@ a{color:#0b57d0}
 PLAYER_JS = """<script>
 document.querySelectorAll('.film').forEach(f => {
   const times = JSON.parse(f.dataset.times), n = times.length, w = +f.dataset.w, h = +f.dataset.h;
-  const view = f.querySelector('.view'), slider = f.querySelector('input'), label = f.querySelector('.t');
-  const btn = f.querySelector('button'), rate = f.querySelector('select');
+  const reelbox = f.querySelector('.reelbox'), reel = f.querySelector('.reel'), frs = [...f.querySelectorAll('.fr')];
+  const slider = f.querySelector('input'), label = f.querySelector('.t'), btn = f.querySelector('button'), rate = f.querySelector('select');
   const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headT = chart && chart.querySelector('.head-t');
   const x0 = chart ? +chart.dataset.x0 : 0, x1 = chart ? +chart.dataset.x1 : 1, t1 = chart ? +chart.dataset.t1 : times[n - 1];
   const tEnd = Math.max(times[n - 1], t1);
-  const scale = Math.min(1, 900 / w);
-  view.style.width = (w * scale) + 'px'; view.style.height = (h * scale) + 'px';
-  view.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
-  view.style.backgroundSize = (w * n * scale) + 'px ' + (h * scale) + 'px';
+  // small controls get shown larger, large ones are capped
+  const scale = w < 220 ? 1.5 : Math.min(1, 320 / w);
+  const cw = Math.round(w * scale), ch = Math.round(h * scale);
+  // the stage: one centred frame at a comfortable size, traditional playback
+  const stage = f.querySelector('.stage');
+  const ss = Math.min(900 / w, w < 220 ? 3 : 1.25), sw = Math.round(w * ss), sh = Math.round(h * ss);
+  stage.style.width = sw + 'px'; stage.style.height = sh + 'px';
+  stage.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
+  stage.style.backgroundSize = (sw * n) + 'px ' + sh + 'px';
+  frs.forEach((fr, k) => {
+    const c = fr.querySelector('.cell');
+    c.style.width = cw + 'px'; c.style.height = ch + 'px';
+    c.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
+    c.style.backgroundSize = (cw * n) + 'px ' + ch + 'px';
+    c.style.backgroundPosition = (-k * cw) + 'px 0';
+  });
   let tc = 0, playing = false, raf = 0, last = null;
   const frameAt = t => { let k = 0; for (let j = 0; j < n; j++) if (times[j] <= t + 1e-6) k = j; return k; };
   const render = () => {
     const k = frameAt(tc);
-    view.style.backgroundPosition = (-k * w * scale) + 'px 0';
+    // fractional position between frames, so the reel glides on playback
+    const next = Math.min(n - 1, k + 1), span = times[next] - times[k];
+    const frac = span > 0 ? Math.min(1, Math.max(0, (tc - times[k]) / span)) : 0;
+    // measured from the DOM, so borders, gaps and caption widths cannot drift the gate
+    const mid = j => frs[j].offsetLeft + frs[j].offsetWidth / 2;
+    const pos = mid(k) + frac * (mid(next) - mid(k));
+    reel.style.transform = 'translateX(' + (reelbox.clientWidth / 2 - pos) + 'px)';
+    frs.forEach((fr, j) => fr.classList.toggle('current', j === k));
+    stage.style.backgroundPosition = (-k * sw) + 'px 0';
     slider.value = k; label.textContent = tc.toFixed(2) + 's';
     if (chart) { const x = x0 + Math.min(1, tc / t1) * (x1 - x0); head.setAttribute('x1', x); head.setAttribute('x2', x); headT.setAttribute('x', x + 4); headT.textContent = tc.toFixed(2) + 's'; }
   };
@@ -848,12 +866,14 @@ document.querySelectorAll('.film').forEach(f => {
   };
   btn.addEventListener('click', () => { if (playing) { pause(); return; } playing = true; btn.textContent = 'Pause'; if (tc >= tEnd) tc = 0; raf = requestAnimationFrame(tick); });
   slider.addEventListener('input', () => { pause(); tc = times[+slider.value]; render(); });
+  frs.forEach((fr, k) => fr.addEventListener('click', () => { pause(); tc = times[k]; render(); }));
   if (chart) {
     const seek = e => { const r = chart.getBoundingClientRect(); const vb = chart.viewBox.baseVal; const px = (e.clientX - r.left) * (vb.width / r.width);
       tc = Math.min(tEnd, Math.max(0, (px - x0) / (x1 - x0) * t1)); render(); };
     chart.addEventListener('pointerdown', e => { e.preventDefault(); pause(); seek(e); chart.setPointerCapture(e.pointerId); chart.onpointermove = seek; });
     chart.addEventListener('pointerup', () => { chart.onpointermove = null; });
   }
+  window.addEventListener('resize', render);
   render();
 });
 </script>"""
@@ -878,16 +898,20 @@ def render_control(rep: ControlReport, out: Path):
             parts.append(f"<p class='note'><em>{e.note}</em></p>")
         if e.film:
             f = e.film
-            parts.append("<h3>Key frames</h3><div class='strip'>" + "".join(
-                f"<figure><img class='frame' src='{p}'><figcaption>{c}</figcaption></figure>" for c, p in f["keys"]) + "</div>")
             title = f" <span class='n'>{f['title']}</span>" if f.get("title") else ""
+            cells = "".join(
+                f"<figure class='fr' data-k='{k}'><div class='cell'></div>"
+                f"<figcaption>{t:.2f}s{'' if k == 0 else (' &middot; ' + (f'{dl * 100:.0f}%' if dl > 0.001 else 'same'))}</figcaption></figure>"
+                for k, (t, dl) in enumerate(zip(f["times"], f["deltas"])))
             parts.append(
                 f"<h3>Playback{title}</h3>"
                 f"<div class='film' data-sheet='{f['sheet']}' data-w='{f['w']}' data-h='{f['h']}' data-times='{json.dumps([round(t, 3) for t in f['times']])}'>"
-                f"<div class='view'></div><div class='bar'><button type='button'>Play</button>"
+                f"<div class='stagebox'><div class='stage'></div></div>"
+                f"<div class='reelbox'><div class='gate'></div><div class='reel'>{cells}</div></div>"
+                f"<div class='bar'><button type='button'>Play</button>"
                 f"<select><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
                 f"<input type='range' min='0' max='{len(f['times']) - 1}' value='0'><span class='t'></span>"
-                f"<span class='n'>{len(f['times'])} frames</span></div>"
+                f"<span class='n'>{len(f['times'])} frames; captions give the share of pixels changed since the previous frame</span></div>"
                 + (f"<div class='chartbox'>{f['chart']}</div>" if f.get("chart") else "")
                 + "</div>")
         if e.frames:
