@@ -10,6 +10,7 @@ mod colour;
 pub mod components;
 mod fontprobe;
 mod html;
+pub mod motion;
 pub mod theme;
 
 #[cfg(test)]

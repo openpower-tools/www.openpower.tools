@@ -23,23 +23,10 @@ const ATTRIBUTE: &str = "data-theme";
 
 /// Attribute on `<html>` that arms the slow palette blend declared in
 /// `styles/theme.css`: while present, the registered colour tokens
-/// transition over [`EASE_MS`] on an exponential curve, so a
+/// transition on the blend clock (`crate::motion`), so a
 /// `data-theme` flip creeps in instead of snapping and a second click
 /// can abort it. A contract test keeps the stylesheet in step.
 pub const EASING_ATTRIBUTE: &str = "data-op-theme-easing";
-
-/// How long an armed palette blend runs. The stylesheet's
-/// transition-duration must match (tested); the toggle settles its
-/// state slightly after this.
-pub const EASE_MS: i32 = 3_000;
-
-/// The blend's exponential timing curve and its shape-preserving
-/// fallback for engines without `linear()`. The stylesheet must use
-/// exactly these (tested), and the toggle's thumb rides the same pair
-/// so the control's position tracks the palette.
-pub const EASE_CURVE: &str = "linear(0, 0.008 10%, 0.021 20%, 0.039 30%, 0.068 40%, 0.111 50%, 0.177 60%, 0.276 70%, 0.426 80%, 0.654 90%, 0.809 95%, 1)";
-pub const EASE_CURVE_FALLBACK: &str = "cubic-bezier(0.9, 0.05, 0.85, 0.3)";
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Dark,
@@ -254,7 +241,7 @@ mod tests {
     /// tokens: every token declared with a hex value is registered as a
     /// typed <color> (with the dark palette as initial value, since dark
     /// is the :root default) and listed in the gated transition, and the
-    /// gate matches [`EASING_ATTRIBUTE`] / [`EASE_MS`].
+    /// gate matches [`EASING_ATTRIBUTE`] and reads the motion tokens.
     #[test]
     fn easing_css_registers_and_transitions_every_colour_token() {
         let css = include_str!("../../../styles/theme.css");
@@ -343,18 +330,8 @@ mod tests {
         transitioned.sort_unstable();
         assert_eq!(transitioned, declared, "transition list != colour tokens");
         assert!(
-            rule.contains(&format!("transition-duration: {}s", EASE_MS / 1000)),
-            "stylesheet duration disagrees with EASE_MS"
-        );
-        assert!(
-            rule.contains(&format!("transition-timing-function: {EASE_CURVE};")),
-            "stylesheet curve disagrees with EASE_CURVE"
-        );
-        assert!(
-            rule.contains(&format!(
-                "transition-timing-function: {EASE_CURVE_FALLBACK};"
-            )),
-            "stylesheet fallback disagrees with EASE_CURVE_FALLBACK"
+            rule.contains("var(--op-motion-blend)"),
+            "the blend must read its clock from the motion tokens"
         );
     }
 

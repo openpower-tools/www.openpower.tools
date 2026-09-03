@@ -16,8 +16,8 @@
 //! icon and all, at full contrast - the final setting, already
 //! decided. The GHOST then plays progress indicator: it departs the
 //! origin side carrying the outgoing icon and travels on exactly the
-//! palette blend's clock and curve (`theme::EASE_MS` /
-//! `theme::EASE_CURVE`, via a `data-easing` attribute armed for the
+//! palette blend's clock and curve (`crate::motion::BLEND_MS` /
+//! `the motion tokens`, via a `data-easing` attribute armed for the
 //! flight), dissolving into the thumb as both it and the palette
 //! arrive. A second click inside that window aborts: the solid thumb
 //! snaps back and ghost and palette rewind in step through CSS
@@ -174,7 +174,7 @@ button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
   z-index: 1;
   background: var(--op-text);
   color: var(--op-bg);
-  transition: left 0.2s ease;
+  transition: left var(--op-motion-snap) ease;
 }}
 .thumb svg, .ghost svg, .preview svg {{ width: 0.8rem; height: 0.8rem; }}
 button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
@@ -187,7 +187,7 @@ button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
   background: color-mix(in srgb, var(--op-text) 85%, transparent);
   color: var(--op-bg);
 }}
-.ghost {{ transition: opacity 0.25s ease; }}
+.ghost {{ transition: opacity var(--op-motion-fade) ease; }}
 button[data-mode=\"dark\"] .ghost {{ left: calc(100% - 1.22rem); }}
 /* In flight the ghost is the progress indicator: it leaves the origin
    side bearing the outgoing icon and rides the palette blend's exact
@@ -195,9 +195,8 @@ button[data-mode=\"dark\"] .ghost {{ left: calc(100% - 1.22rem); }}
 button[data-easing] .ghost {{
   opacity: 0.9;
   transition-property: left, opacity;
-  transition-duration: {ease_ms}ms, 0.25s;
-  transition-timing-function: {ease_fallback}, ease;
-  transition-timing-function: {ease_curve}, ease;
+  transition-duration: var(--op-motion-blend), var(--op-motion-fade);
+  transition-timing-function: var(--op-motion-blend-curve), ease;
 }}
 @keyframes ghost-to-dark {{
   0% {{ left: 0.12rem; opacity: 0; }}
@@ -213,11 +212,11 @@ button[data-easing] .ghost {{
 }}
 button[data-mode=\"light\"]:not([data-easing]):hover .preview,
 button[data-mode=\"light\"]:not([data-easing]):focus-visible .preview {{
-  animation: ghost-to-dark 1.6s ease-in-out infinite;
+  animation: ghost-to-dark var(--op-motion-preview) ease-in-out infinite;
 }}
 button[data-mode=\"dark\"]:not([data-easing]):hover .preview,
 button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
-  animation: ghost-to-light 1.6s ease-in-out infinite;
+  animation: ghost-to-light var(--op-motion-preview) ease-in-out infinite;
 }}
 @media (prefers-reduced-motion: reduce) {{
   .thumb {{ transition: none; }}
@@ -236,10 +235,7 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
   }}
 }}
 </style>
-<button type=\"button\" role=\"switch\"><span class=\"preview\" aria-hidden=\"true\"></span><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>",
-            ease_ms = theme::EASE_MS,
-            ease_curve = theme::EASE_CURVE,
-            ease_fallback = theme::EASE_CURVE_FALLBACK,
+<button type=\"button\" role=\"switch\"><span class=\"preview\" aria-hidden=\"true\"></span><span class=\"ghost\" aria-hidden=\"true\"></span><span class=\"thumb\" aria-hidden=\"true\"></span></button>"
         ));
         let button = shadow
             .query_selector("button")
@@ -288,8 +284,8 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
                     state
                         .started
                         .take()
-                        .map_or(theme::EASE_MS, |start| (now - start) as i32)
-                        .clamp(0, theme::EASE_MS)
+                        .map_or(crate::motion::BLEND_MS, |start| (now - start) as i32)
+                        .clamp(0, crate::motion::BLEND_MS)
                 }
                 // First click: store and show the new theme at once
                 // (the thumb slides now) while the palette blends in
@@ -307,7 +303,7 @@ button[data-mode=\"dark\"]:not([data-easing]):focus-visible .preview {{
                     let _ = target.set_attribute("title", &describing);
                     state.origin = Some(origin);
                     state.started = Some(now);
-                    theme::EASE_MS
+                    crate::motion::BLEND_MS
                 }
             };
             // Either way a blend is now in flight; settle when it is
