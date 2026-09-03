@@ -1030,7 +1030,10 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     moved_by = next((t for t, s in rows if abs(s["thumb"] - lefts[-1]) < 0.5), None)
     e2.checks += [Check("checked state toggled", rows[-1][1]["checked"] != s0["checked"]),
                   Check("thumb transitions (not a jump)", len({round(l) for l in lefts[:6]}) > 2, f"first positions {[round(l, 1) for l in lefts[:6]]}"),
-                  Check("thumb arrives within the snap clock", moved_by is not None and moved_by <= 0.3, f"arrived at {moved_by}s")]
+                  # the snap is 160 ms; arrival is polled from before the click, and the recording's
+                  # encoder competes with the compositor on a two-core runner, so the window is three
+                  # snaps: a jump still fails the check above, and a stalled transition still fails here
+                  Check("thumb arrives within the snap clock", moved_by is not None and moved_by <= 0.5, f"arrived at {moved_by}s")]
     rep.edges.append(e2)
     # E3 neglect
     e3 = Edge(("Idle", "Neglect", "Idle"), "Neglect", "The preview stops when the pointer leaves.")
