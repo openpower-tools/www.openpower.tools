@@ -12,16 +12,19 @@
 //! with aria-checked (checked = dark) carries the semantics, and
 //! keyboard focus mirrors hover affordances with an accent outline.
 //!
-//! A click swaps the thumb's icon to the destination at once, then
-//! the thumb travels on exactly the palette blend's clock and curve
-//! (`theme::EASE_MS` / `theme::EASE_CURVE`, via a `data-easing`
-//! attribute armed for the flight), so the control IS the progress
-//! indicator: both arrive together. A second click inside that window
-//! aborts: the stored choice returns immediately and thumb and
-//! palette glide back in step, shortened by CSS transition reversing.
-//! Theme changes without a click (a system preference flip while no
-//! choice is stored) stay instant. The choice persists via
-//! `crate::theme`.
+//! A click settles the SOLID thumb instantly on the destination side,
+//! icon and all, at full contrast - the final setting, already
+//! decided. The GHOST then plays progress indicator: it departs the
+//! origin side carrying the outgoing icon and travels on exactly the
+//! palette blend's clock and curve (`theme::EASE_MS` /
+//! `theme::EASE_CURVE`, via a `data-easing` attribute armed for the
+//! flight), dissolving into the thumb as both it and the palette
+//! arrive. A second click inside that window aborts: the solid thumb
+//! snaps back and ghost and palette rewind in step through CSS
+//! transition reversing. The hover preview owns the ghost only while
+//! no flight is running; theme changes without a click (a system
+//! preference flip while no choice is stored) stay instant. The
+//! choice persists via `crate::theme`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -159,18 +162,26 @@ button:hover, button:focus-visible {{ outline-color: var(--op-accent); }}
 }}
 .thumb svg, .ghost svg {{ width: 0.8rem; height: 0.8rem; }}
 button[data-mode=\"dark\"] .thumb {{ left: calc(100% - 1.22rem); }}
-button[data-easing] .thumb {{
-  transition-duration: {ease_ms}ms;
-  transition-timing-function: {ease_fallback};
-  transition-timing-function: {ease_curve};
-}}
 .ghost {{
+  left: 0.12rem;
   z-index: 0;
   opacity: 0;
   /* the same contrast pairing as the real thumb, only slightly
-     translucent, so the destination icon is legible mid-flight */
+     translucent, so its icon is legible mid-flight */
   background: color-mix(in srgb, var(--op-text) 85%, transparent);
   color: var(--op-bg);
+  transition: opacity 0.25s ease;
+}}
+button[data-mode=\"dark\"] .ghost {{ left: calc(100% - 1.22rem); }}
+/* In flight the ghost is the progress indicator: it leaves the origin
+   side bearing the outgoing icon and rides the palette blend's exact
+   clock and curve toward the thumb, which already shows the outcome. */
+button[data-easing] .ghost {{
+  opacity: 0.9;
+  transition-property: left, opacity;
+  transition-duration: {ease_ms}ms, 0.25s;
+  transition-timing-function: {ease_fallback}, ease;
+  transition-timing-function: {ease_curve}, ease;
 }}
 @keyframes ghost-to-dark {{
   0% {{ left: 0.12rem; opacity: 0; }}
@@ -184,15 +195,17 @@ button[data-easing] .thumb {{
   70% {{ opacity: 0.9; }}
   100% {{ left: 0.12rem; opacity: 0; }}
 }}
-button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
+button[data-mode=\"light\"]:not([data-easing]):hover .ghost,
+button[data-mode=\"light\"]:not([data-easing]):focus-visible .ghost {{
   animation: ghost-to-dark 1.6s ease-in-out infinite;
 }}
-button[data-mode=\"dark\"]:hover .ghost, button[data-mode=\"dark\"]:focus-visible .ghost {{
+button[data-mode=\"dark\"]:not([data-easing]):hover .ghost,
+button[data-mode=\"dark\"]:not([data-easing]):focus-visible .ghost {{
   animation: ghost-to-light 1.6s ease-in-out infinite;
 }}
 @media (prefers-reduced-motion: reduce) {{
-  .thumb, button[data-easing] .thumb {{ transition: none; }}
-  .ghost {{ animation: none !important; }}
+  .thumb {{ transition: none; }}
+  .ghost, button[data-easing] .ghost {{ animation: none !important; transition: none; }}
   /* no travel: the preview simply appears at the destination side */
   button[data-mode=\"light\"]:hover .ghost, button[data-mode=\"light\"]:focus-visible .ghost {{
     opacity: 0.9;
