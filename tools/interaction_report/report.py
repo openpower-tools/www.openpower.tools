@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["websocket-client>=1.8", "matplotlib>=3.9", "pillow>=10"]
+# dependencies = ["websocket-client>=1.8", "pillow>=10"]
 # ///
 """Interaction report and harness for www.openpower.tools.
 
@@ -162,7 +162,7 @@ class Browser:
         self.clip_uses_page_coords = not (px[0] > 200 and px[1] < 60 and px[2] > 200)
         self.js("(() => { document.getElementById('__op_mark').remove(); document.documentElement.style.minHeight=''; window.scrollTo(0,0); return true; })()")
 
-    def frame(self, path: Path, rect, margin: float = 14, scale: float = 3):
+    def frame_bytes(self, rect, margin: float = 14, scale: float = 2) -> bytes:
         x, y, w, h = rect
         if self.clip_uses_page_coords:
             sx, sy = self.js("[window.scrollX, window.scrollY]")
@@ -170,7 +170,10 @@ class Browser:
         shot = self.call("Page.captureScreenshot", format="png",
                          clip={"x": max(0, x - margin), "y": max(0, y - margin),
                                "width": w + 2 * margin, "height": h + 2 * margin, "scale": scale})
-        path.write_bytes(base64.b64decode(shot["data"]))
+        return base64.b64decode(shot["data"])
+
+    def frame(self, path: Path, rect, margin: float = 14, scale: float = 2):
+        path.write_bytes(self.frame_bytes(rect, margin, scale))
 
 
 HELPERS = r"""
@@ -257,6 +260,7 @@ class Edge:
     curves: list = field(default_factory=list)  # (caption, relpath)
     checks: list = field(default_factory=list)
     note: str = ""
+    film: dict | None = None  # {sheet, times, w, h, keys: [(caption, relpath)]}
 
 
 @dataclass
@@ -339,48 +343,127 @@ def machine_svg(nodes: list[str], edges: list[tuple], highlight: tuple | None) -
 
 
 # ----------------------------------------------------------------------------
-# plotting
+# charts: inline SVG with a playhead, sharing the film's clock
 # ----------------------------------------------------------------------------
-def plot(path: Path, title: str, series: list[dict], vlines: list[tuple] = (), ylabel="progress %", ylim=(-4, 106)):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    fig, ax = plt.subplots(figsize=(9.6, 4.2), dpi=140)
-    for s in series:
-        ax.plot(s["t"], s["y"], color=s["color"], linewidth=s.get("lw", 1.5), linestyle=s.get("ls", "-"))
-        if s.get("label"):
-            i = int(len(s["t"]) * s.get("at", 0.85))
-            ax.annotate(s["label"], xy=(s["t"][i], s["y"][i]), xytext=(4, 4), textcoords="offset points",
-                        color=s["color"], fontsize=9, fontweight="bold")
-    for x, label in vlines:
-        ax.axvline(x, color=OKABE["mark"], linewidth=0.9, linestyle=(0, (2, 2)))
-        ax.annotate(label, xy=(x + 0.04, 98), color=OKABE["mark"], fontsize=9)
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.set_xlabel("seconds")
-    ax.set_ylabel(ylabel)
-    ax.set_ylim(*ylim)
-    ax.grid(axis="y", linewidth=0.3, alpha=0.35)
-    ax.set_title(title, fontsize=11, loc="left")
-    fig.tight_layout()
-    fig.savefig(path)
-    plt.close(fig)
+CHART_W, CHART_H, ML, MR, MT, MB = 900, 250, 46, 14, 16, 30
+
+
+def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progress %", ymin=-4, ymax=106) -> str:
+    """Series: {label, color, t: [..], y: [..], dash?: bool}. The SVG
+    carries a head line the player moves; data-x0/x1/t1 map time to px."""
+    x_of = lambda t: ML + (t / t_max) * (CHART_W - ML - MR)  # noqa: E731
+    y_of = lambda v: MT + (ymax - v) / (ymax - ymin) * (CHART_H - MT - MB)  # noqa: E731
+    out = [f'<svg class="chart" viewBox="0 0 {CHART_W} {CHART_H}" width="{CHART_W}" height="{CHART_H}" data-x0="{ML}" data-x1="{CHART_W - MR}" data-t1="{t_max:.3f}" font-family="system-ui, sans-serif" font-size="11" role="img">']
+    for v in (0, 25, 50, 75, 100):
+        y = y_of(v)
+        out.append(f'<line x1="{ML}" x2="{CHART_W - MR}" y1="{y:.1f}" y2="{y:.1f}" stroke="#ddd" stroke-width="{1 if v in (0, 100) else 0.5}"/>')
+        out.append(f'<text x="{ML - 6}" y="{y + 4:.1f}" text-anchor="end" fill="#666">{v}</text>')
+    step = 0.5 if t_max <= 5 else 1.0
+    t = 0.0
+    while t <= t_max + 1e-9:
+        x = x_of(t)
+        out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{CHART_H - MB}" y2="{CHART_H - MB + 4}" stroke="#888"/>')
+        out.append(f'<text x="{x:.1f}" y="{CHART_H - MB + 16}" text-anchor="middle" fill="#666">{t:g}s</text>')
+        t += step
+    out.append(f'<text x="14" y="{(CHART_H - MB + MT) / 2:.1f}" transform="rotate(-90 14 {(CHART_H - MB + MT) / 2:.1f})" text-anchor="middle" fill="#666">{ylabel}</text>')
+    for tm, label in marks:
+        x = x_of(tm)
+        out.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{MT}" y2="{CHART_H - MB}" stroke="{OKABE["mark"]}" stroke-dasharray="3 3"/>')
+        out.append(f'<text x="{x + 4:.1f}" y="{MT + 10}" fill="{OKABE["mark"]}">{label}</text>')
+    for sr in series:
+        pts = " ".join(f"{x_of(t):.1f},{y_of(max(ymin, min(ymax, v))):.1f}" for t, v in zip(sr["t"], sr["y"]))
+        dash = ' stroke-dasharray="5 4"' if sr.get("dash") else ""
+        out.append(f'<polyline points="{pts}" fill="none" stroke="{sr["color"]}" stroke-width="{sr.get("lw", 1.8)}"{dash} stroke-linejoin="round"/>')
+        if sr.get("label") and sr["t"]:
+            i = min(len(sr["t"]) - 1, int(len(sr["t"]) * sr.get("at", 0.85)))
+            out.append(f'<text x="{x_of(sr["t"][i]) + 4:.1f}" y="{y_of(sr["y"][i]) - 5:.1f}" fill="{sr["color"]}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">{sr["label"]}</text>')
+    out.append(f'<line class="head" x1="{ML}" x2="{ML}" y1="{MT}" y2="{CHART_H - MB}" stroke="{OKABE["mark"]}" stroke-width="1.5"/>')
+    out.append(f'<text class="head-t" x="{ML + 4}" y="{CHART_H - MB - 6}" fill="{OKABE["mark"]}" font-weight="700" paint-order="stroke" stroke="#fff" stroke-width="4">0.00s</text>')
+    out.append("</svg>")
+    return "\n".join(out)
 
 
 # ----------------------------------------------------------------------------
 # kinds
 # ----------------------------------------------------------------------------
-def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=None, t0: float | None = None):
+def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=None, t0: float | None = None,
+           film: list | None = None, rect=None, every: int = 1, scale: float = 2):
+    """Samples `expr` for `seconds`; with `film`, also captures a clipped
+    frame every `every`-th sample so frames and curves share one clock."""
     start = time.time()
     t0 = t0 if t0 is not None else start
     rows = []
+    i = 0
     while time.time() - start < seconds:
         s = b.js(expr)
-        rows.append((round(time.time() - t0, 3), s))
+        t = round(time.time() - t0, 3)
+        rows.append((t, s))
+        if film is not None and i % every == 0:
+            film.append((t, b.frame_bytes(rect, scale=scale)))
+        i += 1
         if until and until(s):
             break
         time.sleep(period)
     return rows
+
+
+def burst(b: Browser, rect, seconds: float, fps: float = 15, t0: float | None = None, scale: float = 1.5) -> list:
+    """A short frame sequence with no sampling in between."""
+    start = time.time()
+    t0 = t0 if t0 is not None else start
+    film = []
+    while time.time() - start < seconds:
+        film.append((round(time.time() - t0, 3), b.frame_bytes(rect, scale=scale)))
+        time.sleep(max(0, 1 / fps - 0.02))
+    return film
+
+
+def changed_fraction(a: bytes, b_: bytes) -> float:
+    """Fraction of pixels that differ between two PNG frames of equal size."""
+    from PIL import Image, ImageChops
+    import io
+    ia, ib = Image.open(io.BytesIO(a)).convert("RGB"), Image.open(io.BytesIO(b_)).convert("RGB")
+    if ia.size != ib.size:
+        return 1.0
+    diff = ImageChops.difference(ia, ib).convert("L").point(lambda v: 255 if v > 24 else 0)
+    hist = diff.histogram()
+    return hist[255] / (ia.size[0] * ia.size[1])
+
+
+def make_film(edge: Edge, frames: list, d: Path, name: str, keys: int = 8, series=None, marks=(), ylabel="progress %", title=""):
+    """Stitches (t, png) frames into a horizontal sprite sheet with a
+    timestamp table, and picks evenly spaced key frames for the static
+    strip, each captioned with how much changed since the previous key."""
+    from PIL import Image
+    import io
+    if not frames:
+        return
+    images = [Image.open(io.BytesIO(png)).convert("RGB") for _, png in frames]
+    w, h = images[0].size
+    images = [im if im.size == (w, h) else im.resize((w, h)) for im in images]
+    sheet = Image.new("RGB", (w * len(images), h), "#ffffff")
+    for i, im in enumerate(images):
+        sheet.paste(im, (i * w, 0))
+    sheet.save(d / f"{name}-film.png", optimize=True)
+    times = [t for t, _ in frames]
+    picks = sorted({round(i * (len(frames) - 1) / max(1, keys - 1)) for i in range(keys)})
+    key_list = []
+    prev = None
+    for k in picks:
+        p = d / f"{name}-key{k}.png"
+        images[k].save(p)
+        if prev is None:
+            cap = f"t={times[k]:.2f}s"
+        else:
+            delta = changed_fraction(frames[prev][1], frames[k][1])
+            cap = f"t={times[k]:.2f}s ({delta * 100:.0f}% of pixels changed)" if delta > 0.001 else f"t={times[k]:.2f}s (identical)"
+        key_list.append((cap, p.name))
+        prev = k
+    film = {"sheet": f"{name}-film.png", "times": times, "w": w, "h": h, "keys": key_list, "title": title}
+    if series:
+        t_max = max(max(times), max(max(sr["t"]) for sr in series if sr["t"]))
+        film["chart"] = chart_svg(series, t_max, marks, ylabel)
+    edge.film = film
 
 
 def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> ControlReport:
@@ -399,32 +482,24 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     T = "window.__op.tstate()"
     ST = lambda: b.js(T)  # noqa: E731
     x, y = loc["x"], loc["y"]
+    ideal_t = [i / 100 * 3 for i in range(101)]
+    ideal = [(2 ** (6 * t / 3) - 1) / 63 * 100 for t in ideal_t]
 
-    def frames(edge: Edge, stamps: list[tuple[str, float]], t0: float, prefix: str):
-        for i, (label, at) in enumerate(stamps):
-            time.sleep(max(0, t0 + at - time.time()))
-            p = d / f"{prefix}-{i}.png"
-            b.frame(p, rect)
-            edge.frames.append((f"{label} (t={time.time() - t0:.2f}s)" if at else label, p.name))
-
-    # geometry references: thumb positions on each side
     s0 = ST()
-    rest = {"thumb_on": s0["thumb"], "thumb_off": None, "g_on": green(s0["bg"])}
+    thumb_on, g_on = s0["thumb"], green(s0["bg"])
 
     # ---- E1: Idle --Attend--> Idle : preview loop ----
     e1 = Edge(("Idle", "Attend", "Idle"), "Attend: the pointer arrives",
               "Attention becomes a custom state on the host; while the machine is idle the preview ghost loops toward the destination.")
+    film = []
     b.hover(x, y)
-    t0 = time.time()
-    rows = sample(b, T, 2.0, 0.04)
-    frames(e1, [("preview loop", 0.35), ("", 0.8), ("", 1.3)], t0, "attend")
+    rows = sample(b, T, 2.0, 0.04, film=film, rect=rect)
+    ts = [t for t, _ in rows]
+    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)",
+              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
+                      {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     at = next((t for t, s in rows if s["attention"]), None)
     peak = max(s["preview_op"] for _, s in rows)
-    plot(d / "attend.png", "Preview loop while attended: opacity and position of the preview ghost",
-         [{"t": [t for t, _ in rows], "y": [s["preview_op"] * 100 for _, s in rows], "color": OKABE["preview"], "label": "preview opacity", "lw": 2},
-          {"t": [t for t, _ in rows], "y": [s["preview"] / s["w"] * 100 for _, s in rows], "color": OKABE["ghost"], "label": "preview left (% of track)", "at": 0.5}],
-         ylabel="% (opacity, travel)")
-    e1.curves.append(("Preview loop over its period", "attend.png"))
     e1.checks += [Check("attention custom state set", at is not None and at < 0.3, f"at {at}s"),
                   Check("preview reaches legible opacity", peak >= 0.8, f"peak {peak}"),
                   Check("no flight while merely attended", not any(s["flight"] for _, s in rows))]
@@ -433,85 +508,81 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     # ---- E2: Idle --Activate--> Toward : flight ----
     e2 = Edge(("Idle", "Activate", "Toward"), "Activate: a hovered click starts the flight",
               "The setting flips at once (solid thumb, aria-checked, stored choice); the palette blend and the progress ghost run on the blend clock; the preview is gated off.")
+    film = []
     b.click(x, y)
     t0 = time.time()
     first = ST()
-    rows = sample(b, T, 3.7, 0.05)
-    # frames are taken in a second identical flight below (sampling and capture interfere); reuse the timeline here
+    rows = sample(b, T, 3.7, 0.05, t0=t0, film=film, rect=rect)
     settled = next((t for t, s in rows if not s["flight"]), None)
-    rest["thumb_off"] = rows[-1][1]["thumb"]
-    span = abs(rest["thumb_on"] - rest["thumb_off"])
+    thumb_off = rows[-1][1]["thumb"]
+    span = abs(thumb_on - thumb_off)
     g_off = green(rows[-1][1]["bg"])
     ts = [t for t, _ in rows]
-    ghost = [abs(s["ghost"] - rest["thumb_on"]) / span * 100 for _, s in rows]
-    pal = [(green(s["bg"]) - rest["g_on"]) / (g_off - rest["g_on"]) * 100 for _, s in rows]
-    thumb = [abs(s["thumb"] - rest["thumb_on"]) / span * 100 for _, s in rows]
-    ideal_t = [i / 100 * 3 for i in range(101)]
-    ideal = [(2 ** (6 * t / 3) - 1) / 63 * 100 for t in ideal_t]
+    ghost = [abs(s["ghost"] - thumb_on) / span * 100 for _, s in rows]
+    pal = [(green(s["bg"]) - g_on) / (g_off - g_on) * 100 for _, s in rows]
+    thumb = [abs(s["thumb"] - thumb_on) / span * 100 for _, s in rows]
     gap = max(abs(a - p) for a, p in zip(ghost, pal))
-    plot(d / "flight.png", f"Flight: ghost position and palette on one clock (max gap {gap:.1f} pts)",
-         [{"t": ideal_t, "y": ideal, "color": OKABE["ideal"], "lw": 0.9, "ls": (0, (4, 3)), "label": "ideal exponential", "at": 0.7},
-          {"t": ts, "y": thumb, "color": OKABE["thumb"], "label": "solid thumb", "at": 0.08},
-          {"t": ts, "y": pal, "color": OKABE["palette"], "lw": 2.6, "label": "palette", "at": 0.8},
-          {"t": ts, "y": ghost, "color": OKABE["ghost"], "label": "progress ghost", "at": 0.9},
-          {"t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "color": OKABE["preview"], "lw": 1, "ls": (0, (1, 2)), "label": "preview opacity", "at": 0.3}])
-    e2.curves.append(("Progress curves: flight", "flight.png"))
+    make_film(e2, film, d, "flight", keys=8, title=f"max ghost-palette gap {gap:.1f} pts",
+              series=[{"label": "ideal exponential", "color": OKABE["ideal"], "t": ideal_t, "y": ideal, "lw": 1, "dash": True, "at": 0.68},
+                      {"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.06},
+                      {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
+                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9},
+                      {"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 1, "dash": True, "at": 0.3}])
+    early = [s["preview_op"] for t, s in rows if t < 2.0]
     e2.checks += [Check("flight custom state armed on click", first["flight"]),
                   Check("setting flipped at once", first["dark"] is False and first["checked"] == "false"),
                   Check("description names the switch and the way back", "switching" in (first["title"] or "").lower()),
-                  Check("preview gated off during flight", max(s["preview_op"] for _, s in rows[:40]) < 0.05, "max opacity in first 2s"),
+                  Check("preview gated off during flight", max(early) < 0.05, "max opacity in the first 2s"),
                   Check("ghost tracks the palette", gap < 5, f"max gap {gap:.2f} pts"),
-                  Check("solid thumb settles within the snap clock", thumb[min(6, len(thumb) - 1)] > 85, f"{thumb[min(6, len(thumb) - 1)]:.0f}% at {ts[min(6, len(ts) - 1)]}s")]
+                  Check("solid thumb settles within the snap clock", next((v for t, v in zip(ts, thumb) if t >= 0.3), thumb[-1]) > 85, "position at 0.3s")]
     rep.edges.append(e2)
 
     # ---- E3: Toward --Finished--> Idle ----
     e3 = Edge(("Toward", "Finished", "Idle"), "Finished: the blend's own completion settles the machine",
               "No timer: the palette transitions' finished promises on <html> resolve, the flight state clears, and the preview resumes because the pointer is still there.")
-    after = sample(b, T, 1.9, 0.05)
+    film = []
+    after = sample(b, T, 1.9, 0.05, film=film, rect=rect)
+    ts = [t for t, _ in after]
+    make_film(e3, film, d, "settle", keys=5, ylabel="% (opacity)",
+              series=[{"label": "preview opacity (resuming)", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in after], "lw": 2.4, "at": 0.5}])
     resume = max(s["preview_op"] for _, s in after)
     e3.checks += [Check("settled when the blend ended (2.8-3.4s)", settled is not None and 2.8 <= settled <= 3.4, f"flight cleared at {settled}s"),
-                  Check("palette arrived", green(rows[-1][1]["bg"]) == g_off and abs(g_off - rest["g_on"]) > 100),
+                  Check("palette arrived", green(rows[-1][1]["bg"]) == g_off and abs(g_off - g_on) > 100),
                   Check("preview resumes under the resting pointer", resume >= 0.8, f"peak {resume} within 1.9s")]
     rep.edges.append(e3)
 
-    # ---- frames for the flight: run it again (page is now light; fly back to dark) ----
-    e2b = Edge(("Idle", "Activate", "Toward"), "Frames of a flight (light to dark)", "The same edge, captured frame by frame on the return journey.")
+    # ---- fly back so the abort below starts from dark, as the page began ----
     b.click(x, y)
-    t0 = time.time()
-    frames(e2b, [("t=0.15", 0.15), ("", 0.6), ("", 1.2), ("", 1.8), ("", 2.4), ("", 2.85), ("settled", 3.4)], t0, "flight")
-    time.sleep(0.4)
-    rep.edges.append(e2b)
+    sample(b, T, 3.6, 0.1, until=lambda s_: not s_["flight"] and s_["dark"])
+    time.sleep(0.3)
 
     # ---- E4/E5: Toward --Activate--> Back --Finished--> Idle : abort ----
     e4 = Edge(("Toward", "Activate", "Back"), "Activate mid-flight: abort",
               "The setting returns at once and the armed clocks reverse; CSS shortens the reversal in proportion to how far it had got.")
     before = ST()
+    film = []
     b.click(x, y)
     t0 = time.time()
-    rows = sample(b, T, 1.2, 0.05, t0=t0)
+    rows = sample(b, T, 1.2, 0.05, t0=t0, film=film, rect=rect)
     b.click(x, y)
     t_abort = time.time() - t0
-    rows += sample(b, T, 2.4, 0.05, t0=t0)
-    for t, s in rows:
-        pass
+    rows += sample(b, T, 2.4, 0.05, t0=t0, film=film, rect=rect)
     cleared = next((t for t, s in rows if t > t_abort and not s["flight"]), None)
     origin_dark = before["dark"]
-    frames_e4 = Edge(("Toward", "Activate", "Back"), "", "")
     ts = [t for t, _ in rows]
     g_from = green(rows[0][1]["bg"])
-    g_to = g_off if origin_dark else rest["g_on"]
+    g_to = g_off if origin_dark else g_on
     pal = [(green(s["bg"]) - g_from) / (g_to - g_from) * 100 for _, s in rows]
-    origin_x = rest["thumb_on"] if origin_dark else rest["thumb_off"]
+    origin_x = thumb_on if origin_dark else thumb_off
     ghost = [abs(s["ghost"] - origin_x) / span * 100 for _, s in rows]
     thumb = [abs(s["thumb"] - origin_x) / span * 100 for _, s in rows]
-    plot(d / "abort.png", f"Abort at {t_abort:.2f}s: ghost and palette rewind together, thumb snaps back",
-         [{"t": ts, "y": thumb, "color": OKABE["thumb"], "label": "solid thumb", "at": 0.2},
-          {"t": ts, "y": pal, "color": OKABE["palette"], "lw": 2.6, "label": "palette", "at": 0.3},
-          {"t": ts, "y": ghost, "color": OKABE["ghost"], "label": "progress ghost", "at": 0.25}],
-         vlines=[(t_abort, "second click: abort")])
-    e4.curves.append(("Progress curves: abort", "abort.png"))
-    e4.checks += [Check("setting restored immediately on abort", rows[[t for t, _ in rows].index(next(t for t, _ in rows if t > t_abort))][1]["dark"] == origin_dark),
-                  Check("flight stays armed for the reversal", next((s["flight"] for t, s in rows if t > t_abort), False), "first sample after the abort click")]
+    make_film(e4, film, d, "abort", keys=8, marks=[(t_abort, "second click: abort")],
+              series=[{"label": "solid thumb", "color": OKABE["thumb"], "t": ts, "y": thumb, "at": 0.2},
+                      {"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.3},
+                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.25}])
+    first_after = next((s for t, s in rows if t > t_abort), None)
+    e4.checks += [Check("setting restored immediately on abort", first_after is not None and first_after["dark"] == origin_dark),
+                  Check("flight stays armed for the reversal", bool(first_after and first_after["flight"]), "first sample after the abort click")]
     rep.edges.append(e4)
     e5 = Edge(("Back", "Finished", "Idle"), "Finished after the reversal", "The reversed transitions complete early; their finished promises settle the machine within a fraction of the full blend.")
     e5.checks += [Check("settled soon after the abort", cleared is not None and cleared - t_abort < 1.0, f"cleared {cleared - t_abort:.2f}s after the abort" if cleared else "never cleared"),
@@ -522,36 +593,39 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     e6 = Edge(("Back", "Activate", "Toward"), "Activate during the reversal: fly again",
               "A third click starts a fresh flight from wherever the reversal had got to; the machine goes Toward again with the opposite setting.")
     before = ST()
-    b.click(x, y); t0 = time.time(); time.sleep(0.8)
+    film = []
+    b.click(x, y); t0 = time.time()
+    rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
     b.click(x, y); t_ab = time.time() - t0; time.sleep(0.12)
     b.click(x, y); t_re = time.time() - t0
     s_re = ST()
-    rows = sample(b, T, 3.8, 0.05)
-    settled2 = next((t for t, s in rows if not s["flight"]), None)
-    ts = [t + t_re for t, _ in rows]
-    origin_x = rest["thumb_on"] if before["dark"] else rest["thumb_off"]
+    rows += sample(b, T, 3.8, 0.05, t0=t0, film=film, rect=rect)
+    settled2 = next((t for t, s in rows if t > t_re and not s["flight"]), None)
+    ts = [t for t, _ in rows]
+    origin_x = thumb_on if before["dark"] else thumb_off
     ghost = [abs(s["ghost"] - origin_x) / span * 100 for _, s in rows]
-    g_from = rest["g_on"] if before["dark"] else g_off
-    g_to = g_off if before["dark"] else rest["g_on"]
+    g_from = g_on if before["dark"] else g_off
+    g_to = g_off if before["dark"] else g_on
     pal = [(green(s["bg"]) - g_from) / (g_to - g_from) * 100 for _, s in rows]
-    plot(d / "refly.png", "Abort, then a third click: the flight resumes from the reversal",
-         [{"t": ts, "y": pal, "color": OKABE["palette"], "lw": 2.6, "label": "palette", "at": 0.8},
-          {"t": ts, "y": ghost, "color": OKABE["ghost"], "label": "progress ghost", "at": 0.9}],
-         vlines=[(t_ab, "abort"), (t_re, "fly again")])
-    e6.curves.append(("Progress curves: re-fly", "refly.png"))
+    make_film(e6, film, d, "refly", keys=8, marks=[(t_ab, "abort"), (t_re, "fly again")],
+              series=[{"label": "palette", "color": OKABE["palette"], "t": ts, "y": pal, "lw": 2.6, "at": 0.8},
+                      {"label": "progress ghost", "color": OKABE["ghost"], "t": ts, "y": ghost, "at": 0.9}])
     e6.checks += [Check("third click re-arms toward the opposite setting", s_re["flight"] and s_re["dark"] != before["dark"]),
-                  Check("the new flight settles on its own clock", settled2 is not None and settled2 < 3.6, f"{settled2}s after the third click")]
+                  Check("the new flight settles on its own clock", settled2 is not None and settled2 - t_re < 3.6, f"{settled2 - t_re:.2f}s after the third click" if settled2 else "never")]
     rep.edges.append(e6)
 
     # ---- E7: Neglect ----
     e7 = Edge(("Idle", "Neglect", "Idle"), "Neglect: the pointer leaves", "Attention clears; the preview stops.")
+    film = [(0.0, b.frame_bytes(rect))]
+    t0 = time.time()
     b.hover(2, 2)
-    rows = sample(b, T, 0.8, 0.05)
+    rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
+    ts = [t for t, _ in rows]
+    make_film(e7, film, d, "neglect", keys=4, ylabel="% (opacity)",
+              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4, "at": 0.5}])
     gone = next((t for t, s in rows if not s["attention"]), None)
     e7.checks += [Check("attention custom state cleared", gone is not None and gone < 0.3, f"at {gone}s"),
                   Check("preview hidden once unattended", rows[-1][1]["preview_op"] < 0.05, f"opacity {rows[-1][1]['preview_op']}")]
-    b.frame(d / "neglect.png", rect)
-    e7.frames.append(("after the pointer left", "neglect.png"))
     rep.edges.append(e7)
 
     # ---- E8: reduced motion (same machine, different representation) ----
@@ -559,15 +633,19 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
               "prefers-reduced-motion collapses the snap token and disables the preview loop; the preview appears statically at the destination, and a click still blends the palette (a colour fade is not motion) while the ghost snaps.")
     b.reduced_motion(True)
     time.sleep(0.2)
+    film = [(0.0, b.frame_bytes(rect))]
+    t0 = time.time()
     b.hover(x, y); time.sleep(0.4)
     s_rm = ST()
-    b.frame(d / "reduced-hover.png", rect)
-    e8.frames.append(("reduced motion, hovered: static preview", "reduced-hover.png"))
-    b.click(x, y); t0 = time.time()
-    rows = sample(b, T, 3.6, 0.05)
-    time.sleep(0.0)
-    b.frame(d / "reduced-after.png", rect)
-    e8.frames.append(("reduced motion, after the click", "reduced-after.png"))
+    film.append((round(time.time() - t0, 3), b.frame_bytes(rect)))
+    t_click = time.time() - t0
+    b.click(x, y)
+    rows = sample(b, T, 3.6, 0.05, t0=t0, film=film, rect=rect)
+    ts = [t for t, _ in rows]
+    g_from = green(rows[0][1]["bg"]); g_to = green(rows[-1][1]["bg"])
+    make_film(e8, film, d, "reduced", keys=6, marks=[(t_click, "click")],
+              series=[{"label": "palette (still fades)", "color": OKABE["palette"], "t": ts, "y": [(green(s["bg"]) - g_from) / (g_to - g_from or 1) * 100 for _, s in rows], "lw": 2.6, "at": 0.7},
+                      {"label": "ghost (snaps)", "color": OKABE["ghost"], "t": ts, "y": [abs(s["ghost"] - rows[0][1]["ghost"]) / span * 100 for _, s in rows], "at": 0.3}])
     mid = green(rows[len(rows) // 2][1]["bg"])
     e8.checks += [Check("static preview shown while attended", s_rm["preview_anim"] == "none" and s_rm["preview_op"] >= 0.8, f"animation {s_rm['preview_anim']}, opacity {s_rm['preview_op']}"),
                   Check("ghost snaps to the destination", abs(rows[1][1]["ghost"] - rows[-1][1]["ghost"]) < 1.0),
@@ -594,31 +672,29 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # E1 attend
     e1 = Edge(("Idle", "Attend", "Idle"), "Attend: hover plays the preview",
               "The native input's ::after is the preview ghost, generated from the same parts as the theme toggle: same contrast, same plateau, same clock.")
-    b.hover(x, y); t0 = time.time()
-    rows = sample(b, S, 2.0, 0.04)
-    for i, at in enumerate((0.35, 0.8, 1.3)):
-        time.sleep(max(0, t0 + at - time.time()))
-        b.frame(d / f"attend-{i}.png", rect)
-        e1.frames.append((f"t={time.time() - t0:.2f}s", f"attend-{i}.png"))
+    film = []
+    b.hover(x, y)
+    rows = sample(b, S, 2.0, 0.04, film=film, rect=rect)
+    ts = [t for t, _ in rows]
+    make_film(e1, film, d, "attend", keys=6, ylabel="% (opacity, left)",
+              series=[{"label": "preview opacity", "color": OKABE["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4},
+                      {"label": "preview left (% of track)", "color": OKABE["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     peak = max(s["preview_op"] for _, s in rows)
-    plot(d / "attend.png", "Preview loop on the native switch", [
-        {"t": [t for t, _ in rows], "y": [s["preview_op"] * 100 for _, s in rows], "color": OKABE["preview"], "lw": 2, "label": "preview opacity"},
-        {"t": [t for t, _ in rows], "y": [s["preview"] / s["w"] * 100 for _, s in rows], "color": OKABE["ghost"], "label": "preview left (% of track)", "at": 0.5}],
-        ylabel="% (opacity, left)")
-    e1.curves.append(("Preview loop", "attend.png"))
     e1.checks += [Check("preview animation plays", any(s["anim"].startswith("opt-switch-preview") for _, s in rows)),
                   Check("preview reaches legible opacity", peak >= 0.8, f"peak {peak}")]
     rep.edges.append(e1)
     # E2 activate
     e2 = Edge(("Idle", "Activate", "Idle"), "Activate: the thumb snaps on the snap clock", "A native checkbox toggle; the thumb transitions over --op-motion-snap.")
-    b.click(x, y); t0 = time.time()
-    rows = sample(b, S, 0.5, 0.02)
-    b.frame(d / "activate.png", rect); e2.frames.append(("after the click", "activate.png"))
+    film = [(0.0, b.frame_bytes(rect))]
+    t0 = time.time()
+    b.click(x, y)
+    rows = sample(b, S, 0.5, 0.02, t0=t0, film=film, rect=rect)
     lefts = [s["thumb"] for _, s in rows]
+    ts = [t for t, _ in rows]
+    travel = [abs(l - lefts[0]) / max(1e-6, abs(lefts[-1] - lefts[0])) * 100 for l in lefts]
+    make_film(e2, film, d, "activate", keys=6,
+              series=[{"label": "thumb travel", "color": OKABE["thumb"], "t": ts, "y": travel, "lw": 2.4, "at": 0.5}])
     moved_by = next((t for t, s in rows if abs(s["thumb"] - lefts[-1]) < 0.5), None)
-    plot(d / "activate.png.curve.png", "Thumb position after a click", [
-        {"t": [t for t, _ in rows], "y": [abs(l - lefts[0]) / max(1e-6, abs(lefts[-1] - lefts[0])) * 100 for l in lefts], "color": OKABE["thumb"], "lw": 2, "label": "thumb travel"}])
-    e2.curves.append(("Snap curve", "activate.png.curve.png"))
     e2.checks += [Check("checked state toggled", rows[-1][1]["checked"] != s0["checked"]),
                   Check("thumb transitions (not a jump)", len({round(l) for l in lefts[:6]}) > 2, f"first positions {[round(l, 1) for l in lefts[:6]]}"),
                   Check("thumb arrives within the snap clock", moved_by is not None and moved_by <= 0.3, f"arrived at {moved_by}s")]
@@ -630,9 +706,13 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     rep.edges.append(e3)
     # E4 reduced motion
     e4 = Edge(("Idle", "Attend", "Idle"), "Reduced motion: static preview", "The loop is off; the preview appears at the destination while attended.")
-    b.reduced_motion(True); time.sleep(0.2); b.hover(x, y); time.sleep(0.4)
+    b.reduced_motion(True); time.sleep(0.2)
+    film = [(0.0, b.frame_bytes(rect))]
+    t0 = time.time()
+    b.hover(x, y)
+    film += burst(b, rect, 0.6, t0=t0, scale=2)
     s_rm = b.js(S)
-    b.frame(d / "reduced.png", rect); e4.frames.append(("reduced motion, hovered", "reduced.png"))
+    make_film(e4, film, d, "reduced", keys=3)
     e4.checks += [Check("static preview shown", s_rm["anim"] == "none" and s_rm["preview_op"] >= 0.8, f"animation {s_rm['anim']}, opacity {s_rm['preview_op']}")]
     b.reduced_motion(False); b.hover(2, 2)
     rep.edges.append(e4)
@@ -657,13 +737,15 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     x, y = loc["x"], loc["y"]
     b.hover(2, 2); b.js("window.__op.blur()"); time.sleep(0.2)
     base_sig = b.js("window.__op.sig()")
-    b.frame(d / "rest.png", rect)
+    rest_png = b.frame_bytes(rect, scale=1.5)
     # attend
     e1 = Edge(("Idle", "Attend", "Idle"), "Attend: hover", "A real pointer over the control must change something visible.")
-    b.hover(x, y); time.sleep(0.35)
+    film = [(0.0, rest_png)]
+    t0 = time.time()
+    b.hover(x, y)
+    film += burst(b, rect, 0.5, t0=t0)
     hov = b.js("window.__op.sig()")
-    b.frame(d / "hover.png", rect)
-    e1.frames += [("rest", "rest.png"), ("hovered", "hover.png")]
+    make_film(e1, film, d, "hover", keys=4)
     if ctrl.get("hover", True):
         e1.checks.append(Check("visible hover affordance", hov != base_sig))
     else:
@@ -675,10 +757,12 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     # focus-visible
     e2 = Edge(("Idle", "Focus", "Idle"), "Attend: visible focus", "Keyboard-style focus must show a focus ring or equivalent.")
     b.hover(2, 2); time.sleep(0.2)
+    film = [(0.0, b.frame_bytes(rect, scale=1.5))]
+    t0 = time.time()
     landed = b.js("window.__op.focusVisible()")
-    time.sleep(0.3)
+    film += burst(b, rect, 0.4, t0=t0)
     foc = b.js("window.__op.sig()")
-    b.frame(d / "focus.png", rect); e2.frames.append(("focus-visible", "focus.png"))
+    make_film(e2, film, d, "focus", keys=3)
     e2.checks += [Check("focusable", bool(landed)), Check("visible focus affordance", foc != base_sig)]
     b.js("window.__op.blur()")
     rep.edges.append(e2)
@@ -690,9 +774,13 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     before = b.js(expr) if expr else None
     if b.js("window.__op.holdLink()"):
         e3.note = "a navigating link: clicked with navigation suppressed"
-    b.hover(x, y); b.click(x, y); time.sleep(0.35)
+    b.hover(x, y); time.sleep(0.15)
+    film = [(0.0, b.frame_bytes(rect, scale=1.5))]
+    t0 = time.time()
+    b.click(x, y)
+    film += burst(b, rect, 0.6, t0=t0)
     after = b.js(expr) if expr else None
-    b.frame(d / "activated.png", rect); e3.frames.append(("after the click", "activated.png"))
+    make_film(e3, film, d, "activate", keys=4)
     if expr:
         e3.checks.append(Check(f"activation changes {kind}", before != after, f"{before} -> {after}"))
     else:
@@ -718,7 +806,50 @@ table{border-collapse:collapse;font-size:.9rem}td,th{padding:.25rem .6rem;border
 .ok{color:#1b7f3b;font-weight:600}.fail{color:#b3261e;font-weight:700}
 p.note{color:#444;max-width:70ch}.machine{margin:.4rem 0 1rem}.summary{padding:.6rem .9rem;background:#fff;border:1px solid #ddd;display:inline-block}
 a{color:#0b57d0}
+.film{margin:.6rem 0 1rem;display:inline-block;border:1px solid #ddd;background:#fff;padding:.5rem;max-width:100%}
+.film .chartbox{margin-top:.6rem}.film svg.chart{max-width:100%;height:auto;cursor:ew-resize;display:block}
+.film .view{background-repeat:no-repeat;image-rendering:auto;display:block;max-width:100%}
+.film .bar{display:flex;gap:.6rem;align-items:center;margin-top:.4rem;font-size:.85rem}
+.film input[type=range]{flex:1;min-width:220px}.film .t{font-variant-numeric:tabular-nums;min-width:4.5rem}.film .n{color:#777}
 """
+
+PLAYER_JS = """<script>
+document.querySelectorAll('.film').forEach(f => {
+  const times = JSON.parse(f.dataset.times), n = times.length, w = +f.dataset.w, h = +f.dataset.h;
+  const view = f.querySelector('.view'), slider = f.querySelector('input'), label = f.querySelector('.t');
+  const btn = f.querySelector('button'), rate = f.querySelector('select');
+  const chart = f.querySelector('svg.chart'), head = chart && chart.querySelector('.head'), headT = chart && chart.querySelector('.head-t');
+  const x0 = chart ? +chart.dataset.x0 : 0, x1 = chart ? +chart.dataset.x1 : 1, t1 = chart ? +chart.dataset.t1 : times[n - 1];
+  const tEnd = Math.max(times[n - 1], t1);
+  const scale = Math.min(1, 900 / w);
+  view.style.width = (w * scale) + 'px'; view.style.height = (h * scale) + 'px';
+  view.style.backgroundImage = 'url(' + f.dataset.sheet + ')';
+  view.style.backgroundSize = (w * n * scale) + 'px ' + (h * scale) + 'px';
+  let tc = 0, playing = false, raf = 0, last = null;
+  const frameAt = t => { let k = 0; for (let j = 0; j < n; j++) if (times[j] <= t + 1e-6) k = j; return k; };
+  const render = () => {
+    const k = frameAt(tc);
+    view.style.backgroundPosition = (-k * w * scale) + 'px 0';
+    slider.value = k; label.textContent = tc.toFixed(2) + 's';
+    if (chart) { const x = x0 + Math.min(1, tc / t1) * (x1 - x0); head.setAttribute('x1', x); head.setAttribute('x2', x); headT.setAttribute('x', x + 4); headT.textContent = tc.toFixed(2) + 's'; }
+  };
+  const pause = () => { playing = false; btn.textContent = 'Play'; cancelAnimationFrame(raf); last = null; };
+  const tick = now => {
+    if (!playing) return;
+    if (last !== null) { tc += (now - last) / 1000 * +rate.value; if (tc > tEnd + 0.6) tc = 0; }
+    last = now; render(); raf = requestAnimationFrame(tick);
+  };
+  btn.addEventListener('click', () => { if (playing) { pause(); return; } playing = true; btn.textContent = 'Pause'; if (tc >= tEnd) tc = 0; raf = requestAnimationFrame(tick); });
+  slider.addEventListener('input', () => { pause(); tc = times[+slider.value]; render(); });
+  if (chart) {
+    const seek = e => { const r = chart.getBoundingClientRect(); const vb = chart.viewBox.baseVal; const px = (e.clientX - r.left) * (vb.width / r.width);
+      tc = Math.min(tEnd, Math.max(0, (px - x0) / (x1 - x0) * t1)); render(); };
+    chart.addEventListener('pointerdown', e => { pause(); seek(e); chart.setPointerCapture(e.pointerId); chart.onpointermove = seek; });
+    chart.addEventListener('pointerup', () => { chart.onpointermove = null; });
+  }
+  render();
+});
+</script>"""
 
 
 def render_control(rep: ControlReport, out: Path):
@@ -738,6 +869,20 @@ def render_control(rep: ControlReport, out: Path):
             parts.append(f"<p class='note'>{e.narrative}</p>")
         if e.note:
             parts.append(f"<p class='note'><em>{e.note}</em></p>")
+        if e.film:
+            f = e.film
+            parts.append("<h3>Key frames</h3><div class='strip'>" + "".join(
+                f"<figure><img class='frame' src='{p}'><figcaption>{c}</figcaption></figure>" for c, p in f["keys"]) + "</div>")
+            title = f" <span class='n'>{f['title']}</span>" if f.get("title") else ""
+            parts.append(
+                f"<h3>Playback{title}</h3>"
+                f"<div class='film' data-sheet='{f['sheet']}' data-w='{f['w']}' data-h='{f['h']}' data-times='{json.dumps([round(t, 3) for t in f['times']])}'>"
+                f"<div class='view'></div><div class='bar'><button type='button'>Play</button>"
+                f"<select><option value='1'>1x</option><option value='0.5'>0.5x</option><option value='0.25'>0.25x</option></select>"
+                f"<input type='range' min='0' max='{len(f['times']) - 1}' value='0'><span class='t'></span>"
+                f"<span class='n'>{len(f['times'])} frames</span></div>"
+                + (f"<div class='chartbox'>{f['chart']}</div>" if f.get("chart") else "")
+                + "</div>")
         if e.frames:
             parts.append("<h3>Frames</h3><div class='strip'>" + "".join(
                 f"<figure><img class='frame' src='{p}'><figcaption>{c}</figcaption></figure>" for c, p in e.frames) + "</div>")
@@ -745,6 +890,7 @@ def render_control(rep: ControlReport, out: Path):
             parts.append(f"<h3>{c}</h3><img class='curve' src='{p}' alt='{c}'>")
         parts.append("<h3>Checks</h3><table>" + "".join(
             f"<tr><td class='{'ok' if c.ok else 'fail'}'>{'pass' if c.ok else 'FAIL'}</td><td>{c.name}</td><td>{c.detail}</td></tr>" for c in e.checks) + "</table>")
+    parts.append(PLAYER_JS)
     parts.append("</body></html>")
     (d / "index.html").write_text("\n".join(parts))
 

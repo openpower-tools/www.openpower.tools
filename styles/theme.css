@@ -530,6 +530,7 @@ opt-tree summary {
 
 opt-tree summary:hover {
   color: var(--op-link-hover);
+  background: color-mix(in srgb, var(--op-link-hover) 14%, transparent);
 }
 
 opt-tree details[open] > summary {

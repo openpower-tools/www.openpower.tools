@@ -43,7 +43,10 @@ summary {{
   padding: 0.5rem 0.9rem;
   font-weight: 700;
 }}
-summary:hover {{ color: var(--op-link-hover); }}
+summary:hover {{
+  color: var(--op-link-hover);
+  background: color-mix(in srgb, var(--op-link-hover) 14%, transparent);
+}}
 .body {{ padding: 0 0.9rem 0.75rem; }}
 </style>
 <details{open}><summary>{}</summary><div class=\"body\"><slot></slot></div></details>",
