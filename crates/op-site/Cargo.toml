@@ -53,4 +53,3 @@ web-sys = { workspace = true, features = [
 
 [dev-dependencies]
 op-pages.workspace = true
-insta.workspace = true

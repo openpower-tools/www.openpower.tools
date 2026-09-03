@@ -31,8 +31,10 @@ pub fn escape(text: &str) -> String {
 /// The value gridlines drawn and labelled on the left axis.
 const VALUE_TICKS: [f64; 5] = [0.0, 25.0, 50.0, 75.0, 100.0];
 
-pub fn render(spec: &Spec) -> Rendered {
-    let l = Layout::film(spec.end);
+/// Draw `spec` in the box and scales `l` describes. The caller chooses the
+/// layout (the film uses [`Layout::film`]) so the element and the page
+/// build can size a chart without the renderer knowing about either.
+pub fn render(spec: &Spec, l: Layout) -> Rendered {
     let mut out = format!(
         "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 {} {}\" tabindex=\"0\" role=\"slider\" aria-label=\"playhead\" aria-valuemin=\"0\" aria-valuemax=\"{:.2}\" aria-valuenow=\"0\" aria-valuetext=\"0.00 seconds\">",
         l.width, l.height, spec.duration
@@ -164,12 +166,12 @@ pub fn render(spec: &Spec) -> Rendered {
         l.plot_bottom()
     ));
     out.push_str(&format!(
-        "<g class=\"playhead\" transform=\"translate({} 0)\"><line class=\"head\" x1=\"0\" x2=\"0\" y1=\"{}\" y2=\"{:.1}\"/><circle class=\"head-dot\" cx=\"0\" cy=\"{:.1}\" r=\"5\"/><text class=\"head-t\" x=\"4\" y=\"{:.1}\">0.00s</text></g>",
+        "<g class=\"playhead\" transform=\"translate({:.1} 0)\"><line class=\"head\" x1=\"0\" x2=\"0\" y1=\"{}\" y2=\"{:.1}\"/><circle class=\"head-dot\" cx=\"0\" cy=\"{:.1}\" r=\"5\"/><text class=\"head-t\" x=\"4\" y=\"{:.1}\">0.00s</text></g>",
         l.left,
         l.top,
         by + 4.0,
         by + 2.0,
-        l.axis_label_y()
+        l.readout_y()
     ));
     out.push_str("</svg>");
     Rendered {
@@ -262,14 +264,19 @@ mod tests {
     use super::fixtures::{demo, flight};
     use super::*;
 
+    /// The film's preset box for a spec.
+    fn film(spec: &Spec) -> Rendered {
+        render(spec, Layout::film(spec.end))
+    }
+
     #[test]
     fn demo_chart_snapshot() {
-        insta::assert_snapshot!(render(&demo()).svg);
+        insta::assert_snapshot!(film(&demo()).svg);
     }
 
     #[test]
     fn flight_chart_snapshot() {
-        insta::assert_snapshot!(render(&flight()).svg);
+        insta::assert_snapshot!(film(&flight()).svg);
     }
 
     /// Every `fill=` and `stroke=` value in the markup.
@@ -293,7 +300,7 @@ mod tests {
         for s in &mut spec.series {
             s.colour.clear();
         }
-        let svg = render(&spec).svg;
+        let svg = film(&spec).svg;
         let found = paints(&svg);
         assert!(!found.is_empty());
         for p in &found {
@@ -303,7 +310,7 @@ mod tests {
             );
         }
         // and with colours given, the only literals are exactly those
-        let svg = render(&flight()).svg;
+        let svg = film(&flight()).svg;
         let literals: std::collections::BTreeSet<String> = paints(&svg)
             .into_iter()
             .filter(|p| p != "none" && p != "currentColor" && !p.starts_with("var("))
@@ -315,24 +322,48 @@ mod tests {
 
     #[test]
     fn the_playhead_is_one_group_at_the_axis_origin() {
-        let r = render(&demo());
-        assert!(r.svg.contains("<g class=\"playhead\" transform=\"translate(46 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
+        let r = film(&demo());
+        assert!(r.svg.contains("<g class=\"playhead\" transform=\"translate(46.0 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
         assert!(
             r.svg
-                .contains("<text class=\"head-t\" x=\"4\" y=\"236.0\">0.00s</text>")
+                .contains("<text class=\"head-t\" x=\"4\" y=\"250.0\">0.00s</text>")
         );
         assert_eq!(r.layout, Layout::film(3.0));
     }
 
     #[test]
     fn text_is_escaped_and_ticks_follow_the_axis_length() {
-        let svg = render(&flight()).svg;
+        let svg = film(&flight()).svg;
         assert!(svg.contains("abort &lt;early&gt;"));
         assert!(svg.contains(">3.5s</text>"));
         assert!(!svg.contains(">4s</text>"));
         let mut long = demo();
         long.end = 8.0;
-        let svg = render(&long).svg;
+        let svg = film(&long).svg;
         assert!(svg.contains(">8s</text>") && !svg.contains(">0.5s</text>"));
+    }
+
+    #[test]
+    fn the_readout_sits_between_the_tick_labels_and_the_track() {
+        let l = Layout::film(3.0);
+        let svg = film(&demo()).svg;
+        assert!(svg.contains(&format!(
+            "y=\"{:.1}\" text-anchor=\"middle\">0s</text>",
+            l.axis_label_y()
+        )));
+        assert!(l.readout_y() > l.axis_label_y() + 10.0);
+        assert!(l.readout_y() + 2.0 < l.track_y() - 3.0);
+    }
+
+    #[test]
+    fn a_wider_box_scales_the_axis_without_touching_the_spec() {
+        let mut wide = Layout::film(3.0);
+        wide.width = 1200.0;
+        let r = render(&demo(), wide);
+        assert!(
+            r.svg
+                .starts_with("<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 1200 268\"")
+        );
+        assert_eq!(r.layout.x_of(3.0), 1186.0);
     }
 }

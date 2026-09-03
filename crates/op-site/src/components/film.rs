@@ -643,7 +643,7 @@ impl CustomElement for Film {
         let chart = if data.series.is_empty() {
             String::new()
         } else {
-            op_chart::render(&spec_of(&data)).svg
+            op_chart::render(&spec_of(&data), layout).svg
         };
         let peek = if chart.is_empty() {
             String::new()
@@ -1218,7 +1218,7 @@ mod chart_reference {
             ),
         ];
         for (data, snap) in cases {
-            let new = op_chart::render(&spec_of(&data)).svg;
+            let new = op_chart::render(&spec_of(&data), op_chart::Layout::film(data.t_max)).svg;
             let old = pinned(snap);
             let moved = |e: &String| {
                 e.contains("class=\"head\"")
@@ -1230,9 +1230,9 @@ mod chart_reference {
             assert!(before.len() > 20);
             assert_eq!(before, after);
             assert!(old.contains("<line class=\"head\" x1=\"46\" x2=\"46\""));
-            assert!(new.contains("<g class=\"playhead\" transform=\"translate(46 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
+            assert!(new.contains("<g class=\"playhead\" transform=\"translate(46.0 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
             assert!(old.contains("<text class=\"head-t\" x=\"50.0\" y=\"214.0\">0.00s</text>"));
-            assert!(new.contains("<text class=\"head-t\" x=\"4\" y=\"236.0\">0.00s</text>"));
+            assert!(new.contains("<text class=\"head-t\" x=\"4\" y=\"250.0\">0.00s</text>"));
         }
     }
 
@@ -1254,8 +1254,9 @@ mod chart_reference {
     #[test]
     fn the_layout_the_film_keeps_matches_the_chart_it_drew() {
         let d = flight();
-        let r = op_chart::render(&spec_of(&d));
-        assert_eq!(r.layout, op_chart::Layout::film(d.t_max));
+        let layout = op_chart::Layout::film(d.t_max);
+        let r = op_chart::render(&spec_of(&d), layout);
+        assert_eq!(r.layout, layout);
         assert_eq!(r.layout.t_at(r.layout.x_of(1.5)), 1.5);
     }
 }

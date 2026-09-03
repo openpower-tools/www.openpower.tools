@@ -47,11 +47,16 @@ impl Layout {
         self.height - self.bottom
     }
 
-    /// Baseline of the text in the axis band under the plot: the time-axis
-    /// labels and the playhead readout, which sits there rather than over
-    /// the data.
+    /// Baseline of the time-axis labels in the axis band under the plot.
     pub fn axis_label_y(&self) -> f64 {
         self.plot_bottom() + 16.0
+    }
+
+    /// Baseline of the playhead readout: in the axis band below the tick
+    /// labels and above the track, so it never sits over the data and never
+    /// overprints a tick label as it travels.
+    pub fn readout_y(&self) -> f64 {
+        self.plot_bottom() + 30.0
     }
 
     /// Centre line of the track bar under the axis.
@@ -93,6 +98,11 @@ mod tests {
         assert_eq!(l.y_of(-4.0), 220.0);
         assert!(l.y_of(0.0) > l.y_of(100.0));
         assert_eq!(l.axis_label_y(), 236.0);
+        assert_eq!(l.readout_y(), 250.0);
+        assert!(
+            l.readout_y() < l.track_y() - 3.0 - 4.0,
+            "the readout clears the chapter ticks"
+        );
         assert_eq!(l.track_y(), 258.0);
     }
 

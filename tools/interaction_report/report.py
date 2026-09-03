@@ -1205,6 +1205,20 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         key(key_, code)
         ks.append(b.js(S)["k"])
     e2.checks.append(Check("keys step frames as documented", ks == [0, 1, 2, 1, 6], f"{ks}"))
+    # the playhead is one group moved by a transform; its line keeps its own coordinates at the origin
+    PH = f"""(() => {{ const sr = {F}.shadowRoot, g = sr.querySelector('svg.chart > g.playhead'), h = sr.querySelector('.head'), rt = sr.querySelector('.head-t');
+      const ty = +sr.querySelector('.chart text.axis[text-anchor="middle"]').getAttribute('y');
+      return {{transform: g && g.getAttribute('transform'), head: h && [h.getAttribute('x1'), h.getAttribute('x2')], readout_y: rt && +rt.getAttribute('y'), tick_y: ty}}; }})()"""
+    key("Home", "Home")
+    ph0 = b.js(PH)
+    key("End", "End")
+    ph1 = b.js(PH)
+    e2.checks += [Check("the playhead group moves by one transform on seek",
+                        bool(ph0["transform"]) and ph0["transform"] != ph1["transform"] and str(ph1["transform"]).startswith("translate("),
+                        f"{ph0['transform']} -> {ph1['transform']}"),
+                  Check("the playhead line keeps its own coordinates at the origin", ph1["head"] == ["0", "0"], f"x1, x2 = {ph1['head']}"),
+                  Check("the readout sits in the axis band below the tick labels", ph1["readout_y"] is not None and ph1["readout_y"] > ph1["tick_y"], f"readout y {ph1['readout_y']}, tick labels y {ph1['tick_y']}")]
+    key("Home", "Home")
     # Shift plus an arrow seeks a second of film time, not a count of frames
     fd = b.js(facts(F))
     key("Home", "Home"); key("ArrowRight", "ArrowRight", 8)
@@ -1214,7 +1228,7 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     e2.checks += [Check("Shift+ArrowRight seeks one second of film time",
                         sec["k"] == fd["sec"] and sec["t"] == fd["sec_t"],
                         f"frame {sec['k']} at {sec['t']}, expected frame {fd['sec']} at {fd['sec_t']} (film ends at {fd['end']:.2f}s)"),
-                  Check("Shift+ArrowLeft seeks a second back, clamped at the start",
+                  Check("Shift+ArrowLeft seeks a second back",
                         secb["k"] == fd["back"] and secb["t"] == fd["back_t"],
                         f"frame {secb['k']} at {secb['t']}, expected frame {fd['back']} at {fd['back_t']}")]
     # the chapter keys want a film with chapters: the first one on this page that has a second
@@ -1232,10 +1246,9 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
 
     def back_to(f: dict) -> list:
         """Where PageUp must land from f: the current chapter's start once the playhead is past
-        it, else the previous chapter's. One frame past is the wording's grey zone (past the
-        chapter's first frame, or more than one frame past), so there both answers are allowed."""
-        gap = f["k"] - f["start"]
-        return [f["start"]] if gap > 1 else [f["prev"]] if gap == 0 else [f["start"], f["prev"]]
+        its first frame, else the previous chapter's start."""
+        # the element's rule is exact: past the chapter's first frame goes back to the chapter start
+        return [f["start"]] if f["k"] > f["start"] else [f["prev"]]
 
     def where(f: dict, landed: dict) -> str:
         return (f"from frame {f['k']}, {f['k'] - f['start']} frames past chapter {f['ci']}, to frame {landed['k']}, "

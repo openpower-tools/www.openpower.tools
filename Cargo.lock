@@ -602,7 +602,6 @@ name = "op-site"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "insta",
  "js-sys",
  "op-chart",
  "op-pages",
