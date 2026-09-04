@@ -23,10 +23,11 @@ page's clock moves only when this tool draws a frame, one sixtieth of a
 second at a time, so every sample sits at an exact time and two runs
 agree frame for frame. The real one is Chrome's own headless on the wall
 clock, which has neither facility. --clock chooses; synthetic is the
-default wherever a shell is found. A check's detail may not report a
-measurement more finely than the check decides on it: an extra decimal
-carries a transition's last bit of floating-point wobble, and --checks-json
-is compared between runs to prove the timing is reproducible.
+default wherever a shell is found. Two synthetic runs take the same
+decisions and measure the same quantities to within one frame; a detail may
+not report a measurement more finely than its check decides on it, or it
+carries a transition's last bit of floating-point wobble. --checks-json
+dumps the decisions, and compare_checks.py holds two runs to that rule.
 
     uv run tools/interaction_report/report.py --dist dist --out reports/interactions
 """
@@ -746,6 +747,13 @@ class ControlReport:
         return [c for e in self.edges for c in e.checks]
 
 
+def secs(t: float | None) -> str:
+    """A measured time for a check's detail, at a hundredth of a second: the
+    resolution every window in this file is written at, and coarse enough that
+    one frame of difference between two runs does not change the wording."""
+    return "never" if t is None else f"{t:.2f}s"
+
+
 def green(bg: str) -> int:
     return int(bg.split("(")[1].split(",")[1])
 
@@ -1098,7 +1106,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
                       {"label": "preview left (% of track)", "series": SERIES["ghost"], "t": ts, "y": [s["preview"] / s["w"] * 100 for _, s in rows], "at": 0.5}])
     at = next((t for t, s in rows if s["attention"]), None)
     peak = max(s["preview_op"] for _, s in rows)
-    e1.checks += [Check("attention custom state set", at is not None and at < 0.3, f"at {at}s"),
+    e1.checks += [Check("attention custom state set", at is not None and at < 0.3, f"at {secs(at)}"),
                   Check("preview reaches legible opacity", peak >= 0.8, f"peak {peak}"),
                   Check("no flight while merely attended", not any(s["flight"] for _, s in rows))]
     rep.edges.append(e1)
@@ -1145,7 +1153,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     make_film(e3, film, d, "settle", keys=5, ylabel="% (opacity)", trace=[],
               series=[{"label": "preview opacity (resuming)", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in after], "lw": 2.4, "at": 0.5}])
     resume = max(s["preview_op"] for _, s in after)
-    e3.checks += [Check("settled when the blend ended (2.8-3.4s)", settled is not None and 2.8 <= settled <= 3.4, f"flight cleared at {settled}s"),
+    e3.checks += [Check("settled when the blend ended (2.8-3.4s)", settled is not None and 2.8 <= settled <= 3.4, f"flight cleared at {secs(settled)}"),
                   Check("palette arrived", green(rows[-1][1]["bg"]) == g_off and abs(g_off - g_on) > 100),
                   Check("preview resumes under the resting pointer", resume >= 0.8, f"peak {resume} within 1.9s")]
     rep.edges.append(e3)
@@ -1225,7 +1233,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     make_film(e7, film, d, "neglect", keys=4, ylabel="% (opacity)", trace=[(0.0, "Idle", "Neglect", "Idle")],
               series=[{"label": "preview opacity", "series": SERIES["preview"], "t": ts, "y": [s["preview_op"] * 100 for _, s in rows], "lw": 2.4, "at": 0.5}])
     gone = next((t for t, s in rows if not s["attention"]), None)
-    e7.checks += [Check("attention custom state cleared", gone is not None and gone < 0.3, f"at {gone}s"),
+    e7.checks += [Check("attention custom state cleared", gone is not None and gone < 0.3, f"at {secs(gone)}"),
                   Check("preview hidden once unattended", rows[-1][1]["preview_op"] < 0.05, f"opacity {rows[-1][1]['preview_op']}")]
     rep.edges.append(e7)
 
@@ -1306,7 +1314,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   # the snap is 160 ms; arrival is polled from before the click, and the recording's
                   # encoder competes with the compositor on a two-core runner, so the window is three
                   # snaps: a jump still fails the check above, and a stalled transition still fails here
-                  Check("thumb arrives within the snap clock", moved_by is not None and moved_by <= 0.5, f"arrived at {moved_by}s")]
+                  Check("thumb arrives within the snap clock", moved_by is not None and moved_by <= 0.5, f"arrived at {secs(moved_by)}")]
     rep.edges.append(e2)
     # E3 neglect
     e3 = Edge(("Idle", "Neglect", "Idle"), "Neglect", "The preview stops when the pointer leaves.")

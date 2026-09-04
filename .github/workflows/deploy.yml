@@ -96,7 +96,7 @@ jobs:
         # per step) and renders the evidence; a failing check fails the build.
         uses: astral-sh/setup-uv@v7
       - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --clock synthetic --checks-json reports/interactions/checks.json --publish
-      - name: Determinism (a second synthetic pass over the timing kinds must match the first)
+      - name: Determinism (a second synthetic pass decides the same and measures within a frame)
         run: |
           set -e
           uv run tools/interaction_report/report.py --dist dist --out /tmp/rep-again --clock synthetic --only opt-theme-toggle,opt-switch,opt-chart --checks-json /tmp/rep-again/checks.json
