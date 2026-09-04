@@ -288,14 +288,6 @@ fn show_stage(dom: &Dom, d: &Data, k: usize, tag: &str) {
     )));
 }
 
-/// The fields of the `opt-film-time` detail, in the order the event builds
-/// them: the clock, the timeline's total length and whether the film is
-/// running. An object rather than a bare number so a follower can render the
-/// played bar and the end without reading them off the film.
-fn time_detail_fields() -> [&'static str; 3] {
-    ["time", "duration", "playing"]
-}
-
 fn render(dom: &Dom, d: &Data, st: &State) {
     let n = d.times.len();
     let k = d.frame_at(st.tc);
@@ -344,18 +336,19 @@ fn render(dom: &Dom, d: &Data, st: &State) {
         let _ = dom.stage.class_list().remove_1("pending");
     }
     // Broadcast the clock: other projections of the same timeline (the
-    // machine diagram's playhead) follow this composed, bubbling event.
+    // machine diagram's playhead, the chart) follow this composed, bubbling
+    // event. The detail is an object rather than a bare number so a follower
+    // can draw the played bar and the end without reading them off the film.
     let init = web_sys::CustomEventInit::new();
     init.set_bubbles(true);
     init.set_composed(true);
-    let [time, duration, playing] = time_detail_fields();
     let detail = js_sys::Object::new();
     let set = |key: &str, value: &JsValue| {
         let _ = js_sys::Reflect::set(&detail, &JsValue::from_str(key), value);
     };
-    set(time, &JsValue::from_f64(st.tc));
-    set(duration, &JsValue::from_f64(d.end()));
-    set(playing, &JsValue::from_bool(st.playing));
+    set("time", &JsValue::from_f64(st.tc));
+    set("duration", &JsValue::from_f64(d.end()));
+    set("playing", &JsValue::from_bool(st.playing));
     init.set_detail(&detail);
     if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("opt-film-time", &init) {
         let _ = dom.host.dispatch_event(&event);
@@ -1353,13 +1346,6 @@ mod chart_reference {
         assert_eq!(d.prev_chapter_start(1.7), 1.5);
         assert_eq!(d.prev_chapter_start(0.3), 0.0);
         assert_eq!(d.prev_chapter_start(3.6), 3.03);
-    }
-
-    #[test]
-    fn the_time_event_carries_the_clock_the_duration_and_the_playing_flag() {
-        // followers read these names off the detail object; the order is the
-        // order the dispatch builds them in
-        assert_eq!(time_detail_fields(), ["time", "duration", "playing"]);
     }
 
     #[test]

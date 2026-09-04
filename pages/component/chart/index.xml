@@ -2,9 +2,8 @@
       <p>A time-series chart that follows a film's clock. It draws the sampled series of a
       recorded interaction with a playhead, a played bar and a chapter bar, and it moves only
       when the film it is bound to says so: the film broadcasts <code>opt-film-time</code> on
-      every tick, and the chart reads the time from it. The chart never advances time on its
-      own, so it is a projection of the film's timeline, like the machine diagram, not a
-      second player.</p>
+      every tick, and the chart reads the time from it. It is a projection of the film's
+      timeline, like the machine diagram, not a second player.</p>
       <p>Every page that carries a chart ships it pre-rendered. The build lowers the data block
       into a declarative shadow root with the finished SVG, a caption with a one-paragraph
       summary and the data as a real table behind a disclosure, so the chart is complete
@@ -54,7 +53,7 @@
             <tr><td><code>chapters</code></td><td>array of objects</td><td>Optional <code>{ "t", "title" }</code> entries drawn on the chapter bar.</td></tr>
             <tr><td><code>marks</code></td><td>array of objects</td><td>Optional <code>{ "t", "label" }</code> entries for single moments.</td></tr>
             <tr><td><code>band</code></td><td>object</td><td>Optional <code>{ "t0", "t1", "label" }</code> for a shaded interval.</td></tr>
-            <tr><td><code>y</code></td><td><code>[lo, hi]</code></td><td>Optional value domain; when absent, series measured in <code>%</code> take the film's percent scale, and anything else the range of the data padded by four percent on each side.</td></tr>
+            <tr><td><code>y</code></td><td><code>[lo, hi]</code></td><td>Optional value domain; when absent, series measured in <code>%</code> whose values fit the film's percent scale take it, and anything else the range of the data padded by four percent on each side.</td></tr>
           </tbody>
         </table>
       </opt:table>

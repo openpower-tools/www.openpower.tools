@@ -3,7 +3,7 @@
 //! timeline, as the machine diagram is, so the only thing that moves per
 //! tick is the playhead group, its readout and the played bar.
 //!
-//! The markup is built by pure functions ([`shadow_markup`],
+//! The markup is built by pure functions (`shadow_markup`,
 //! [`prerender`]) that the page build calls natively, so a page ships the
 //! chart finished: the SVG, a caption with a one-paragraph summary, and
 //! the data as a real table behind a disclosure. Nothing of that needs a
@@ -13,7 +13,7 @@
 //! A pre-render scales with its viewBox, so a 640 unit box at a 360 px
 //! viewport would shrink its 12 px labels to about 6 px. The build
 //! therefore emits two SVGs, `chart wide` and `chart narrow`, and a
-//! container query at [`NARROW_AT`] chooses between them with no script at
+//! container query at `NARROW_AT` chooses between them with no script at
 //! all.
 //!
 //! On upgrade the element compares the block's hash with the `data-hash`
@@ -67,11 +67,11 @@ pub const DEFAULT_WIDTH: f64 = 640.0;
 /// Width over height of the chart box when the element does not say.
 pub const DEFAULT_RATIO: f64 = 16.0 / 6.0;
 /// The width the second, narrow pre-render is drawn at.
-pub const NARROW_WIDTH: f64 = 360.0;
+pub(crate) const NARROW_WIDTH: f64 = 360.0;
 /// Where the wide pre-render gives way to the narrow one: below this
 /// container width its 12 px labels, scaled by the viewBox, fall under the
 /// 10 px floor.
-pub const NARROW_AT: f64 = 532.0;
+pub(crate) const NARROW_AT: f64 = 532.0;
 /// Below this container width every second time label and the chapter cues
 /// are dropped: they cannot be read at that size and they overprint.
 const DROP_AT: f64 = 480.0;
@@ -86,13 +86,17 @@ const BY_SITE: &str = "op-site";
 /// shadow root whose `data-hash` still names this block can be kept; the
 /// absence of either is a re-render.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
+pub(crate) enum Action {
     Hydrate,
     Render,
 }
 
 /// See [`Action`].
-pub fn hydrate_or_render(has_root: bool, hash_attr: Option<&str>, block_hash: &str) -> Action {
+pub(crate) fn hydrate_or_render(
+    has_root: bool,
+    hash_attr: Option<&str>,
+    block_hash: &str,
+) -> Action {
     if has_root && hash_attr == Some(block_hash) {
         Action::Hydrate
     } else {
@@ -103,7 +107,7 @@ pub fn hydrate_or_render(has_root: bool, hash_attr: Option<&str>, block_hash: &s
 /// Which of the pre-render's two charts is meant: the one drawn at the
 /// element's `initial-width`, or the one drawn at [`NARROW_WIDTH`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Variant {
+pub(crate) enum Variant {
     Wide,
     Narrow,
 }
@@ -116,7 +120,12 @@ pub enum Variant {
 /// same width by the same `ratio`. Keeping it is the point of the
 /// pre-render: the markup a re-render would produce is already there,
 /// carrying the mark that says the build drew it.
-pub fn keep_prerender(hydrated: bool, measured: f64, wide: f64, narrow: f64) -> Option<Variant> {
+pub(crate) fn keep_prerender(
+    hydrated: bool,
+    measured: f64,
+    wide: f64,
+    narrow: f64,
+) -> Option<Variant> {
     if !hydrated {
         return None;
     }
@@ -131,12 +140,12 @@ pub fn keep_prerender(hydrated: bool, measured: f64, wide: f64, narrow: f64) -> 
 /// Whether a tick is worth touching the DOM for: half a pixel of travel,
 /// or a changed readout. Below that the playhead would not move and the
 /// text would not change, and an attribute write per frame is not free.
-pub fn tick_change(prev_x: f64, x: f64, prev_label: &str, label: &str) -> bool {
+pub(crate) fn tick_change(prev_x: f64, x: f64, prev_label: &str, label: &str) -> bool {
     !((x - prev_x).abs() < 0.5 && prev_label == label)
 }
 
 /// The playhead's readout, in the format the film's own chart uses.
-pub fn readout(t: f64) -> String {
+pub(crate) fn readout(t: f64) -> String {
     format!("{t:.2}s")
 }
 
@@ -169,16 +178,13 @@ fn title_of(d: &Data) -> String {
 /// the figure carries its own description for a reader who cannot see it.
 fn summary_of(d: &Data) -> String {
     let mut parts: Vec<String> = Vec::new();
-    let labels: Vec<String> = d.series.iter().map(|s| s.label.clone()).collect();
-    let series = if d.series.len() == 1 {
-        "1 series".to_owned()
-    } else {
-        format!("{} series", d.series.len())
-    };
-    parts.push(if labels.is_empty() {
+    // "series" is its own plural, so the count needs no help from `count`
+    let series = format!("{} series", d.series.len());
+    parts.push(if d.series.is_empty() {
         series
     } else {
-        format!("{series} ({})", join(&labels))
+        // the same list the caption's heading carries
+        format!("{series} ({})", title_of(d))
     });
     let mut units: Vec<String> = Vec::new();
     for s in &d.series {
@@ -370,7 +376,7 @@ fn svg_of(spec: &op_chart::Spec, layout: Layout, class: &str, rendered_by: &str)
 /// The whole inner HTML of a chart's shadow root. With a `narrow` layout
 /// the figure carries both pre-renders and the stylesheet chooses; with
 /// none it carries the single chart the element just drew.
-pub fn shadow_markup(
+pub(crate) fn shadow_markup(
     data: &Data,
     wide: Layout,
     narrow: Option<Layout>,
@@ -441,12 +447,9 @@ pub fn prerender(block: &str, initial_width: f64, ratio: f64) -> Result<Prerende
 /// geometry was drawn at are one thing: `--op-chart-ratio` overrides the
 /// box, and with nothing set the box follows the attribute.
 ///
-/// The gridlines are axis-aligned hairlines and take `crispEdges`, so they
-/// land on a device pixel instead of being blurred across two. The swatch
-/// keeps it as well, though it is a legend key rather than a rule: the
-/// interaction report samples its colour a pixel at a time, and an
-/// anti-aliased end would give the probe a blend of the swatch and the
-/// surface behind it.
+/// The gridlines and the swatch take `crispEdges` for the reasons the
+/// film's own stylesheet gives: a hairline on a device pixel, and a swatch
+/// the interaction report can sample a pixel at a time.
 pub(crate) fn stylesheet(ratio: f64) -> String {
     let rules = chart_rules();
     // the default box is written as the fraction it was designed as
@@ -504,7 +507,7 @@ struct Live {
     data: Data,
     /// The geometry the visible chart was drawn with; the playhead and a
     /// later hit-test both read it.
-    pub(crate) layout: Layout,
+    layout: Layout,
     /// Width over height of the chart box.
     ratio: f64,
     /// The width to draw at when the host cannot be measured.
@@ -644,7 +647,10 @@ impl Follower {
                 layout,
             )
         };
+        // the build's markup leaves the screen here, so the host's state
+        // says so too: hydrated means the pre-render is what is shown
         self.hydrated.set(false);
+        set_state(&self.host, "hydrated", false);
         // the chart on screen is the one to replace; the other half of a
         // pre-rendered pair goes, so one live chart is left
         let target = self.dom.borrow().svg.clone();
@@ -1386,7 +1392,7 @@ mod tests {
         assert!(!summary.contains("values from"), "{summary}");
     }
 
-    /// The value of the first attribute `attr` after `head` in the markup.
+    /// The text of every cell in a table row.
     fn cells(row: &str) -> Vec<String> {
         row.split("<td>")
             .skip(1)
@@ -1510,7 +1516,7 @@ mod tests {
         assert!(css.contains(&format!(
             "@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} }}"
         )));
-        // the tokens the brief names, each on the part it paints
+        // every colour is a token, on the part it paints
         assert!(css.contains(".chart .head { stroke: var(--op-playhead); stroke-width: 1.5; }"));
         assert!(css.contains(".chart .head-dot { fill: var(--op-playhead); }"));
         assert!(css.contains(".chart .bar-played { fill: var(--op-band); }"));

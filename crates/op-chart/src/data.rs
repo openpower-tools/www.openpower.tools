@@ -378,20 +378,15 @@ impl Data {
     }
 
     /// The value domain the chart is drawn on: what the block asked for;
-    /// else, when every series is in percent, the film's percent scale
-    /// ([`crate::layout::PERCENT`], so a chart agrees with the film it
-    /// follows); else the rows' own range with a little room above and
-    /// below so no line runs along an edge. A flat series is given a whole
-    /// unit of room, and a block with nothing sampled keeps the percent
-    /// scale.
+    /// else, when every series is in percent and the values fit it, the
+    /// film's percent scale ([`crate::layout::PERCENT`], so a chart agrees
+    /// with the film it follows); else the rows' own range with a little
+    /// room above and below so no line runs along an edge. A flat series is
+    /// given a whole unit of room, and a block with nothing sampled keeps
+    /// the percent scale.
     pub fn y_domain(&self) -> (f64, f64) {
         if let Some(y) = self.y {
             return y;
-        }
-        // percent data takes the film's percent scale, quarters with room at
-        // both ends, so a chart and the film it follows agree on their axes
-        if !self.series.is_empty() && self.series.iter().all(|s| s.unit == "%") {
-            return crate::layout::PERCENT;
         }
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
@@ -400,6 +395,17 @@ impl Data {
             hi = hi.max(*v);
         }
         if lo > hi {
+            return crate::layout::PERCENT;
+        }
+        // percent data that fits it takes the film's percent scale, quarters
+        // with room at both ends, so a chart and the film it follows agree on
+        // their axes; percent values beyond it scale like any other data
+        let (plo, phi) = crate::layout::PERCENT;
+        if !self.series.is_empty()
+            && self.series.iter().all(|s| s.unit == "%")
+            && lo >= plo
+            && hi <= phi
+        {
             return crate::layout::PERCENT;
         }
         let pad = if hi > lo { (hi - lo) * Y_PAD } else { 0.5 };
@@ -960,6 +966,10 @@ mod tests {
         // every series in percent: the film's scale, whatever the values span
         let pct = parse(r#"{"duration": 1, "series": [{"id": "a", "label": "a", "unit": "%"}, {"id": "b", "label": "b", "unit": "%"}], "rows": [[0, 10, 20], [1, 30, 40]]}"#).unwrap();
         assert_eq!(pct.y_domain(), crate::layout::PERCENT);
+        // percent values beyond the percent scale: the data's own padded range
+        let wide = parse(r#"{"duration": 1, "series": [{"id": "a", "label": "a", "unit": "%"}], "rows": [[0, 10], [1, 250]]}"#).unwrap();
+        assert_ne!(wide.y_domain(), crate::layout::PERCENT);
+        assert!(wide.y_domain().1 >= 250.0);
         // one series in another unit: the data's own padded range
         let mixed = parse(r#"{"duration": 1, "series": [{"id": "a", "label": "a", "unit": "%"}, {"id": "b", "label": "b", "unit": "ms"}], "rows": [[0, 10, 20], [1, 30, 40]]}"#).unwrap();
         assert_ne!(mixed.y_domain(), crate::layout::PERCENT);

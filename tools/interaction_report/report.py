@@ -1848,8 +1848,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
       const vis = svgs.find(s => s.getBoundingClientRect().width > 0) || svgs[0];
       const vb = vis ? vis.viewBox.baseVal : null, r = vis ? vis.getBoundingClientRect() : null;
       const scale = vis && vb.width ? r.width / vb.width : 0;
-      const eff = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none').map(t => +(parseFloat(getComputedStyle(t).fontSize) * scale).toFixed(2));
       const px = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none').map(t => parseFloat(getComputedStyle(t).fontSize));
+      const eff = sel => px(sel).map(v => +(v * scale).toFixed(2));
       const head = vis && vis.querySelector('g.playhead'), ht = vis && vis.querySelector('.head-t'), bar = vis && vis.querySelector('.bar-bg'), played = vis && vis.querySelector('.bar-played');
       const tx = head ? (head.getAttribute('transform') || '').match(/translate\\(([-\\d.]+)/) : null;
       const summary = sr.querySelector('figcaption .summary'), table = sr.querySelector('details.data table');
@@ -1883,11 +1883,13 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
             e1.matrix.append((f"no JavaScript, {w} px viewport", f"nojs-{w}.png"))
             labels = (p.get("ticks") or []) + (p.get("ends") or [])
             smallest = min(labels) if labels else 0
+            block_hash = fnv1a64_hex(p.get("block", ""))
+            # each viewport is served by the pre-render drawn for it: 640 by the wide one, 360 by the narrow
             e1.checks += [Check(f"{w} px: declarative root before any script", p.get("root") and not p.get("defined"), f"root={p.get('root')} defined={p.get('defined')}"),
-                          Check(f"{w} px: the build's svg is shown", p.get("by") == "op-pages" and p.get("vbw") == (640 if w == 640 else 360), f"rendered-by={p.get('by')} viewBox width={p.get('vbw')} css width={p.get('cssw')}"),
+                          Check(f"{w} px: the build's svg is shown", p.get("by") == "op-pages" and p.get("vbw") == w, f"rendered-by={p.get('by')} viewBox width={p.get('vbw')} css width={p.get('cssw')}"),
                           Check(f"{w} px: caption, summary and table present", p.get("summary", 0) > 40 and p.get("rows", 0) >= 8, f"summary {p.get('summary')} chars, {p.get('rows')} table rows"),
                           Check(f"{w} px: every label at least 10 px effective", labels and smallest >= 10, f"smallest {smallest} px of {len(labels)} labels"),
-                          Check(f"{w} px: data-hash matches the block", bool(p.get("hash")) and p.get("hash") == fnv1a64_hex(p.get("block", "")), f"{p.get('hash')} vs {fnv1a64_hex(p.get('block', ''))}")]
+                          Check(f"{w} px: data-hash matches the block", bool(p.get("hash")) and p.get("hash") == block_hash, f"{p.get('hash')} vs {block_hash}")]
     finally:
         b.call("Emulation.setScriptExecutionDisabled", value=False)
         b.call("Emulation.clearDeviceMetricsOverride")

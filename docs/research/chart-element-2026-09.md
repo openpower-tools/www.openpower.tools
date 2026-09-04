@@ -546,10 +546,11 @@ written into the stylesheet as the fallback of `--op-chart-ratio` so the
 viewBox and the CSS box agree. The chart element's text is 12 px per
 decision 24 while the film's own chart still uses 11 px; the two meet when
 phase 4 restructures the film's chart. The value domain comes from `y`, else
-the film's percent scale when every series is in percent, else the data's
-range padded by four percent; marks and the band are parsed, validated,
-summarised and tabled but not yet drawn. The `data-series` attribute of
-decision 6 waits for phase 3, which brings the hit-testing it serves. The element's
+the film's percent scale when every series is in percent and its values fit
+that scale, else the data's range padded by four percent; marks and the band
+are parsed, validated, summarised and tabled but not yet drawn. The
+`data-series` attribute of decision 6 waits for phase 3, which brings the
+hit-testing it serves. The element's
 SVG carries `role="graphics-document"` labelled by the caption's title
 rather than the renderer's slider markup, which stays on the film's chart
 until phase 4 builds the thumb group. The renderer now emits `part` on the

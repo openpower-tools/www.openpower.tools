@@ -612,20 +612,6 @@ mod tests {
         out
     }
 
-    /// Colours a renderer might reach for and this one may not.
-    const NAMED_COLOURS: &[&str] = &[
-        "black",
-        "white",
-        "red",
-        "green",
-        "blue",
-        "grey",
-        "gray",
-        "currentColor",
-        "CanvasText",
-        "Highlight",
-    ];
-
     #[test]
     fn the_emitter_writes_no_colour_at_all() {
         let svg = film(&flight()).svg;
@@ -636,8 +622,6 @@ mod tests {
                 p == "none",
                 "paint {p} in the markup: colours belong to the stylesheet"
             );
-            assert!(!p.contains('#') && !p.contains("rgb("), "paint {p}");
-            assert!(!NAMED_COLOURS.contains(&p.as_str()), "paint {p}");
         }
         // every series is addressed by its class, line and label alike
         assert!(svg.contains("<path class=\"series-3\""));
@@ -1076,17 +1060,6 @@ mod tests {
         "head-t",
     ];
 
-    /// Names the research note reserves for parts the element will draw
-    /// later; allowed here, but nothing writes them yet.
-    const RESERVED_CLASSES: &[&str] = &[
-        "mark-label",
-        "playhead-label",
-        "peek",
-        "plot",
-        "background",
-        "readout",
-    ];
-
     /// The z-order the emitter writes its groups in. The note's list
     /// (grid, axes, series, marks, band, chapters, peek, playhead, labels)
     /// is carried by these: the gridlines and the axis text share `axes`,
@@ -1145,7 +1118,6 @@ mod tests {
         for svg in &outputs {
             for c in classes(svg) {
                 let known = EMITTED_CLASSES.contains(&c.as_str())
-                    || RESERVED_CLASSES.contains(&c.as_str())
                     || c.strip_prefix("series-")
                         .is_some_and(|n| n.parse::<usize>().is_ok());
                 assert!(known, "the markup carries an unknown class {c}");
