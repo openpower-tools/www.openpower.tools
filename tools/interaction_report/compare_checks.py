@@ -1,12 +1,14 @@
 """Compare two --checks-json dumps of the interaction report.
 
-The synthetic clock's guarantee is that two runs take the same decisions and
-measure the same quantities to within one frame, not that their text matches
-byte for byte: a transition's last floating-point bit still lands either side
-of a frame boundary now and then. So the check names, their outcomes and the
+The synthetic clock makes a run reproducible, not bit-identical: two runs
+take the same decisions and measure the same quantities to within a frame,
+while a transition's last floating-point bit still lands either side of a
+frame boundary now and then. So the check names, their outcomes and the
 wording around each measurement must match exactly, while the numbers inside
-a detail may differ by up to one frame (or one part in a thousand, whichever
-is larger, for a big figure). Anything else is a regression.
+a detail may differ by up to one frame plus their own printed rounding (or
+one part in a thousand, whichever is larger, for a big figure). Anything
+else is a regression. Artefacts are held to a perceptual standard instead,
+by compare_frames.py.
 """
 import json
 import re
