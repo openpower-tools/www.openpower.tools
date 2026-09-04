@@ -13,6 +13,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-tooltip",
     observed_attributes: &["text"],
+    properties: &[],
     create: |host| Box::new(Tooltip { host }),
 };
 

@@ -36,6 +36,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-theme-toggle",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(ThemeToggle { host, wiring: None }),
 };
 

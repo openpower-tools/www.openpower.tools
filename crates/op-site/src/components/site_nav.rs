@@ -12,6 +12,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-site-nav",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(SiteNav { host }),
 };
 

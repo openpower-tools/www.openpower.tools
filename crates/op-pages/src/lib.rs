@@ -220,6 +220,12 @@ pub const PAGES: &[Page] = &[
         "component/film/index.xml"
     ),
     page!(
+        "component/chart",
+        "Chart",
+        "A time-series chart that follows a film's clock, pre-rendered before any script runs.",
+        "component/chart/index.xml"
+    ),
+    page!(
         "component/machine",
         "Machine",
         "An interaction machine's transition diagram with one edge highlighted.",

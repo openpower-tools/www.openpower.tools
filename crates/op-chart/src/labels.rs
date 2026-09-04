@@ -1,6 +1,23 @@
 //! Direct end labels and markers: the non-colour cues that let a series
 //! be told apart when colour cannot do it alone.
 
+/// The indices of `keys` in ascending `total_cmp` order (so negative zero
+/// sorts before zero and the order is total), ties in input order: an
+/// insertion sort, because a chart has at most a handful of labels and the
+/// standard library's generic stable sort costs several kilobytes of wasm
+/// for the one call that would use it.
+pub fn order_by(keys: &[f64]) -> Vec<usize> {
+    let mut order: Vec<usize> = Vec::with_capacity(keys.len());
+    for i in 0..keys.len() {
+        let mut at = order.len();
+        while at > 0 && keys[order[at - 1]].total_cmp(&keys[i]) == std::cmp::Ordering::Greater {
+            at -= 1;
+        }
+        order.insert(at, i);
+    }
+    order
+}
+
 /// Move a set of preferred vertical positions so that no two are closer
 /// than `gap` and all stay inside `lo..=hi` when there is room. Order is
 /// preserved: a label wanted higher stays higher. Returns the placed
@@ -10,8 +27,7 @@ pub fn spread(preferred: &[f64], gap: f64, lo: f64, hi: f64) -> Vec<f64> {
     if n == 0 {
         return Vec::new();
     }
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|a, b| preferred[*a].total_cmp(&preferred[*b]));
+    let order = order_by(preferred);
     let mut placed: Vec<f64> = order.iter().map(|i| preferred[*i]).collect();
     // sweep down: push each label below the one above it
     placed[0] = placed[0].max(lo);
@@ -100,6 +116,17 @@ mod tests {
     }
 
     proptest! {
+        #[test]
+        fn order_by_matches_the_standard_stable_sort(
+            keys in proptest::collection::vec(-5.0f64..5.0, 0..12)
+        ) {
+            // a few repeated keys so ties are exercised: they keep input order
+            let keys: Vec<f64> = keys.iter().map(|k| (k * 2.0).round() / 2.0).collect();
+            let mut reference: Vec<usize> = (0..keys.len()).collect();
+            reference.sort_by(|a, b| keys[*a].total_cmp(&keys[*b]));
+            prop_assert_eq!(order_by(&keys), reference);
+        }
+
         #[test]
         fn placement_keeps_order_gap_and_band(
             prefs in proptest::collection::vec(0.0f64..200.0, 1..8), gap in 4.0f64..20.0

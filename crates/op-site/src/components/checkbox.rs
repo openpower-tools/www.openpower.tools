@@ -13,6 +13,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-checkbox",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(Checkbox { host }),
 };
 

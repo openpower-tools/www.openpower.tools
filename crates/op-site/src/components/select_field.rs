@@ -13,6 +13,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-select",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(SelectField { host }),
 };
 

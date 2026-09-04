@@ -37,6 +37,14 @@ pub trait CustomElement: 'static {
     /// One of [`ElementDefinition::observed_attributes`] changed. Runs before
     /// [`connected`](Self::connected) for attributes present at parse time.
     fn attribute_changed(&mut self, _name: &str, _old: Option<String>, _new: Option<String>) {}
+    /// The current value of one of [`ElementDefinition::properties`]. A
+    /// property is the surface for data an attribute cannot carry (an
+    /// object, an element); the default reads as `undefined`.
+    fn property(&self, _name: &str) -> JsValue {
+        JsValue::UNDEFINED
+    }
+    /// One of [`ElementDefinition::properties`] was assigned.
+    fn set_property(&mut self, _name: &str, _value: JsValue) {}
 }
 
 /// A workspace-relative Rust source position, as `file!()`/`line!()`
@@ -66,6 +74,11 @@ pub struct ElementDefinition {
     pub tag: &'static str,
     /// Attributes for which [`CustomElement::attribute_changed`] fires.
     pub observed_attributes: &'static [&'static str],
+    /// Names the shim defines as accessors on the element's prototype,
+    /// forwarding to [`CustomElement::property`] and
+    /// [`CustomElement::set_property`]. A value assigned before the element
+    /// upgrades is replayed through the setter when it connects.
+    pub properties: &'static [&'static str],
     /// Creates the Rust state for one host element. Called lazily on the first
     /// lifecycle callback, never from the JS constructor, so the host may be
     /// inspected freely.
@@ -104,6 +117,18 @@ impl ElementHandle {
     pub fn attribute_changed(&mut self, name: String, old: Option<String>, new: Option<String>) {
         self.inner.attribute_changed(&name, old, new);
     }
+
+    /// Forwarded from a property accessor's getter.
+    #[wasm_bindgen(js_name = getProperty)]
+    pub fn get_property(&self, name: String) -> JsValue {
+        self.inner.property(&name)
+    }
+
+    /// Forwarded from a property accessor's setter.
+    #[wasm_bindgen(js_name = setProperty)]
+    pub fn set_property(&mut self, name: String, value: JsValue) {
+        self.inner.set_property(&name, value);
+    }
 }
 
 /// Per-tag factory handed to the shim.
@@ -137,22 +162,51 @@ function vlq(value) {
   } while (x);
   return out;
 }
-export function defineElement(tag, observedAttributes, cls, path, line) {
+export function defineElement(tag, observedAttributes, properties, cls, path, line) {
   const rust = (el) => (el.__rust ??= cls.create(el));
-  const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
-    constructor() {
-      super();
-      // ElementInternals: custom states for CSS (:state()) and default
-      // ARIA semantics, owned by the element rather than stamped on it.
-      this.__internals = this.attachInternals();
+  const make = (HTMLElement, observedAttributes, properties, rust) => {
+    const Custom = class extends HTMLElement {
+      constructor() {
+        super();
+        // ElementInternals: custom states for CSS (:state()) and default
+        // ARIA semantics, owned by the element rather than stamped on it.
+        this.__internals = this.attachInternals();
+        // A property assigned before the class was defined is an own
+        // property that shadows the accessor below, so stash it and delete
+        // it here and replay it through the setter on connect. Nothing in
+        // the constructor calls into Rust: the state is created on the
+        // first lifecycle callback, so the host stays free to inspect.
+        this.__pending = {};
+        for (const name of properties) {
+          if (Object.prototype.hasOwnProperty.call(this, name)) {
+            this.__pending[name] = this[name];
+            delete this[name];
+          }
+        }
+      }
+      static get observedAttributes() { return observedAttributes; }
+      connectedCallback() {
+        for (const name of Object.keys(this.__pending)) this[name] = this.__pending[name];
+        this.__pending = {};
+        rust(this).connected();
+      }
+      disconnectedCallback() { rust(this).disconnected(); }
+      adoptedCallback() { rust(this).adopted(); }
+      attributeChangedCallback(name, oldValue, newValue) {
+        rust(this).attributeChanged(name, oldValue, newValue);
+      }
+    };
+    // Every declared property is an accessor on the prototype, so an
+    // assignment after the upgrade reaches Rust and one before it does not.
+    for (const name of properties) {
+      Object.defineProperty(Custom.prototype, name, {
+        get() { return rust(this).getProperty(name); },
+        set(value) { rust(this).setProperty(name, value); },
+        configurable: true,
+        enumerable: true,
+      });
     }
-    static get observedAttributes() { return observedAttributes; }
-    connectedCallback() { rust(this).connected(); }
-    disconnectedCallback() { rust(this).disconnected(); }
-    adoptedCallback() { rust(this).adopted(); }
-    attributeChangedCallback(name, oldValue, newValue) {
-      rust(this).attributeChanged(name, oldValue, newValue);
-    }
+    return Custom;
   };
   const body = "export default " + make.toString() + ";";
   // Every line of the module maps to the element's DEFINITION in its
@@ -176,7 +230,7 @@ export function defineElement(tag, observedAttributes, cls, path, line) {
   const source = body
     + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map));
   const define = (factory) =>
-    customElements.define(tag, factory(HTMLElement, observedAttributes, rust));
+    customElements.define(tag, factory(HTMLElement, observedAttributes, properties, rust));
   try {
     const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     import(url).then(
@@ -204,22 +258,51 @@ function vlq(value) {
   } while (x);
   return out;
 }
-export function defineElement(tag, observedAttributes, cls, path, line) {
+export function defineElement(tag, observedAttributes, properties, cls, path, line) {
   const rust = (el) => (el.__rust ??= cls.create(el));
-  const make = (HTMLElement, observedAttributes, rust) => class extends HTMLElement {
-    constructor() {
-      super();
-      // ElementInternals: custom states for CSS (:state()) and default
-      // ARIA semantics, owned by the element rather than stamped on it.
-      this.__internals = this.attachInternals();
+  const make = (HTMLElement, observedAttributes, properties, rust) => {
+    const Custom = class extends HTMLElement {
+      constructor() {
+        super();
+        // ElementInternals: custom states for CSS (:state()) and default
+        // ARIA semantics, owned by the element rather than stamped on it.
+        this.__internals = this.attachInternals();
+        // A property assigned before the class was defined is an own
+        // property that shadows the accessor below, so stash it and delete
+        // it here and replay it through the setter on connect. Nothing in
+        // the constructor calls into Rust: the state is created on the
+        // first lifecycle callback, so the host stays free to inspect.
+        this.__pending = {};
+        for (const name of properties) {
+          if (Object.prototype.hasOwnProperty.call(this, name)) {
+            this.__pending[name] = this[name];
+            delete this[name];
+          }
+        }
+      }
+      static get observedAttributes() { return observedAttributes; }
+      connectedCallback() {
+        for (const name of Object.keys(this.__pending)) this[name] = this.__pending[name];
+        this.__pending = {};
+        rust(this).connected();
+      }
+      disconnectedCallback() { rust(this).disconnected(); }
+      adoptedCallback() { rust(this).adopted(); }
+      attributeChangedCallback(name, oldValue, newValue) {
+        rust(this).attributeChanged(name, oldValue, newValue);
+      }
+    };
+    // Every declared property is an accessor on the prototype, so an
+    // assignment after the upgrade reaches Rust and one before it does not.
+    for (const name of properties) {
+      Object.defineProperty(Custom.prototype, name, {
+        get() { return rust(this).getProperty(name); },
+        set(value) { rust(this).setProperty(name, value); },
+        configurable: true,
+        enumerable: true,
+      });
     }
-    static get observedAttributes() { return observedAttributes; }
-    connectedCallback() { rust(this).connected(); }
-    disconnectedCallback() { rust(this).disconnected(); }
-    adoptedCallback() { rust(this).adopted(); }
-    attributeChangedCallback(name, oldValue, newValue) {
-      rust(this).attributeChanged(name, oldValue, newValue);
-    }
+    return Custom;
   };
   const body = "export default " + make.toString() + ";";
   // Every line of the module maps to the element's DEFINITION in its
@@ -243,7 +326,7 @@ export function defineElement(tag, observedAttributes, cls, path, line) {
   const source = body
     + "\n//# sourceMappingURL=data:application/json;base64," + btoa(JSON.stringify(map));
   const define = (factory) =>
-    customElements.define(tag, factory(HTMLElement, observedAttributes, rust));
+    customElements.define(tag, factory(HTMLElement, observedAttributes, properties, rust));
   try {
     const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
     import(url).then(
@@ -262,6 +345,7 @@ extern "C" {
     fn define_element(
         tag: &str,
         observed_attributes: js_sys::Array,
+        properties: js_sys::Array,
         cls: ElementClass,
         path: &str,
         line: u32,
@@ -297,14 +381,13 @@ pub fn set_state(host: &HtmlElement, name: &str, on: bool) {
 
 /// Registers `definition` with the browser's custom element registry.
 pub fn define(definition: &ElementDefinition) {
-    let observed = definition
-        .observed_attributes
-        .iter()
-        .map(|a| JsValue::from_str(a))
-        .collect();
+    let names = |list: &'static [&'static str]| -> js_sys::Array {
+        list.iter().map(|a| JsValue::from_str(a)).collect()
+    };
     define_element(
         definition.tag,
-        observed,
+        names(definition.observed_attributes),
+        names(definition.properties),
         ElementClass {
             create: definition.create,
         },
@@ -323,7 +406,7 @@ mod tests {
     fn inline_js_matches_shim_constant() {
         let source = include_str!("lib.rs");
         let signature = format!(
-            "export function {}(tag, observedAttributes, cls, path, line) {{",
+            "export function {}(tag, observedAttributes, properties, cls, path, line) {{",
             "defineElement"
         );
         let occurrences = source.matches(&signature).count();
@@ -349,6 +432,8 @@ mod tests {
             "disconnected()",
             "adopted()",
             "attributeChanged(name, oldValue, newValue)",
+            "getProperty(name)",
+            "setProperty(name, value)",
         ] {
             assert!(
                 SHIM.contains(&format!(".{method}")),
@@ -378,7 +463,65 @@ mod tests {
         assert!(source.contains("pub fn disconnected(&mut self)"));
         assert!(source.contains("pub fn adopted(&mut self)"));
         assert!(source.contains("js_name = attributeChanged"));
+        assert!(source.contains("js_name = getProperty"));
+        assert!(source.contains("js_name = setProperty"));
         assert!(source.contains("pub fn create(&self, host: HtmlElement) -> ElementHandle"));
+    }
+
+    /// A declared property is an accessor on the prototype, and a value
+    /// assigned before the upgrade is an own property that shadows it: the
+    /// constructor takes those aside and the connect callback replays them
+    /// through the setters, before Rust hears about the element at all.
+    #[test]
+    fn declared_properties_become_accessors_that_replay_what_was_set_early() {
+        assert!(
+            SHIM.contains("Object.defineProperty(Custom.prototype, name, {"),
+            "the shim must define an accessor per property"
+        );
+        assert!(SHIM.contains("get() { return rust(this).getProperty(name); },"));
+        assert!(SHIM.contains("set(value) { rust(this).setProperty(name, value); },"));
+        // the constructor stashes and removes the own properties
+        let constructor = SHIM
+            .split("constructor() {")
+            .nth(1)
+            .and_then(|rest| rest.split("static get observedAttributes").next())
+            .expect("the constructor");
+        assert!(
+            constructor.contains("this.__pending = {};"),
+            "{constructor}"
+        );
+        assert!(
+            constructor.contains("Object.prototype.hasOwnProperty.call(this, name)"),
+            "{constructor}"
+        );
+        // the stash has to come first: deleting the own property before
+        // reading it would hand the accessor an undefined and lose every
+        // value set before the upgrade
+        let stash = constructor
+            .find("this.__pending[name] = this[name];")
+            .expect("the stash");
+        let remove = constructor.find("delete this[name];").expect("the delete");
+        assert!(stash < remove, "{constructor}");
+        // and it never reaches for the Rust state, which is created lazily
+        assert!(!constructor.contains("rust(this)"), "{constructor}");
+        // connectedCallback replays them, and does it before connecting
+        let connected = SHIM
+            .split("connectedCallback() {")
+            .nth(1)
+            .and_then(|rest| rest.split("disconnectedCallback").next())
+            .expect("the connect callback");
+        let replay = connected
+            .find("this[name] = this.__pending[name];")
+            .expect("the replay");
+        let call = connected.find("rust(this).connected();").expect("the call");
+        assert!(replay < call, "{connected}");
+        assert!(connected.contains("this.__pending = {};"));
+        // the property list reaches the class the same way the observed
+        // attributes do: as an argument, since the stringified class is
+        // evaluated in a module of its own with no closure to read from
+        assert!(SHIM.contains(
+            "customElements.define(tag, factory(HTMLElement, observedAttributes, properties, rust));"
+        ));
     }
 
     #[test]
@@ -391,6 +534,7 @@ mod tests {
         let definition = ElementDefinition {
             tag: "op-example",
             observed_attributes: &["heading"],
+            properties: &["data"],
             create,
             source: crate::here!(),
         };

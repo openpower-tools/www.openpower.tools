@@ -16,6 +16,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-button",
     observed_attributes: &["variant", "disabled"],
+    properties: &[],
     create: |host| Box::new(Button { host }),
 };
 

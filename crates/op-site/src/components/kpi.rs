@@ -13,6 +13,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-kpi",
     observed_attributes: &["label", "value", "unit", "state"],
+    properties: &[],
     create: |host| Box::new(Kpi { host }),
 };
 

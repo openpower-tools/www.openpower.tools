@@ -470,6 +470,7 @@ class Edge:
     checks: list = field(default_factory=list)
     note: str = ""
     matrix: list = field(default_factory=list)  # (emulation, relpath) screenshots of the chart
+    matrix_title: str = "The chart under every emulation"
     film: dict | None = None  # {sheet, times, w, h, keys: [(caption, relpath)]}
 
 
@@ -1354,7 +1355,7 @@ def render_control(rep: ControlReport, out: Path):
         parts.append("<h3>Checks</h3><table>" + "".join(
             f"<tr><td class='{'ok' if c.ok else 'fail'}'>{'pass' if c.ok else 'FAIL'}</td><td>{c.name}</td><td>{c.detail}</td></tr>" for c in e.checks) + "</table>")
         if e.matrix:
-            parts.append("<h4>The chart under every emulation</h4><div class='matrix'>" + "".join(
+            parts.append(f"<h4>{e.matrix_title}</h4><div class='matrix'>" + "".join(
                 f"<figure><img src='{fn}' alt='the chart under {mode}' loading='lazy'><figcaption>{mode}</figcaption></figure>" for mode, fn in e.matrix) + "</div>")
     parts.append(PLAYER_JS)
     parts.append("</body></html>")
@@ -1432,7 +1433,7 @@ def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str
                          f"<opt-film id=\"{film_id}\" sheet=\"{f['sheet']}\"{(' video=' + chr(34) + f['video'] + chr(34)) if f.get('video') else ''} title=\"{esc(e.title)}\"><script type=\"application/json\">{json.dumps(data)}</script></opt-film>\n")
         if e.matrix:
             cells = "".join(f"<figure style=\"margin:0\"><img src=\"{fn}\" alt=\"the chart under {esc(mode)}\" loading=\"lazy\" style=\"width:100%;height:auto;border:1px solid var(--op-border)\"><figcaption>{esc(mode)}</figcaption></figure>" for mode, fn in e.matrix)
-            parts.append(f"<h3>The chart under every emulation</h3>\n<div style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem\">{cells}</div>\n")
+            parts.append(f"<h3>{esc(e.matrix_title)}</h3>\n<div style=\"display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:0.6rem\">{cells}</div>\n")
         rows = "".join(f"<tr><td><opt-term scheme=\"outcome\" value=\"{'pass' if c.ok else 'fail'}\"></opt-term></td><td>{esc(c.name)}</td><td>{esc(c.detail)}</td></tr>" for c in e.checks)
         parts.append(f"<h3>Checks</h3>\n<opt-table lined=\"\"><table><thead><tr><th>outcome</th><th>check</th><th>detail</th></tr></thead><tbody>{rows}</tbody></table></opt-table>\n")
     parts.append("</main>\n<opt-site-footer></opt-site-footer>\n<noscript><p>This report is rendered by WebAssembly; it needs JavaScript enabled.</p></noscript>\n</body>\n</html>\n")
@@ -1657,7 +1658,7 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
               "With forced-colors active every paint maps to a system colour, markers appear on every series and dashes carry identity; "
               "with prefers-contrast more the grid reaches the strong border and strokes thicken.")
     CH = f"""(() => {{ const sr = {F}.shadowRoot; const cs = e => e && getComputedStyle(e);
-      const p1 = sr.querySelector('polyline.series-1'), p2 = sr.querySelector('polyline.series-2') || p1, m = sr.querySelector('.marker'), g = sr.querySelector('.grid'), lab = sr.querySelector('.endlabel');
+      const p1 = sr.querySelector('path[class^=series].series-1'), p2 = sr.querySelector('path[class^=series].series-2') || p1, m = sr.querySelector('.marker'), g = sr.querySelector('.grid'), lab = sr.querySelector('.endlabel');
       return {{s1: cs(p1).stroke, s2: cs(p2).stroke, dash2: cs(p2).strokeDasharray, w1: cs(p1).strokeWidth, marker: m ? cs(m).display : null, grid: cs(g).stroke, label: lab ? cs(lab).fill : null,
         token1: getComputedStyle({F}).getPropertyValue('--op-series-1').trim(), strong: getComputedStyle({F}).getPropertyValue('--op-border-strong').trim()}}; }})()"""
     normal = b.js(CH)
@@ -1726,17 +1727,18 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     from PIL import Image
     import io
     GEOM = f"""(() => {{ const sr = {F}.shadowRoot, svg = sr.querySelector('svg.chart'); const r = svg.getBoundingClientRect(); const vb = svg.viewBox.baseVal;
-      const series = [...sr.querySelectorAll('polyline[class^=series]')].map(p => {{ const cls = p.getAttribute('class');
+      const series = [...sr.querySelectorAll('path[class^=series]')].map(p => {{ const cls = p.getAttribute('class');
         const sw = sr.querySelector('line.swatch.' + cls);
         // the end label's swatch is a solid stroke in the series colour that label spreading keeps clear of every other series;
-        // without one (an unlabelled series) fall back to the polyline's own points
-        const pts = sw ? [[(+sw.getAttribute('x1') + +sw.getAttribute('x2')) / 2, +sw.getAttribute('y1')]] : p.getAttribute('points').split(' ').map(s => s.split(',').map(Number));
+        // without one (an unlabelled series) fall back to the path's own points, the numbers between its M and L commands
+        const own = (p.getAttribute('d') || '').split(/[ML\\s]+/).filter(s => s.length).map(Number);
+        const pts = sw ? [[(+sw.getAttribute('x1') + +sw.getAttribute('x2')) / 2, +sw.getAttribute('y1')]] : own.filter((_, i) => i % 2 === 0).map((x, i) => [x, own[2 * i + 1]]);
         const paint = getComputedStyle(sw || p).stroke;
         return {{cls, pts, paint}}; }});
       return {{rect: [r.x, r.y, r.width, r.height], vb: [vb.width, vb.height], series, scroll: [window.scrollX, window.scrollY]}}; }})()"""
     # the dash patterns are read under whichever emulation is in force
-    DASHES = f"""(() => Object.fromEntries([...{F}.shadowRoot.querySelectorAll('polyline[class^=series]')].map(p => [p.getAttribute('class'), getComputedStyle(p).strokeDasharray])))()"""
-    STROKE1 = f"""getComputedStyle({F}.shadowRoot.querySelector('polyline[class^=series]')).stroke"""
+    DASHES = f"""(() => Object.fromEntries([...{F}.shadowRoot.querySelectorAll('path[class^=series]')].map(p => [p.getAttribute('class'), getComputedStyle(p).strokeDasharray])))()"""
+    STROKE1 = f"""getComputedStyle({F}.shadowRoot.querySelector('path[class^=series]')).stroke"""
     b.js(f"{F}.scrollIntoView({{block: 'center'}}); 'ok'")
     # the pointer's last position left the film peeking; the thumbnail would cover the chart's edge
     b.hover(2, 2)
@@ -1813,6 +1815,175 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     return rep
 
 # ----------------------------------------------------------------------------
+def fnv1a64_hex(text: str) -> str:
+    """The build's content hash of a chart's data block, recomputed here as an
+    independent check: FNV-1a 64 over the block with ASCII whitespace trimmed
+    at both ends, sixteen lowercase hex digits (op_chart::data::hash_hex)."""
+    h = 0xCBF29CE484222325
+    for byte in text.strip(" \t\n\x0c\r").encode("utf-8"):
+        h = ((h ^ byte) * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016x}"
+
+
+assert fnv1a64_hex("") == "cbf29ce484222325" and fnv1a64_hex("a") == "af63dc4c8601ec8c"
+
+
+def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
+    """The chart kind: a pre-rendered <opt-chart> that follows a film's clock.
+    Static first (scripts off, two widths), then upgrade, a full play, and resize."""
+    tag = ctrl["tag"]
+    rep = ControlReport(tag=tag, kind="chart", page=ctrl["page"], nodes=["Static", "Following"],
+                        machine_edges=[("Static", "Upgrade", "Following"), ("Following", "Tick", "Following"),
+                                       ("Following", "Resize", "Following"), ("Static", "Resize", "Static")])
+    d = out / tag
+    d.mkdir(parents=True, exist_ok=True)
+    b.reduced_motion(False)
+    C = "document.querySelector('opt-chart')"
+    F = "document.getElementById('chart-film')"
+    M = "document.querySelector('opt-machine[for=\"chart-film\"]')"
+    # everything the checks read from the chart, in one evaluation
+    PROBE = f"""(() => {{ const c = {C}; const sr = c && c.shadowRoot; if (!sr) return {{root: false}};
+      const st = n => c.matches(':state(' + n + ')');
+      const svgs = [...sr.querySelectorAll('svg.chart')];
+      const vis = svgs.find(s => s.getBoundingClientRect().width > 0) || svgs[0];
+      const vb = vis ? vis.viewBox.baseVal : null, r = vis ? vis.getBoundingClientRect() : null;
+      const scale = vis && vb.width ? r.width / vb.width : 0;
+      const eff = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none').map(t => +(parseFloat(getComputedStyle(t).fontSize) * scale).toFixed(2));
+      const px = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none').map(t => parseFloat(getComputedStyle(t).fontSize));
+      const head = vis && vis.querySelector('g.playhead'), ht = vis && vis.querySelector('.head-t'), bar = vis && vis.querySelector('.bar-bg'), played = vis && vis.querySelector('.bar-played');
+      const tx = head ? (head.getAttribute('transform') || '').match(/translate\\(([-\\d.]+)/) : null;
+      const summary = sr.querySelector('figcaption .summary'), table = sr.querySelector('details.data table');
+      const film = {F}, ft = film && film.shadowRoot && film.shadowRoot.querySelector('.t');
+      const mach = {M}, tok = mach && mach.shadowRoot && mach.shadowRoot.querySelector('.token');
+      return {{root: true, defined: !!customElements.get('opt-chart'), hydrated: st('hydrated'), following: st('following'),
+        svgs: svgs.length, by: vis ? vis.dataset.renderedBy : null, vbw: vb ? vb.width : null, cssw: r ? +r.width.toFixed(1) : null,
+        ticks: vis ? eff('.tick-label') : [], ends: vis ? eff('.endlabel') : [], tick_px: vis ? px('.tick-label') : [],
+        summary: summary ? summary.textContent.trim().length : 0, rows: table ? table.querySelectorAll('tbody tr').length : 0,
+        hash: c.getAttribute('data-hash'), block: (c.querySelector('script[type="application/json"]') || {{}}).textContent || '',
+        x: tx ? +tx[1] : null, readout: ht ? ht.textContent : null, bar: bar ? [+bar.getAttribute('x'), +bar.getAttribute('width')] : null,
+        played: played ? +played.getAttribute('width') : null, film_t: ft ? ft.textContent : null,
+        token: tok ? [+tok.getAttribute('cx'), +tok.getAttribute('cy')] : null}}; }})()"""
+    LOC = f"(() => {{ const el = {C}; el.scrollIntoView({{block: 'center'}}); const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()"
+
+    # E1 static: scripts off, the declarative pre-render at two widths
+    e1 = Edge(("Static", "Resize", "Static"), "Static: the pre-render without script",
+              "With script execution disabled the page still holds the finished chart in a declarative shadow root: the svg the build rendered, "
+              "the caption with its summary and the data table, at 640 px and at 360 px, where the narrow variant keeps every label at ten pixels or more.")
+    e1.matrix_title = "The pre-render without script"
+    b.call("Emulation.setScriptExecutionDisabled", value=True)
+    try:
+        for w in (640, 360):
+            b.call("Emulation.setDeviceMetricsOverride", width=w, height=1000, deviceScaleFactor=0, mobile=False)
+            b.goto(base + ctrl["page"], f"!!{C}")
+            time.sleep(0.3)
+            p = b.js(PROBE)
+            rect = b.js(LOC)
+            time.sleep(0.15)
+            b.frame(d / f"nojs-{w}.png", rect, scale=1)
+            e1.matrix.append((f"no JavaScript, {w} px viewport", f"nojs-{w}.png"))
+            labels = (p.get("ticks") or []) + (p.get("ends") or [])
+            smallest = min(labels) if labels else 0
+            e1.checks += [Check(f"{w} px: declarative root before any script", p.get("root") and not p.get("defined"), f"root={p.get('root')} defined={p.get('defined')}"),
+                          Check(f"{w} px: the build's svg is shown", p.get("by") == "op-pages" and p.get("vbw") == (640 if w == 640 else 360), f"rendered-by={p.get('by')} viewBox width={p.get('vbw')} css width={p.get('cssw')}"),
+                          Check(f"{w} px: caption, summary and table present", p.get("summary", 0) > 40 and p.get("rows", 0) >= 8, f"summary {p.get('summary')} chars, {p.get('rows')} table rows"),
+                          Check(f"{w} px: every label at least 10 px effective", labels and smallest >= 10, f"smallest {smallest} px of {len(labels)} labels"),
+                          Check(f"{w} px: data-hash matches the block", bool(p.get("hash")) and p.get("hash") == fnv1a64_hex(p.get("block", "")), f"{p.get('hash')} vs {fnv1a64_hex(p.get('block', ''))}")]
+    finally:
+        b.call("Emulation.setScriptExecutionDisabled", value=False)
+        b.call("Emulation.clearDeviceMetricsOverride")
+    rep.edges.append(e1)
+
+    # E2 upgrade: hydration keeps the pre-render, then one live svg at the measured width
+    READY = f"!!customElements.get('opt-chart') && {C}.matches(':defined') && !!{F}.shadowRoot?.querySelector('.stage')"
+    e2 = Edge(("Static", "Upgrade", "Following"), "Upgrade: hydration keeps the pre-render",
+              "When the element upgrades it finds the declarative root and the matching data-hash and keeps the markup (the hydrated state); "
+              "on the page the build rendered for, the wide pre-rendered svg fits the container, so it survives upgrade untouched and only its narrow sibling is removed.")
+    b.goto(base + ctrl["page"], READY)
+    time.sleep(0.5)
+    p2 = b.js(PROBE)
+    rect = b.js(LOC)
+    e2.checks += [Check("element defined and hydrated from the declarative root", p2.get("defined") and p2.get("hydrated"), f"defined={p2.get('defined')} hydrated={p2.get('hydrated')}"),
+                  Check("the build's svg survives the upgrade", p2.get("svgs") == 1 and p2.get("by") == "op-pages", f"{p2.get('svgs')} svg(s), rendered-by={p2.get('by')}"),
+                  Check("viewBox equals the CSS box", p2.get("vbw") is not None and p2.get("cssw") is not None and abs(p2["vbw"] - p2["cssw"]) <= 1, f"viewBox {p2.get('vbw')} vs css {p2.get('cssw')}")]
+    rep.edges.append(e2)
+
+    # E3 tick: a full play; the chart's playhead tracks the film's clock and the machine still follows
+    duration = 0.0
+    try:
+        duration = float(json.loads(p2.get("block") or "{}").get("duration", 0))
+    except ValueError:
+        pass
+    e3 = Edge(("Following", "Tick", "Following"), "Tick: the chart follows the film through a full play",
+              "The film plays to its end; at every sample the chart's readout matches the film's clock, its playhead moves monotonically to where the time maps on the plot, "
+              "and the machine bound to the same film moves its token.")
+    film = b.film_start(rect)
+    t0 = time.time()
+    b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
+    rows = sample(b, PROBE, duration + 0.6, period=0.05, t0=t0, film=film, rect=rect)
+    b.js(f"(() => {{ const f = {F}; if (f.matches(':state(playing)')) f.shadowRoot.querySelector('button.play').click(); return 'ok'; }})()")
+    xs = [s["x"] for _, s in rows if s.get("x") is not None]
+    travel = [(x - xs[0]) / max(1e-6, xs[-1] - xs[0]) * 100 for x in xs] if xs else []
+    make_film(e3, film, d, "follow", keys=6, trace=[(0.0, "Following", "Tick", "Following")],
+              series=[{"label": "playhead travel", "series": SERIES["thumb"], "t": [t for t, _ in rows], "y": travel, "lw": 2.4, "at": 0.5}] if travel else None)
+
+    def seconds(text):
+        try:
+            return float(str(text).replace("s", "").strip())
+        except ValueError:
+            return None
+
+    pairs = [(t, seconds(s["readout"]), seconds(s["film_t"])) for t, s in rows if seconds(s.get("readout")) is not None and seconds(s.get("film_t")) is not None]
+    behind = [f - c for _, c, f in pairs]
+    # the chart draws the tick one animation frame after the film wrote its own readout, so it
+    # may trail by one frame; the frame interval under the recording is measured from the film's
+    # own readout changes rather than assumed, and the bound adds the sampling period and the
+    # 0.01 s readout rounding
+    changes = [t for (t, _, f), (_, _, fp) in zip(pairs[1:], pairs) if f != fp]
+    frame = max((b_ - a for a, b_ in zip(changes, changes[1:])), default=0.05)
+    allowed = frame + 0.05 + 0.011
+    bar = p2.get("bar") or [0, 0]
+    # the playhead is judged against the chart's own readout, the time it drew, not the film's
+    # clock: the chart draws one animation frame after the tick, and under the recording that
+    # frame can lag the film by tens of milliseconds, which the trailing check above bounds
+    expected = [(bar[0] + min(1.0, max(0.0, (seconds(s["readout"]) or 0) / duration)) * bar[1], s["x"]) for _, s in rows if s.get("x") is not None and seconds(s.get("readout")) is not None and duration > 0]
+    off = [abs(a - x) for a, x in expected]
+    monotone = all(b_ >= a - 1e-6 for a, b_ in zip(xs, xs[1:]))
+    tokens = [tuple(s["token"]) for _, s in rows if s.get("token")]
+    last = rows[-1][1] if rows else {}
+    e3.checks += [Check("readout never runs ahead of the film", behind and min(behind) >= -0.011, f"chart ahead by at most {-min(behind) if behind else 'n/a'} s"),
+                  Check("readout trails the film by at most one frame", behind and max(behind) <= allowed, f"max {max(behind) if behind else 'n/a'} s behind, frame interval {frame:.3f} s, allowed {allowed:.3f} s, {len(behind)} samples"),
+                  Check("playhead moves monotonically", len(xs) > 5 and monotone, f"{len(xs)} positions, {xs[0] if xs else '-'} to {xs[-1] if xs else '-'}"),
+                  # the readout is rounded to 0.01 s, which is up to 1.8 px of plot at this duration
+                  Check("playhead sits where its readout maps on the plot", off and max(off) <= 2.0, f"max offset {max(off) if off else 'n/a'} px"),
+                  Check("following the film once its ticks arrive", bool(last.get("following")), f"following={last.get('following')}"),
+                  Check("the play reached the end", (seconds(last.get("film_t")) or 0) >= duration - 0.05, f"film at {last.get('film_t')} of {duration}s"),
+                  Check("the machine bound to the film moved its token", len(set(tokens)) > 1, f"{len(set(tokens))} distinct token positions")]
+    rep.edges.append(e3)
+
+    # E4 resize: the live chart re-lays out at the measured width and thins its labels when narrow
+    e4 = Edge(("Following", "Resize", "Following"), "Resize: the live chart re-lays out",
+              "Loaded at a 900 px viewport and then narrowed to 360 px without a reload, the svg's viewBox equals its CSS width at both widths, "
+              "tick labels keep their 12 px token size, the narrowed chart is a live render, and below 480 px every second tick label is hidden.")
+    counts = {}
+    try:
+        for i, w in enumerate((900, 360)):
+            b.call("Emulation.setDeviceMetricsOverride", width=w, height=1000, deviceScaleFactor=0, mobile=False)
+            if i == 0:
+                b.goto(base + ctrl["page"], READY)
+            time.sleep(0.6)
+            p = b.js(PROBE)
+            counts[w] = p
+            e4.checks += [Check(f"{w} px: viewBox equals the CSS box", p.get("vbw") is not None and p.get("cssw") is not None and abs(p["vbw"] - p["cssw"]) <= 1, f"viewBox {p.get('vbw')} vs css {p.get('cssw')}"),
+                          Check(f"{w} px: tick labels keep their token size", p.get("tick_px") and all(abs(v - 12) < 0.5 for v in p["tick_px"]), f"{sorted(set(p.get('tick_px') or []))} px")]
+        e4.checks.append(Check("narrowing a live chart re-renders it in place", counts[360].get("svgs") == 1 and counts[360].get("by") == "op-site", f"{counts[360].get('svgs')} svg(s), rendered-by={counts[360].get('by')}"))
+    finally:
+        b.call("Emulation.clearDeviceMetricsOverride")
+    wide, narrow = len(counts.get(900, {}).get("tick_px") or []), len(counts.get(360, {}).get("tick_px") or [])
+    e4.checks.append(Check("every second tick label hidden when narrow", wide > 0 and 0 < narrow <= (wide + 1) // 2, f"{wide} labels wide, {narrow} narrow"))
+    rep.edges.append(e4)
+    return rep
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dist", help="serve this directory")
@@ -1863,6 +2034,8 @@ def main():
                 rep = run_switch(b, base, ctrl, adhoc)
             elif ctrl["kind"] == "film":
                 rep = run_film(b, base, ctrl, adhoc)
+            elif ctrl["kind"] == "chart":
+                rep = run_chart(b, base, ctrl, adhoc)
             else:
                 rep = run_attention(b, base, ctrl, adhoc)
         except Exception as exc:  # a crashed run is a failed control, not a crashed report

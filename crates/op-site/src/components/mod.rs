@@ -7,6 +7,8 @@ mod build_status;
 mod button;
 mod callout;
 mod card;
+pub mod chart;
+mod chart_style;
 mod checkbox;
 mod chip;
 mod details;
@@ -79,6 +81,7 @@ pub const DEFINITIONS: &[ElementDefinition] = &[
     tree::DEFINITION,
     chip::DEFINITION,
     progress::DEFINITION,
+    chart::DEFINITION,
 ];
 
 /// Styles shared by every shadow root. Colours come from the `--op-*` custom

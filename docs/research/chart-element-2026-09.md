@@ -504,3 +504,97 @@ assert what they would (computed paints, dash visibility, halos, and now
 the rendered stroke colours under every emulation), and resvg would add a
 heavy build dependency for a weaker oracle. Revisit if a check ever needs
 to run without a browser.
+
+## Phase 2 close-out (2026-09-04)
+
+Phase 2 delivered the element. In `op-chart`: the JSON data block of
+decision 1 read by a dependency-free reader shared by the build and the
+browser, a stable FNV-1a content hash, the `</script` escape, gaps drawn
+as path breaks with isolated samples marked so they stay visible, a layout
+sized to any box in CSS pixels with non-scaling strokes, per-column
+decimation past the plot width, alternating classes on time labels and a
+group around the chapter cues so a container query can thin them. In
+`op-webc`: JavaScript accessor properties declared per element, with the
+upgrade-property replay, so `data` and `forElement` exist. The
+`opt-film-time` detail is now `{ time, duration, playing }`, read by the
+machine and the chart. `<opt-chart>` itself: intake from the block or the
+`data` property, hydration of a declarative root whose `data-hash` matches
+(exposed as the `hydrated` state), binding through `for` in the tree scope
+and the document with a document-level fallback listener, the `following`
+and `playing` states, the per-tick transform update coalesced into one
+animation frame, and a resize observer that re-lays the chart out at the
+measured width. `op-pages` lowers `<opt:chart>` to a declarative shadow
+root holding the finished SVG, a caption with a generated summary and the
+data as a table behind a disclosure, with the block and its hash beside
+it. The docs page at `/component/chart/` carries a film, the chart and a
+machine on one clock, and the interaction report gained a chart kind:
+static captures with scripts disabled at 640 and 360 px, hydration, a full
+play against the film's clock, and resize.
+
+Departures and decisions made while building. The pre-render ships two
+SVGs, a wide one at `initial-width` and a narrow one at 360 px switched by
+a container query at 532 px, because a single 640 px pre-render scaled to
+a 360 px viewport puts its 12 px labels at about 6 px, under the 10 px
+floor the conflict on pre-render width set as the trigger. On upgrade the
+element keeps whichever pre-rendered SVG already fits the measured width
+within a pixel and removes the other, so the build's markup survives on
+the page it was drawn for; at any other width it draws one live SVG at the
+measured width and the pre-render is gone one frame after upgrade. The
+aspect ratio applies to the SVG's box rather than the host, since the
+caption and the table share the shadow root, and the `ratio` attribute is
+written into the stylesheet as the fallback of `--op-chart-ratio` so the
+viewBox and the CSS box agree. The chart element's text is 12 px per
+decision 24 while the film's own chart still uses 11 px; the two meet when
+phase 4 restructures the film's chart. The value domain comes from `y`, else
+the film's percent scale when every series is in percent, else the data's
+range padded by four percent; marks and the band are parsed, validated,
+summarised and tabled but not yet drawn. The `data-series` attribute of
+decision 6 waits for phase 3, which brings the hit-testing it serves. The element's
+SVG carries `role="graphics-document"` labelled by the caption's title
+rather than the renderer's slider markup, which stays on the film's chart
+until phase 4 builds the thumb group. The renderer now emits `part` on the
+svg, the playhead group and every series path (decision 6), and the film's
+snapshots also moved for the alternating tick-label class, the chapter
+group and those parts, none of which the film styles, so its rendering is
+unchanged. Grid lines take `shape-rendering: crispEdges` (decision 11); the
+swatch keeps it too because the interaction report samples colours there.
+The pre-rendered table carries chapter rows as well as mark and band rows,
+with the chapter also named in a column of every sample row. The hash on
+the element covers the block text as emitted, after the `</script` escape,
+which is the text the browser reads back. Setting the `data` property
+removes `data-hash` and clears `hydrated`, so a later reconnect cannot
+hydrate stale geometry, and an invalid value leaves the wiring in place so
+a later valid one recovers. The renderer's group order is asserted as the
+emitter's real order (axes, marks, series, track, cursor, playhead) rather
+than the list in decision 12, which is a separate snapshot rewrite. The
+site stylesheet carries `:not(:defined) > template[shadowrootmode]`, with
+the caveat that a template's children are inert by construction, so the
+rule only helps engines that expose them; declarative shadow roots are
+Baseline 2024 and the real fallback is that the markup exists at all. In
+the report, the playhead is judged against the chart's own readout with a
+2 px tolerance (the readout rounds to 0.01 s), the readout may never run
+ahead of the film's clock, and it may trail it by at most one frame, where
+the frame interval is measured from the film's own readout changes during
+the recording rather than assumed.
+
+Firefox on ppc64le. atlas runs Ubuntu 24.04 on POWER, where no Firefox
+snap exists; `firefox-esr` 140.15.0esr from the Mozilla team PPA was
+installed and driven headless. None of the site's wasm runs there, so the
+film above the chart and the site chrome are absent, and the pre-rendered
+chart is the whole experience: at a 1280 px window the wide variant with
+every tick label, at 360 px the narrow variant with alternate labels
+hidden, both with the caption, the summary and the data table. The
+captures are `chart-element/atlas-ppc64le-firefox-1280.png` and
+`chart-element/atlas-ppc64le-firefox-360.png`.
+
+Wasm budget. Measured with twiggy on the release build (names and DWARF
+kept for the inspector, so every figure is larger than what a stripped
+build would ship): the renderer, `op_chart::render::render` with everything
+it retains, is 13.1 KB, under the 20 KB gate R4 set, after the two generic
+standard-library sorts it had pulled in (about 9 KB between them) were
+replaced by insertion sorts over a handful of labels. The data reader,
+`op_chart::data::parse` with its JSON reader, retains 15.0 KB and is
+counted separately as intake, not rendering. The element's own render path
+retains about 12.5 KB. The whole binary grew from 395.6 KB to 454.3 KB
+across the phase, the element, the reader, the shim's property support and
+the docs page's markup included.

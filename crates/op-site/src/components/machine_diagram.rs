@@ -24,6 +24,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-machine",
     observed_attributes: &[],
+    properties: &[],
     create: |host| {
         Box::new(MachineDiagram {
             host,
@@ -414,6 +415,14 @@ pub fn svg(
     out
 }
 
+/// The clock an `opt-film-time` detail carries: the `time` field when the
+/// detail is the object `{ time, duration, playing }` the film dispatches, and
+/// otherwise the bare number the event used to carry, so a page that still
+/// sends one keeps its playhead. An object without a `time` is not a clock.
+pub(crate) fn film_time_of(number: Option<f64>, object_time: Option<f64>) -> Option<f64> {
+    object_time.or(number)
+}
+
 struct MachineDiagram {
     host: HtmlElement,
     _follow: Option<wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>>,
@@ -475,10 +484,17 @@ svg {{ max-width: 100%; height: auto; }}
         };
         let closure = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::Event)>::new(
             move |e: web_sys::Event| {
-                if let Ok(custom) = e.dyn_into::<web_sys::CustomEvent>()
-                    && let Some(t) = custom.detail().as_f64()
-                {
-                    place(t);
+                if let Ok(custom) = e.dyn_into::<web_sys::CustomEvent>() {
+                    let detail = custom.detail();
+                    // `Reflect::get` throws on a number, a null or an
+                    // undefined detail, which reads here as no field
+                    let object_time =
+                        js_sys::Reflect::get(&detail, &wasm_bindgen::JsValue::from_str("time"))
+                            .ok()
+                            .and_then(|v| v.as_f64());
+                    if let Some(t) = film_time_of(detail.as_f64(), object_time) {
+                        place(t);
+                    }
                 }
             },
         );
@@ -620,5 +636,19 @@ mod tests {
         let out = svg(&nodes, &edges, None);
         assert!(out.contains("Attend / Activate"));
         assert!(!out.contains("class=\"edge hl\""));
+    }
+
+    #[test]
+    fn the_playhead_reads_the_time_field_and_still_accepts_a_bare_number() {
+        // `{ time: 1.5, duration: 3.0, playing: true }`: the detail the film
+        // dispatches, where the number extraction finds nothing
+        assert_eq!(film_time_of(None, Some(1.5)), Some(1.5));
+        // a bare number, the shape the event used to carry
+        assert_eq!(film_time_of(Some(2.25), None), Some(2.25));
+        // an object without a time, and a detail that is neither a number nor
+        // an object, arrive here alike: no clock, so the token stays put
+        assert_eq!(film_time_of(None, None), None);
+        // and a detail that is somehow both is read as the object it is
+        assert_eq!(film_time_of(Some(2.25), Some(1.5)), Some(1.5));
     }
 }

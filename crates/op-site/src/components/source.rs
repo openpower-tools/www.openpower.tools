@@ -14,6 +14,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-source",
     observed_attributes: &["label"],
+    properties: &[],
     create: |host| {
         Box::new(Source {
             host,

@@ -329,6 +329,17 @@ pre {
   font-variant-ligatures: contextual;
 }
 
+/* Pre-rendered elements ship their shadow root as a declarative template.
+   An engine that parses it attaches the tree and this rule never applies; an
+   engine that does not leaves an inert template, whose children are inert by
+   construction, so the rule only helps engines that expose them at all. It is
+   not the fallback: declarative shadow roots are Baseline 2024, and the real
+   fallback is the light DOM the element keeps beside the template. */
+
+:not(:defined) > template[shadowrootmode] {
+  display: block;
+}
+
 /* Innards of the light-DOM content components. Shadow CSS reaches only the
    directly slotted element (::slotted), so what sits inside a slotted list or
    table is styled here, with the same tokens. */

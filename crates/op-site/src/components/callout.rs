@@ -31,6 +31,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-callout",
     observed_attributes: &["variant", "heading"],
+    properties: &[],
     create: |host| Box::new(Callout { host }),
 };
 

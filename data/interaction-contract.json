@@ -28,6 +28,15 @@
       "_": "phase 2: exercised on the integrated report page it renders, which bounds the recursion at one level"
     },
     {
+      "tag": "opt-chart",
+      "kind": "chart",
+      "page": "/component/chart/",
+      "target": {
+        "host": true
+      },
+      "_": "phase 2: follows the film on its docs page; the chart kind drives it"
+    },
+    {
       "tag": "opt-button",
       "kind": "attention",
       "page": "/components/palette/",

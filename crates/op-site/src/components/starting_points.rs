@@ -12,6 +12,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-starting-points",
     observed_attributes: &["heading"],
+    properties: &[],
     create: |host| Box::new(StartingPoints { host }),
 };
 

@@ -16,6 +16,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-chip",
     observed_attributes: &["variant", "toggle", "pressed", "removable"],
+    properties: &[],
     create: |host| {
         Box::new(Chip {
             host,

@@ -9,6 +9,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-site-footer",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(SiteFooter { host }),
 };
 

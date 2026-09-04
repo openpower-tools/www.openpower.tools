@@ -12,6 +12,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-key-value",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(KeyValue { host }),
 };
 

@@ -1,0 +1,81 @@
+<opt:body xmlns:opt="https://www.openpower.tools/ns/opt">
+      <p>A time-series chart that follows a film's clock. It draws the sampled series of a
+      recorded interaction with a playhead, a played bar and a chapter bar, and it moves only
+      when the film it is bound to says so: the film broadcasts <code>opt-film-time</code> on
+      every tick, and the chart reads the time from it. The chart never advances time on its
+      own, so it is a projection of the film's timeline, like the machine diagram, not a
+      second player.</p>
+      <p>Every page that carries a chart ships it pre-rendered. The build lowers the data block
+      into a declarative shadow root with the finished SVG, a caption with a one-paragraph
+      summary and the data as a real table behind a disclosure, so the chart is complete
+      before any script runs and stays complete where WebAssembly is unavailable, as it is in
+      Firefox on ppc64le. When the element upgrades it keeps that markup if the data block still
+      matches the hash the build embedded, and keeps the pre-rendered chart itself when its
+      width already fits the container; otherwise it lays the chart out at the measured width.
+      From then on a resize observer re-lays it out whenever the container changes, so text
+      stays its token size, and below 480 px every second tick label and the chapter bar are
+      hidden.</p>
+      <p>Series take their colour from the palette tokens (<code>--op-series-1</code> to
+      <code>6</code>) by position, and colour is never the only cue: each series after the first
+      has its own dash pattern, a labelled series ends in a direct label with a swatch, an
+      unlabelled one carries markers, and the forced-colours, high-contrast and print rules are
+      the film's.</p>
+      <h2>Example</h2>
+      <opt:film id="chart-film" sheet="/opt-film-demo.png" title="Eight frames of a theme flight">
+        <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"]], "ylabel": "progress %", "series": [{"label": "palette", "series": 1, "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "series": 3, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "series": 2, "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>
+      </opt:film>
+      <opt:chart for="chart-film">
+        <script type="application/json">{"duration": 3.3, "series": [{"id": "palette", "label": "palette", "unit": "%"}, {"id": "thumb", "label": "solid thumb", "unit": "%"}, {"id": "ghost", "label": "progress ghost", "unit": "%"}], "rows": [[0.0, 0, 0, 0], [0.47, 1, 100, 1], [0.94, 4, 100, 4], [1.41, 9, 100, 9], [1.89, 20, 100, 21], [2.36, 43, 100, 43], [2.83, 74, 100, 74], [3.3, 100, 100, 100]], "chapters": [{"t": 0, "title": "flight"}, {"t": 2.36, "title": "settle"}], "marks": [{"t": 1.89, "label": "half"}], "band": {"t0": 2.36, "t1": 3.3, "label": "settle"}}</script>
+      </opt:chart>
+      <opt:machine for="chart-film">
+        <script type="application/json">{"nodes": ["Idle", "Flight", "Settled"], "edges": [["Idle", "Toggle", "Flight"], ["Flight", "Settle", "Settled"], ["Settled", "Toggle", "Flight"]], "highlight": ["Idle", "Toggle", "Flight"], "trace": [[0.0, "Idle", "Toggle", "Flight"], [2.36, "Flight", "Settle", "Settled"]]}</script>
+      </opt:machine>
+      <h2>Markup</h2>
+      <pre>&lt;opt:film id="flight" sheet="/frames.png" title="..."&gt;...&lt;/opt:film&gt;
+&lt;opt:chart for="flight"&gt;
+  &lt;script type="application/json"&gt;{ "duration": 3.3,
+    "series": [{ "id": "palette", "label": "palette", "unit": "%" }, ...],
+    "rows": [[0.0, 0, 0, 0], [0.47, 1, 100, 1], ...],
+    "chapters": [{ "t": 0, "title": "flight" }, { "t": 2.36, "title": "settle" }],
+    "marks": [{ "t": 1.89, "label": "half" }],
+    "band": { "t0": 2.36, "t1": 3.3, "label": "settle" } }&lt;/script&gt;
+&lt;/opt:chart&gt;</pre>
+      <h2>Data block</h2>
+      <p>One <code>script</code> child of type <code>application/json</code> holds the data. The
+      build reads it to pre-render the chart and embeds a hash of it on the element; the
+      upgraded element reads the same block, so authors write one thing.</p>
+      <opt:table lined="">
+        <table>
+          <thead><tr><th scope="col">key</th><th scope="col">shape</th><th scope="col">meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>duration</code></td><td>number, seconds</td><td>The length of the timeline; required, positive.</td></tr>
+            <tr><td><code>series</code></td><td>array of objects</td><td>One entry per column after time: <code>id</code> and <code>label</code>, an optional <code>unit</code>, and optional <code>dash</code> and <code>marker</code> indices that override the cues chosen by position.</td></tr>
+            <tr><td><code>rows</code></td><td>array of arrays</td><td>Each row is <code>[t, v1, ..., vN]</code> with one value per series, in non-decreasing time; <code>null</code> marks a missing sample and breaks the line.</td></tr>
+            <tr><td><code>chapters</code></td><td>array of objects</td><td>Optional <code>{ "t", "title" }</code> entries drawn on the chapter bar.</td></tr>
+            <tr><td><code>marks</code></td><td>array of objects</td><td>Optional <code>{ "t", "label" }</code> entries for single moments.</td></tr>
+            <tr><td><code>band</code></td><td>object</td><td>Optional <code>{ "t0", "t1", "label" }</code> for a shaded interval.</td></tr>
+            <tr><td><code>y</code></td><td><code>[lo, hi]</code></td><td>Optional value domain; when absent, series measured in <code>%</code> take the film's percent scale, and anything else the range of the data padded by four percent on each side.</td></tr>
+          </tbody>
+        </table>
+      </opt:table>
+      <p>The block may not contain the character sequence that closes a script element; the
+      build escapes it inside strings, and the parser rejects anything outside this schema
+      naming the offending key.</p>
+      <h2>Attributes, properties, events</h2>
+      <opt:table lined="">
+        <table>
+          <thead><tr><th scope="col">name</th><th scope="col">kind</th><th scope="col">meaning</th></tr></thead>
+          <tbody>
+            <tr><td><code>for</code></td><td>attribute</td><td>The id of the film whose clock the chart follows, resolved first in the chart's own tree scope and then in the document.</td></tr>
+            <tr><td><code>initial-width</code></td><td>attribute</td><td>The width in CSS pixels the build pre-renders at; 640 when absent.</td></tr>
+            <tr><td><code>ratio</code></td><td>attribute</td><td>Width over height of the chart box; 16 / 6 when absent. The stylesheet uses it as the fallback of <code>--op-chart-ratio</code>, so a page may override the box with that property.</td></tr>
+            <tr><td><code>data</code></td><td>property</td><td>The data object, settable from script and never reflected; a value set before the element upgrades is kept.</td></tr>
+            <tr><td><code>forElement</code></td><td>property</td><td>The bound film element; set it to wire a chart across shadow roots without ids.</td></tr>
+            <tr><td><code>opt-film-time</code></td><td>event consumed</td><td>The film's composed, bubbling tick with detail <code>{ time, duration, playing }</code>; a bare number is still accepted.</td></tr>
+            <tr><td><code>:state(hydrated)</code></td><td>custom state</td><td>Set when the element upgraded over a declarative root whose hash matched the block and took it over instead of writing markup; cleared when the data property replaces the data.</td></tr>
+            <tr><td><code>:state(following)</code></td><td>custom state</td><td>Set once the first tick from the bound film arrives.</td></tr>
+            <tr><td><code>:state(playing)</code></td><td>custom state</td><td>Mirrors the playing flag of the film's ticks.</td></tr>
+          </tbody>
+        </table>
+      </opt:table>
+</opt:body>

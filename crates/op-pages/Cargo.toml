@@ -13,3 +13,7 @@ quick-xml = "0.37"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 op-site = { path = "../op-site" }
+
+[dev-dependencies]
+# The chart tests hash a data block the way the pre-render does.
+op-chart.workspace = true

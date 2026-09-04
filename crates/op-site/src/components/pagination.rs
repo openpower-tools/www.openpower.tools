@@ -11,6 +11,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-pagination",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(Pagination { host }),
 };
 

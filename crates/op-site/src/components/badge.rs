@@ -10,6 +10,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-badge",
     observed_attributes: &["variant"],
+    properties: &[],
     create: |host| Box::new(Badge { host }),
 };
 

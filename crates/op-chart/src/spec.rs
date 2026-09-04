@@ -20,9 +20,9 @@ pub struct Series {
     /// `series-N` and the consumer's stylesheet maps it to `--op-series-N`.
     /// This crate never writes a colour.
     pub index: usize,
-    /// `(t, value)` pairs in time order; values are clamped to the layout's
-    /// value domain when drawn.
-    pub points: Vec<(f64, f64)>,
+    /// `(t, value)` pairs in time order, `None` for a gap the line breaks
+    /// at; values are clamped to the layout's value domain when drawn.
+    pub points: Vec<Option<(f64, f64)>>,
     /// Stroke width in px; 2 is the palette's design width.
     pub width: f64,
 }
@@ -34,6 +34,11 @@ pub struct Spec {
     pub end: f64,
     /// The slider's `aria-valuemax`: at least `end`.
     pub duration: f64,
+    /// The value domain the chart is drawn on, `(lo, hi)` with lo below hi;
+    /// the layout is put on it before anything is drawn, so the gridlines,
+    /// their labels and every point follow the data's own range.
+    /// [`crate::layout::PERCENT`] is the percent scale the film uses.
+    pub y: (f64, f64),
     pub ylabel: String,
     pub chapters: Vec<Chapter>,
     pub series: Vec<Series>,

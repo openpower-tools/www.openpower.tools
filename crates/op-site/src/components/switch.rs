@@ -20,6 +20,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-switch",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(Switch { host }),
 };
 

@@ -20,6 +20,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-machine-probes",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(MachineProbes { host }),
 };
 

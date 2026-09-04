@@ -593,6 +593,7 @@ dependencies = [
 name = "op-pages"
 version = "0.1.0"
 dependencies = [
+ "op-chart",
  "op-site",
  "op-terms",
  "quick-xml",

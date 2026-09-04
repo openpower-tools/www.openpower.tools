@@ -11,6 +11,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-details",
     observed_attributes: &["summary", "open"],
+    properties: &[],
     create: |host| Box::new(Details { host }),
 };
 

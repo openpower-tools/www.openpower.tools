@@ -19,6 +19,12 @@
       plays it in place of the sheet's frames, on the film's own clock: play, pause, seek and
       rate all apply to the video, and the sheet stays underneath as the poster. The
       interaction reports record one from the browser's screencast for every film.</p>
+      <p>Every render broadcasts the clock, so other views of the same timeline stay on it.
+      The event is <code>opt-film-time</code>, it bubbles and crosses shadow boundaries, and
+      its detail is the object <code>{ time, duration, playing }</code>: the current time and
+      the timeline's length, both in seconds, and whether the film is running. An
+      <code>opt:machine</code> with a <code>for</code> naming the film reads the
+      <code>time</code> field to move its token.</p>
       <h2>Example</h2>
       <opt:film sheet="/opt-film-demo.png" title="Eight frames of a theme flight">
         <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"]], "ylabel": "progress %", "series": [{"label": "palette", "series": 1, "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "series": 3, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "series": 2, "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>

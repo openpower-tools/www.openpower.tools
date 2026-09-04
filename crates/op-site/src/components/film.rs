@@ -20,8 +20,9 @@
 //!
 //! Internal state is exposed as custom states - `playing`, `pending`,
 //! `peeking` - so a page can style or test against them; every render
-//! dispatches a composed `opt-film-time` event carrying the clock (an
-//! `opt-machine for="..."` follows it); the chart is a
+//! dispatches a composed `opt-film-time` event whose detail is
+//! `{ time, duration, playing }` (an `opt-machine for="..."` follows it,
+//! reading `time`); the chart is a
 //! `role=slider` with value text naming the frame and chapter, and a
 //! polite live region announces seeks.
 
@@ -32,6 +33,7 @@ use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement, KeyboardEvent, MouseEvent, PointerEvent};
 
+use super::chart_style::{SERIES_TOKENS, chart_rules};
 use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
@@ -39,6 +41,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-film",
     observed_attributes: &[],
+    properties: &[],
     create: |host| Box::new(Film { host, wiring: None }),
 };
 
@@ -185,65 +188,15 @@ impl Data {
 }
 
 // ---- the chart: drawn by op-chart, moved here -------------------------
-/// How many `--op-series-N` tokens the palette defines.
-const SERIES_TOKENS: usize = 6;
-
-/// Series lines, swatches and markers take their colour from the palette
-/// tokens and their dash from this table, so colour is never the only cue;
-/// the markup carries only the class. Butt caps keep the pattern legible at
-/// 2 px.
-const SERIES_CSS: &str = "
-.chart polyline[class^=series] { stroke-linecap: butt; }
-.chart .series-1 { stroke: var(--op-series-1); }
-.chart .series-2 { stroke: var(--op-series-2); } .chart polyline.series-2 { stroke-dasharray: 8 4; }
-.chart .series-3 { stroke: var(--op-series-3); } .chart polyline.series-3 { stroke-dasharray: 2 3; }
-.chart .series-4 { stroke: var(--op-series-4); } .chart polyline.series-4 { stroke-dasharray: 8 4 2 4; }
-.chart .series-5 { stroke: var(--op-series-5); } .chart polyline.series-5 { stroke-dasharray: 12 4; }
-.chart .series-6 { stroke: var(--op-series-6); } .chart polyline.series-6 { stroke-dasharray: 4 2 4 6; }";
-
-/// Forced-colours mode keeps SVG author colours, so every paint is mapped
-/// to a system colour here: series, axes and text on CanvasText with the
-/// dashes and markers carrying identity, the played region and playhead on
-/// Highlight, the band as an outline.
-/// Print keeps no palette: everything goes to print blacks and greys on
-/// white, the dashes and markers carry identity, and the band is an
-/// outline. Backgrounds are forced to print so the halos still work.
-const PRINT_CSS: &str = "
-@media print {
-  .chart { print-color-adjust: exact; -webkit-print-color-adjust: exact; background: white; }
-  .chart polyline[class^=series], .chart .swatch, .chart .tick, .chart .mark, .chart .chapter { stroke: black; }
-  .chart .marker { display: inline; stroke: black; fill: white; }
-  .chart .axis, .chart .marklabel, .chart .endlabel, .chart .head-t { fill: black; stroke: white; }
-  .chart .grid { stroke: #bbbbbb; }
-  .chart .band { fill: none; stroke: black; stroke-dasharray: 4 3; opacity: 1; }
-  .chart .bar-bg { fill: #dddddd; } .chart .bar-played { fill: #555555; }
-  .chart .head { stroke: black; } .chart .head-dot { fill: black; }
-  .chart .peek-line { display: none; }
-}";
-
-/// The chart's static rules, in the order the stylesheet carries them.
-fn chart_rules() -> String {
-    format!("{SERIES_CSS}\n{FORCED_COLOURS_CSS}\n{PRINT_CSS}")
-}
-
-const FORCED_COLOURS_CSS: &str = "
-@media (forced-colors: active) {
-  .chart { forced-color-adjust: auto; background: Canvas; }
-  .chart polyline[class^=series], .chart .swatch, .chart .tick, .chart .mark, .chart .chapter, .chart .peek-line { stroke: CanvasText; }
-  .chart .marker { display: inline; stroke: CanvasText; fill: Canvas; }
-  .chart .axis, .chart .marklabel, .chart .endlabel, .chart .head-t { fill: CanvasText; stroke: Canvas; }
-  .chart .grid { stroke: GrayText; }
-  .chart .band { fill: none; stroke: CanvasText; stroke-dasharray: 4 3; opacity: 1; }
-  .chart .bar-bg { fill: GrayText; } .chart .bar-played { fill: Highlight; }
-  .chart .head { stroke: Highlight; } .chart .head-dot { fill: Highlight; }
-}";
-
 /// The film's data as a chart spec: one axis for every series, chapters as
 /// marks, and the colours exactly as the data passes them.
 fn spec_of(d: &Data) -> op_chart::Spec {
     op_chart::Spec {
         end: d.t_max,
         duration: d.end(),
+        // every film series is a percentage, so the chart stays on the
+        // percent scale whatever a data-driven chart puts itself on
+        y: op_chart::layout::PERCENT,
         ylabel: d.ylabel.clone(),
         chapters: d
             .chapters
@@ -259,7 +212,13 @@ fn spec_of(d: &Data) -> op_chart::Spec {
             .map(|s| op_chart::Series {
                 label: s.label.clone(),
                 index: s.index,
-                points: s.t.iter().copied().zip(s.y.iter().copied()).collect(),
+                points: s
+                    .t
+                    .iter()
+                    .copied()
+                    .zip(s.y.iter().copied())
+                    .map(Some)
+                    .collect(),
                 width: s.lw,
             })
             .collect(),
@@ -329,6 +288,14 @@ fn show_stage(dom: &Dom, d: &Data, k: usize, tag: &str) {
     )));
 }
 
+/// The fields of the `opt-film-time` detail, in the order the event builds
+/// them: the clock, the timeline's total length and whether the film is
+/// running. An object rather than a bare number so a follower can render the
+/// played bar and the end without reading them off the film.
+fn time_detail_fields() -> [&'static str; 3] {
+    ["time", "duration", "playing"]
+}
+
 fn render(dom: &Dom, d: &Data, st: &State) {
     let n = d.times.len();
     let k = d.frame_at(st.tc);
@@ -381,7 +348,15 @@ fn render(dom: &Dom, d: &Data, st: &State) {
     let init = web_sys::CustomEventInit::new();
     init.set_bubbles(true);
     init.set_composed(true);
-    init.set_detail(&JsValue::from_f64(st.tc));
+    let [time, duration, playing] = time_detail_fields();
+    let detail = js_sys::Object::new();
+    let set = |key: &str, value: &JsValue| {
+        let _ = js_sys::Reflect::set(&detail, &JsValue::from_str(key), value);
+    };
+    set(time, &JsValue::from_f64(st.tc));
+    set(duration, &JsValue::from_f64(d.end()));
+    set(playing, &JsValue::from_bool(st.playing));
+    init.set_detail(&detail);
     if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("opt-film-time", &init) {
         let _ = dom.host.dispatch_event(&event);
     }
@@ -748,6 +723,12 @@ impl CustomElement for Film {
             )
         };
         let shadow = shadow_root(&self.host);
+        // The gridlines are axis-aligned hairlines and take crispEdges, so
+        // they land on a device pixel instead of being blurred across two.
+        // The swatch keeps it as well, though it is a legend key rather
+        // than a rule: the interaction report samples its colour a pixel at
+        // a time, and an anti-aliased end would give the probe a blend of
+        // the swatch and the surface behind it.
         shadow.set_inner_html(&format!(
             "<style>{BASE_CSS}
 :host {{ display: block; border: 1px solid var(--op-border); background: var(--op-surface); color: var(--op-text); padding: 0.5rem; max-width: 930px; user-select: none; -webkit-user-select: none; outline: 2px solid transparent; outline-offset: 2px; font-size: 0.9rem; }}
@@ -778,13 +759,13 @@ impl CustomElement for Film {
 .keys dl {{ display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.8rem; margin: 0.4rem 0; }} .keys dt {{ font-family: var(--op-font-mono); }} .keys dd {{ margin: 0; }}
 .chartbox {{ margin-top: 0.6rem; position: relative; }}
 .chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 11px; }}
-.chart .grid {{ stroke: var(--op-border); }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
+.chart .grid {{ stroke: var(--op-border); shape-rendering: crispEdges; }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
 .chart .mark {{ stroke: var(--op-accent); stroke-dasharray: 3 3; }} .chart .marklabel {{ fill: var(--op-accent); }}
 .chart .endlabel {{ fill: var(--op-text); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 3; }}
 .chart .swatch {{ stroke-width: 3; shape-rendering: crispEdges; }}
 .chart .marker {{ display: none; fill: var(--op-surface); stroke-width: 1.5; stroke-dasharray: none; }} .chart .marker.shown {{ display: inline; }}
 {chart_rules}
-@media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart polyline[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
+@media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart path[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
 .chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 .chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
 .chart .peek-line {{ stroke: var(--op-muted); stroke-dasharray: 3 3; }}
@@ -1205,6 +1186,7 @@ impl CustomElement for Film {
 mod chart_reference {
     //! Fixtures shaped like the films the report tool emits, and the
     //! film-side rules over them.
+    use super::super::chart_style::{FORCED_COLOURS_CSS, PRINT_CSS, SERIES_CSS};
     use super::*;
 
     fn series(label: &str, index: usize, t: &[f64], y: &[f64], lw: f64) -> Series {
@@ -1279,8 +1261,7 @@ mod chart_reference {
         let d = demo();
         let svg = op_chart::render(&spec_of(&d), op_chart::Layout::film(d.t_max)).svg;
         assert!(
-            svg.contains("<polyline class=\"series-2\"")
-                && svg.contains("class=\"swatch series-2\"")
+            svg.contains("<path class=\"series-2\"") && svg.contains("class=\"swatch series-2\"")
         );
         assert!(!svg.contains("stroke=\"#") && !svg.contains("fill=\"#"));
         for n in 1..=SERIES_TOKENS {
@@ -1300,7 +1281,7 @@ mod chart_reference {
         assert!(!SERIES_CSS.contains(".series-1 { stroke-dasharray"));
         // forced colours: every paint the chart uses is mapped to a system colour
         for class in [
-            "polyline[class^=series]",
+            "path[class^=series]",
             ".marker",
             ".endlabel",
             ".grid",
@@ -1320,7 +1301,7 @@ mod chart_reference {
         assert!(!FORCED_COLOURS_CSS.contains("var(--op-series"));
         // print: the same paints mapped to print blacks and greys on white, identity by dash and marker
         for class in [
-            "polyline[class^=series]",
+            "path[class^=series]",
             ".swatch",
             ".tick",
             ".chart .mark,",
@@ -1339,15 +1320,16 @@ mod chart_reference {
         assert!(PRINT_CSS.starts_with("\n@media print {"));
         assert!(!PRINT_CSS.contains("var(--op-series"));
         // the print rule never touches the series dash table: the declaration block that
-        // addresses the series polylines carries no dasharray
+        // addresses the series paths carries no dasharray
         let series_block = PRINT_CSS
-            .split("polyline[class^=series]")
+            .split("path[class^=series]")
             .nth(1)
             .and_then(|rest| rest.split('{').nth(1))
             .and_then(|block| block.split('}').next())
             .expect("a print rule for the series");
         assert!(!series_block.contains("stroke-dasharray"), "{series_block}");
-        assert!(!PRINT_CSS.contains("polyline.series-"));
+        // and print addresses no single series at all
+        assert!(!PRINT_CSS.contains(".series-"));
         assert!(PRINT_CSS.contains(".chart .marker { display: inline;"));
         // and the assembled rules the stylesheet carries include all three blocks
         let rules = chart_rules();
@@ -1371,6 +1353,13 @@ mod chart_reference {
         assert_eq!(d.prev_chapter_start(1.7), 1.5);
         assert_eq!(d.prev_chapter_start(0.3), 0.0);
         assert_eq!(d.prev_chapter_start(3.6), 3.03);
+    }
+
+    #[test]
+    fn the_time_event_carries_the_clock_the_duration_and_the_playing_flag() {
+        // followers read these names off the detail object; the order is the
+        // order the dispatch builds them in
+        assert_eq!(time_detail_fields(), ["time", "duration", "playing"]);
     }
 
     #[test]

@@ -14,6 +14,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-progress",
     observed_attributes: &["value", "label", "state"],
+    properties: &[],
     create: |host| Box::new(Progress { host }),
 };
 

@@ -11,6 +11,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-site-header",
     observed_attributes: &["heading", "tagline"],
+    properties: &[],
     create: |host| Box::new(SiteHeader { host }),
 };
 

@@ -12,6 +12,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-card",
     observed_attributes: &["heading", "href"],
+    properties: &[],
     create: |host| Box::new(Card { host }),
 };
 

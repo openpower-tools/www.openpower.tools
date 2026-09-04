@@ -17,6 +17,7 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-term",
     observed_attributes: &["scheme", "value"],
+    properties: &[],
     create: |host| Box::new(TermElement { host }),
 };
 
