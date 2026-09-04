@@ -21,6 +21,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      HEADLESS_SHELL_VERSION: 152.0.7977.82
     steps:
       - uses: actions/checkout@v7
 
@@ -71,12 +73,34 @@ jobs:
       - name: Install ffmpeg (the report encodes each film's screencast as VP9 WebM)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
 
+      - name: Cache chrome-headless-shell
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/op-headless-shell
+          key: chrome-headless-shell-${{ env.HEADLESS_SHELL_VERSION }}-linux64
+      - name: Install chrome-headless-shell (the synthetic frame clock needs the old headless engine)
+        # The Chrome the runner ships runs the new headless mode, which has no
+        # virtual time or frame control; Chrome for Testing publishes the old
+        # engine as chrome-headless-shell, pinned here so every run renders
+        # the same frames.
+        run: |
+          set -e
+          npx --yes @puppeteer/browsers install "chrome-headless-shell@${HEADLESS_SHELL_VERSION}" --path ~/.cache/op-headless-shell > /tmp/shell-install.log
+          SHELL_BIN=$(ls ~/.cache/op-headless-shell/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell | head -n 1)
+          "$SHELL_BIN" --version
+          echo "OP_HEADLESS_SHELL=$SHELL_BIN" >> "$GITHUB_ENV"
+
       - name: Interaction report (real-input harness over every control)
         # Drives each control through its machine edges with CDP mouse and
-        # keyboard events in headless Chrome and renders the evidence; a
-        # failing check fails the build. The runner image ships Chrome.
+        # keyboard events on a synthetic frame clock (virtual time, one frame
+        # per step) and renders the evidence; a failing check fails the build.
         uses: astral-sh/setup-uv@v7
-      - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --publish
+      - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --clock synthetic --checks-json reports/interactions/checks.json --publish
+      - name: Determinism (a second synthetic pass over the timing kinds must match the first)
+        run: |
+          set -e
+          uv run tools/interaction_report/report.py --dist dist --out /tmp/rep-again --clock synthetic --only opt-theme-toggle,opt-switch,opt-chart --checks-json /tmp/rep-again/checks.json
+          python3 tools/interaction_report/compare_checks.py reports/interactions/checks.json /tmp/rep-again/checks.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:

@@ -17,12 +17,24 @@ gate.
 The machine diagram is derived from the machine itself (op-webc's
 machine_table bin), so the documentation cannot drift from the code.
 
+Timing comes from one of two clocks. The synthetic one drives
+chrome-headless-shell under begin frame control with virtual time: the
+page's clock moves only when this tool draws a frame, one sixtieth of a
+second at a time, so every sample sits at an exact time and two runs
+agree frame for frame. The real one is Chrome's own headless on the wall
+clock, which has neither facility. --clock chooses; synthetic is the
+default wherever a shell is found. A check's detail may not report a
+measurement more finely than the check decides on it: an extra decimal
+carries a transition's last bit of floating-point wobble, and --checks-json
+is compared between runs to prove the timing is reproducible.
+
     uv run tools/interaction_report/report.py --dist dist --out reports/interactions
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import glob
 import json
 import math
 import os
@@ -62,6 +74,38 @@ CHANGE_TOLERANCE = 24
 # The browser whose screencast the films are cut from (set by main).
 RECORDER = None
 OKABE = {"mark": "#D55E00"}
+
+# ---- the synthetic clock ----------------------------------------------------
+# chrome-headless-shell can be told when to draw (--enable-begin-frame-control)
+# and when the page's clock may run (Emulation.setVirtualTimePolicy). Under that
+# pair nothing happens between our frames, so every sample sits at an exact time
+# and two runs of the same script agree frame for frame. Chrome's own new
+# headless has neither, so the real clock stays available.
+FRAME_RATE = 60
+INTERVAL_MS = 1000.0 / FRAME_RATE
+# A film's recording takes every second synthetic frame: thirty frames a second.
+VIDEO_EVERY = 2
+# The virtual clock starts here, 2026-01-01T00:00:00Z, so the page's Date is
+# fixed too (the protocol takes seconds since the epoch).
+VIRTUAL_EPOCH_MS = 1767225600000
+# Loading gets this much virtual time, spent only while no fetch is pending.
+LOAD_BUDGET_MS = 5000
+# How far ahead of the virtual clock a frame's time is stamped. It only has to
+# cover the error in mapping the virtual clock onto the renderer's ticks (both
+# are the machine's monotonic clock, read a moment apart), because a frame time
+# behind the virtual clock is ignored and stops the page's animations.
+TICK_HEADROOM_MS = 250.0
+# A virtual time budget that would otherwise be starved by a busy task queue
+# still expires after this many tasks.
+STARVATION = 100000
+CLOCK_SYNTHETIC, CLOCK_REAL = "synthetic", "real"
+# Where a chrome-headless-shell may be found when neither --shell nor
+# OP_HEADLESS_SHELL names one.
+SHELL_GLOBS = ("~/.cache/puppeteer/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
+               "./chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
+               "/tmp/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell")
+# The clock this run drives the pages with (set by main).
+CLOCK = CLOCK_REAL
 
 
 def series_hex() -> dict:
@@ -167,24 +211,64 @@ def find_chrome(explicit: str | None) -> str:
     sys.exit("no Chrome/Chromium binary found")
 
 
+def find_shell(explicit: str | None) -> str | None:
+    """The chrome-headless-shell the synthetic clock needs: the flag, the
+    environment, then the usual download sites, or None."""
+    for c in (explicit, os.environ.get("OP_HEADLESS_SHELL")):
+        if c:
+            return c
+    for pattern in SHELL_GLOBS:
+        hits = sorted(glob.glob(os.path.expanduser(pattern)))
+        if hits:
+            return hits[0]
+    return None
+
+
+def clock_note(clock: str) -> str:
+    return f"Clock: synthetic, {FRAME_RATE} frames per second" if clock == CLOCK_SYNTHETIC else "Clock: real"
+
+
+def binary_version(binary: str) -> str:
+    try:
+        return subprocess.run([binary, "--version"], capture_output=True, text=True, timeout=30).stdout.strip()
+    except Exception:
+        return "version unknown"
+
+
 class Browser:
-    def __init__(self, chrome: str, workdir: Path):
+    def __init__(self, chrome: str, workdir: Path, synthetic: bool = False):
+        self.synthetic = synthetic
         self.port = free_port()
         self.profile = workdir / "profile"
         self.profile.mkdir(parents=True, exist_ok=True)
         log = (workdir / "chrome.log").open("wb")
+        # the synthetic clock needs a shell that draws only when asked and
+        # schedules nothing off a real clock; the threaded compositor paths are
+        # off for the same reason
+        mode = (["--headless", "--enable-begin-frame-control", "--deterministic-mode",
+                 "--run-all-compositor-stages-before-draw", "--disable-new-content-rendering-timeout",
+                 "--disable-threaded-animation", "--disable-threaded-scrolling",
+                 "--disable-checker-imaging", "--disable-image-animation-resync"] if synthetic else
+                ["--headless=new", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check"])
         self.proc = subprocess.Popen(
-            [chrome, "--headless=new", "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
-             "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
+            [chrome, *mode, "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
              "--window-size=1280,900", f"--force-device-scale-factor={DPR}",
              f"--remote-debugging-port={self.port}", "--remote-allow-origins=*",
              f"--user-data-dir={self.profile}", "about:blank"],
             stdout=log, stderr=log)
-        # CI runners can take well over ten seconds to bring Chrome up.
+        # CI runners can take well over ten seconds to bring Chrome up. Starting a
+        # process is not page timing: this wait is on the real clock in both modes.
         deadline = time.time() + 90
         while True:
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/version", timeout=2).read()
+                if synthetic:
+                    # the shell's own page target: /json/new is not offered here
+                    targets = json.load(urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/list", timeout=2))
+                    target = next(t for t in targets if t["type"] == "page")
+                else:
+                    urllib.request.urlopen(f"http://127.0.0.1:{self.port}/json/version", timeout=2).read()
+                    target = json.load(urllib.request.urlopen(urllib.request.Request(
+                        f"http://127.0.0.1:{self.port}/json/new?url=about:blank", method="PUT")))
                 break
             except Exception:
                 if self.proc.poll() is not None:
@@ -192,8 +276,6 @@ class Browser:
                 if time.time() > deadline:
                     sys.exit(f"Chrome did not open its DevTools port within 90s; see {workdir / 'chrome.log'}")
                 time.sleep(0.3)
-        target = json.load(urllib.request.urlopen(urllib.request.Request(
-            f"http://127.0.0.1:{self.port}/json/new?url=about:blank", method="PUT")))
         self.ws = websocket.create_connection(target["webSocketDebuggerUrl"], timeout=60)
         self.mid = 0
         self.events: list[dict] = []
@@ -207,10 +289,28 @@ class Browser:
         self.cast_frames: list[tuple[float, bytes]] = []
         self.casting = False
         self.cast_rect = None
+        self.cast_size = (1280, 900)  # the viewport in CSS px, as screencast metadata gives it
+        # the synthetic clock's state: frames drawn, where the frame grid stands
+        # on the virtual clock, the real ticks that clock started from, and the
+        # last frame time sent
+        self.frames = 0
+        self.grid = 0.0
+        self.tick0 = 0.0
+        self.tick = 0.0
         self.reader = threading.Thread(target=self._read_loop, name="cdp-reader", daemon=True)
         self.reader.start()
         self.call("Page.enable")
         self.call("Runtime.enable")
+        # Chrome's headless grants clipboard writes and the shell denies them, so
+        # a control that copies would raise on one clock and not the other. The
+        # page under test meets one permission state, stated here.
+        self.call("Browser.grantPermissions", permissions=["clipboardReadWrite", "clipboardSanitizedWrite"])
+        if self.synthetic:
+            self.call("HeadlessExperimental.enable")
+            self.call("Emulation.setVirtualTimePolicy", policy="pause", initialVirtualTime=VIRTUAL_EPOCH_MS / 1000)
+            # the virtual clock now stands at the epoch and the renderer's ticks
+            # stand here, so this is the base every frame time is measured from
+            self.tick0 = time.monotonic() * 1000.0 + TICK_HEADROOM_MS
         self.clip_uses_page_coords = None
 
     def _read_loop(self):
@@ -245,8 +345,96 @@ class Browser:
                     self.ws.send(json.dumps({"id": self.mid, "method": "Page.screencastFrameAck",
                                              "params": {"sessionId": p["sessionId"]}}))
             else:
-                with self.lock:
+                with self.cond:
                     self.events.append(msg)
+                    self.cond.notify_all()
+
+    # ---- the clock: real time, or the synthetic frame clock ----------------
+    def now(self) -> float:
+        """Seconds. Real: the wall clock. Synthetic: the page's own clock, which
+        is the frame count times the interval and so exact by construction."""
+        return self.frames * INTERVAL_MS / 1000.0 if self.synthetic else time.time()
+
+    def wait(self, seconds: float):
+        """Let `seconds` of page time pass: a real sleep, or whole frames, rounded up."""
+        if not self.synthetic:
+            time.sleep(seconds)
+            return
+        for _ in range(math.ceil(seconds * FRAME_RATE - 1e-9)):
+            self.frame()
+
+    def wait_event(self, method: str, timeout: float = 120):
+        """The next event of this method, waited for on the real clock (it is the
+        browser's answer, not the page's time)."""
+        deadline = time.time() + timeout
+        with self.cond:
+            while True:
+                for i, e in enumerate(self.events):
+                    if e.get("method") == method:
+                        del self.events[i]
+                        return e
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise RuntimeError(f"{method}: no event within {timeout}s")
+                self.cond.wait(remaining)
+
+    def advance(self, budget_ms: float, policy: str = "advance"):
+        """Run the page's virtual clock for `budget_ms` and wait for it to expire."""
+        with self.lock:
+            self.events = [e for e in self.events if e.get("method") != "Emulation.virtualTimeBudgetExpired"]
+        self.call("Emulation.setVirtualTimePolicy", policy=policy, budget=budget_ms,
+                  maxVirtualTimeTaskStarvationCount=STARVATION)
+        self.wait_event("Emulation.virtualTimeBudgetExpired")
+
+    def virtual(self) -> float:
+        """The page's virtual clock in milliseconds since the epoch it started
+        at, read as a wall clock because that is one clock for the whole
+        browser; performance.now() restarts at every document."""
+        return self.js("performance.timeOrigin + performance.now()") - VIRTUAL_EPOCH_MS
+
+    def frame(self, screenshot: dict | None = None):
+        """One synthetic frame: the page's clock advances by the interval, then
+        the frame is drawn and composited before this returns. With `screenshot`
+        the result carries screenshotData. On the real clock the browser draws
+        on its own and this does nothing.
+
+        Two clocks meet here. The page's virtual clock is asked for exactly the
+        time this frame is short of the grid, because a budget expires when the
+        task that crosses it ends and so overshoots by a fraction of a
+        millisecond: asking for the shortfall each time keeps the page on the
+        frame's own clock instead of drifting a little further off it every
+        frame, which is what makes two runs settle on the same frame.
+
+        The frame's time is that grid, a little ahead of the virtual clock, in
+        the renderer's own ticks. It has to lead: Blink pushes its animation
+        clock forward to "now" whenever a script asks for a time-dependent style
+        outside a frame (a computed style on an animated element, the document
+        timeline), and it never lets that clock go back, so a frame stamped
+        behind the virtual clock is ignored and every animation, transition and
+        animation frame on the page stops. Stamped ahead of it, these frames are
+        the only thing that moves the animation clock, and they move it by
+        exactly one sixtieth of a second."""
+        if not self.synthetic:
+            return None
+        self.grid += INTERVAL_MS
+        short = self.grid - self.virtual()
+        if short > 0:
+            self.advance(short)
+        self.tick = self.tick0 + self.grid + INTERVAL_MS
+        want = screenshot
+        casting = self.casting and (self.frames + 1) % VIDEO_EVERY == 0
+        if want is None and casting:
+            want = {"format": "jpeg", "quality": CAST_QUALITY, "optimizeForSpeed": True}
+        params = {"frameTimeTicks": self.tick, "interval": INTERVAL_MS}
+        if want is not None:
+            params["screenshot"] = want
+        r = self.call("HeadlessExperimental.beginFrame", **params)
+        self.frames += 1
+        if screenshot is None and casting and r.get("screenshotData"):
+            with self.lock:
+                if self.casting:
+                    self.cast_frames.append((self.now(), base64.b64decode(r["screenshotData"]), *self.cast_size))
+        return r
 
     def cast_start(self, rect):
         """Start recording the viewport for a film; frames accumulate until cast_take.
@@ -257,7 +445,12 @@ class Browser:
             self.casting = True
             self.cast_rect = rect
             self.cast_frames = []
-            self.film_t0 = time.time()
+            self.film_t0 = self.now()
+        if self.synthetic:
+            # the recording is taken frame by frame in frame(); its pictures are
+            # the whole viewport at the device scale, as the screencast's are
+            self.cast_size = tuple(self.js("[window.innerWidth, window.innerHeight]"))
+            return
         self.call("Page.startScreencast", format="jpeg", quality=CAST_QUALITY,
                   maxWidth=int(1280 * DPR), maxHeight=int(900 * DPR), everyNthFrame=1)
 
@@ -273,7 +466,8 @@ class Browser:
             if not self.casting:
                 return None, []
             self.casting = False
-        self.call("Page.stopScreencast")
+        if not self.synthetic:
+            self.call("Page.stopScreencast")
         with self.lock:
             frames, rect = self.cast_frames, self.cast_rect
             self.cast_frames = []
@@ -298,16 +492,28 @@ class Browser:
             self.mid += 1
             mid = self.mid
             self.ws.send(json.dumps({"id": mid, "method": method, "params": params}))
+        if self.synthetic and method.startswith("Input."):
+            # An input costs the frame it is delivered in: nothing runs in the
+            # page while its clock is paused, so that frame is the smallest unit
+            # of page time there is and the one every check that reads "at once"
+            # now means. The frame runs while the answer is still in flight: the
+            # renderer handles the event in the frame's time and only answers
+            # once it has, and it answers promptly once the frame is drawn.
+            self.frame()
+        msg = self.reply(mid, method)
+        if "error" in msg:
+            raise RuntimeError(f"{method}: {msg['error']}")
+        return msg.get("result", {})
+
+    def reply(self, mid: int, method: str) -> dict:
+        with self.cond:
             deadline = time.time() + 120
             while mid not in self.replies:
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     raise RuntimeError(f"{method}: no reply within 120s")
                 self.cond.wait(remaining)
-            msg = self.replies.pop(mid)
-        if "error" in msg:
-            raise RuntimeError(f"{method}: {msg['error']}")
-        return msg.get("result", {})
+            return self.replies.pop(mid)
 
     def js(self, expr: str):
         r = self.call("Runtime.evaluate", expression=expr, returnByValue=True, awaitPromise=True)
@@ -324,6 +530,7 @@ class Browser:
     def reduced_motion(self, on: bool):
         self.call("Emulation.setEmulatedMedia",
                   features=[{"name": "prefers-reduced-motion", "value": "reduce" if on else "no-preference"}])
+        self.frame()  # an emulation change reaches the page in the next frame
 
     def goto(self, url: str, ready: str, timeout: float = 25):
         # Mark the outgoing document so a same-URL navigation cannot pass
@@ -333,6 +540,22 @@ class Browser:
         except RuntimeError:
             pass
         self.call("Page.navigate", url=url)
+        if self.synthetic:
+            # loading spends virtual time only while nothing is being fetched,
+            # and it is spent in one go: the frame grid resumes at the next whole
+            # frame after that, so it stays a multiple of the interval and the
+            # page's clock reads the same numbers in every run
+            self.advance(LOAD_BUDGET_MS, policy="pauseIfNetworkFetchesPending")
+            self.grid = (math.floor(self.virtual() / INTERVAL_MS + 0.5) + 1) * INTERVAL_MS
+            for _ in range(int(timeout * FRAME_RATE)):
+                self.frame()
+                try:
+                    if self.js(f"!window.__op_stale && ({ready})"):
+                        self.js(HELPERS)
+                        return
+                except RuntimeError:
+                    pass
+            sys.exit(f"page never became ready: {url}")
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(0.25)
@@ -356,7 +579,9 @@ class Browser:
             return [e["params"] for e in self.events if e.get("method") == "Runtime.exceptionThrown"]
 
     def calibrate_clip(self):
-        """Whether captureScreenshot clips are page- or viewport-relative here."""
+        """Whether captureScreenshot clips are page- or viewport-relative here.
+        Only the real clock needs it: under begin frame control the pictures come
+        from the frames themselves, which are always viewport-relative."""
         self.js("""(() => { document.documentElement.style.minHeight='3000px'; window.scrollTo(0, 600);
           const m = document.createElement('div'); m.id='__op_mark';
           m.style.cssText='position:absolute;left:40px;top:640px;width:30px;height:30px;background:rgb(255,0,255)';
@@ -373,6 +598,28 @@ class Browser:
 
     def frame_bytes(self, rect, margin: float = 14, scale: float = 2) -> bytes:
         x, y, w, h = rect
+        if self.synthetic:
+            # captureScreenshot can hang under begin frame control, so the frame
+            # carries the picture: one frame for whatever state change is pending,
+            # then one that is drawn and read, cropped from the whole viewport
+            from PIL import Image
+            import io
+            self.frame()
+            shot = self.frame({"format": "png"})
+            full = Image.open(io.BytesIO(base64.b64decode(shot["screenshotData"]))).convert("RGB")
+            left = min(int(max(0.0, x - margin) * DPR), full.width - 1)
+            top = min(int(max(0.0, y - margin) * DPR), full.height - 1)
+            bw, bh = int(round((w + 2 * margin) * DPR)), int(round((h + 2 * margin) * DPR))
+            crop = full.crop((left, top, max(left + 1, min(full.width, left + bw)), max(top + 1, min(full.height, top + bh))))
+            # the box keeps its asked-for size where the viewport cut it short, padded
+            # with the edge colour, so every frame of one film is the same shape
+            im = Image.new("RGB", (max(1, bw), max(1, bh)), full.getpixel((min(full.width - 1, left), min(full.height - 1, top))))
+            im.paste(crop, (0, 0))
+            if abs(scale - DPR) > 1e-6:
+                im = im.resize((max(1, round(im.width * scale / DPR)), max(1, round(im.height * scale / DPR))), Image.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, format="PNG", optimize=True)
+            return buf.getvalue()
         if self.clip_uses_page_coords:
             sx, sy = self.js("[window.scrollX, window.scrollY]")
             x, y = x + sx, y + sy
@@ -381,7 +628,7 @@ class Browser:
                                "width": w + 2 * margin, "height": h + 2 * margin, "scale": scale / DPR})
         return base64.b64decode(shot["data"])
 
-    def frame(self, path: Path, rect, margin: float = 14, scale: float = 2):
+    def save_frame(self, path: Path, rect, margin: float = 14, scale: float = 2):
         path.write_bytes(self.frame_bytes(rect, margin, scale))
 
 
@@ -425,6 +672,16 @@ window.__op = {
     const a = this.el.closest('a[href]');
     if (!a) return false;
     a.addEventListener('click', e => e.preventDefault(), { once: true });
+    return true;
+  },
+  holdPopup() {
+    // A select's list is a browser window rather than part of the page, and
+    // while it is open the page draws no frames at all: on the synthetic clock,
+    // where the frames are ours to draw, that stops everything. Keep the click
+    // and its styling consequences, hold the popup.
+    const s = this.el.closest('select');
+    if (!s) return false;
+    s.addEventListener('mousedown', e => e.preventDefault(), { once: true });
     return true;
   },
   bgProbe() {
@@ -479,6 +736,7 @@ class ControlReport:
     tag: str
     kind: str
     page: str
+    clock: str = CLOCK_REAL
     edges: list = field(default_factory=list)
     machine_edges: list = field(default_factory=list)  # folded (from,input,to)
     nodes: list = field(default_factory=list)
@@ -612,21 +870,21 @@ def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progres
 def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=None, t0: float | None = None,
            film: list | None = None, rect=None, every: int = 1, scale: float = 2):
     """Samples `expr` for `seconds`; with `film`, also captures a clipped
-    frame every `every`-th sample so frames and curves share one clock."""
-    start = time.time()
+    frame every `every`-th sample so frames and curves share one clock. On the
+    synthetic clock every frame is one sample, at an exact time, and `period`
+    does not apply: rows, sheet frames and the recording share that clock."""
+    start = b.now()
     t0 = t0 if t0 is not None else start
     if film is not None and rect is not None:
-        b.cast_start(rect)
-        if t0 is None:
-            t0 = b.film_t0  # rows, sheet frames and the recording share one origin
+        b.cast_start(rect)  # rows, sheet frames and the recording share one origin
     rows = []
     i = 0
     last_frame = -1.0
-    while time.time() - start < seconds:
+    while b.now() - start < seconds:
         s = b.js(expr)
-        t = round(time.time() - t0, 3)
+        t = round(b.now() - t0, 3)
         rows.append((t, s))
-        # a sheet frame wanted at this time; cut from the screencast later, so
+        # a sheet frame wanted at this time; cut from the recording later, so
         # the loop never waits on a screenshot and the curves stay dense
         if film is not None and i % every == 0 and t - last_frame >= SHEET_PERIOD:
             film.append((t, None))
@@ -634,20 +892,31 @@ def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=No
         i += 1
         if until and until(s):
             break
-        time.sleep(period)
+        if b.synthetic:
+            b.frame()
+        else:
+            time.sleep(period)
     return rows
 
 
 def burst(b: Browser, rect, seconds: float, fps: float = 15, t0: float | None = None, scale: float = 1.5) -> list:
-    """A short frame sequence with no sampling in between."""
-    start = time.time()
+    """A short frame sequence with no sampling in between. On the synthetic clock
+    it steps frame by frame and keeps `fps` as the sheet's cadence, so a burst
+    holds the same frames on either clock."""
+    start = b.now()
     t0 = t0 if t0 is not None else start
     b.cast_start(rect)
-    t0 = t0 if t0 is not None else b.film_t0
     film = []
-    while time.time() - start < seconds:
-        film.append((round(time.time() - t0, 3), None))
-        time.sleep(1 / fps)
+    last = -1.0
+    while b.now() - start < seconds:
+        t = round(b.now() - t0, 3)
+        if t - last >= 1 / fps - 1e-9:
+            film.append((t, None))
+            last = t
+        if b.synthetic:
+            b.frame()
+        else:
+            time.sleep(1 / fps)
     return film
 
 
@@ -839,7 +1108,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
               "The setting flips at once (solid thumb, aria-checked, stored choice); the palette blend and the progress ghost run on the blend clock; the preview is gated off.")
     film = []
     b.click(x, y)
-    t0 = time.time()
+    t0 = b.now()
     first = ST()
     rows = sample(b, T, 3.7, 0.05, t0=t0, film=film, rect=rect)
     settled = next((t for t, s in rows if not s["flight"]), None)
@@ -884,7 +1153,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     # ---- fly back so the abort below starts from dark, as the page began ----
     b.click(x, y)
     sample(b, T, 3.6, 0.1, until=lambda s_: not s_["flight"] and s_["dark"])
-    time.sleep(0.3)
+    b.wait(0.3)
 
     # ---- E4/E5: Toward --Activate--> Back --Finished--> Idle : abort ----
     e4 = Edge(("Toward", "Activate", "Back"), "Activate mid-flight: abort",
@@ -892,10 +1161,10 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     before = ST()
     film = []
     b.click(x, y)
-    t0 = time.time()
+    t0 = b.now()
     rows = sample(b, T, 1.2, 0.05, t0=t0, film=film, rect=rect)
     b.click(x, y)
-    t_abort = time.time() - t0
+    t_abort = b.now() - t0
     rows += sample(b, T, 2.4, 0.05, t0=t0, film=film, rect=rect)
     cleared = next((t for t, s in rows if t > t_abort and not s["flight"]), None)
     origin_dark = before["dark"]
@@ -925,10 +1194,10 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
               "A third click starts a fresh flight from wherever the reversal had got to; the machine goes Toward again with the opposite setting.")
     before = ST()
     film = []
-    b.click(x, y); t0 = time.time()
+    b.click(x, y); t0 = b.now()
     rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
-    b.click(x, y); t_ab = time.time() - t0; time.sleep(0.12)
-    b.click(x, y); t_re = time.time() - t0
+    b.click(x, y); t_ab = b.now() - t0; b.wait(0.12)
+    b.click(x, y); t_re = b.now() - t0
     s_re = ST()
     rows += sample(b, T, 3.8, 0.05, t0=t0, film=film, rect=rect)
     settled2 = next((t for t, s in rows if t > t_re and not s["flight"]), None)
@@ -949,7 +1218,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     # ---- E7: Neglect ----
     e7 = Edge(("Idle", "Neglect", "Idle"), "Neglect: the pointer leaves", "Attention clears; the preview stops.")
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     b.hover(2, 2)
     rows = sample(b, T, 0.8, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
@@ -964,13 +1233,13 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     e8 = Edge(("Idle", "Attend", "Idle"), "Reduced motion: the same edges, static representation",
               "prefers-reduced-motion collapses the snap token and disables the preview loop; the preview appears statically at the destination, and a click still blends the palette (a colour fade is not motion) while the ghost snaps.")
     b.reduced_motion(True)
-    time.sleep(0.2)
+    b.wait(0.2)
     film = b.film_start(rect)
-    t0 = time.time()
-    b.hover(x, y); time.sleep(0.4)
+    t0 = b.now()
+    b.hover(x, y); b.wait(0.4)
     s_rm = ST()
-    film.append((round(time.time() - t0, 3), None))
-    t_click = time.time() - t0
+    film.append((round(b.now() - t0, 3), None))
+    t_click = b.now() - t0
     b.click(x, y)
     rows = sample(b, T, 3.6, 0.05, t0=t0, film=film, rect=rect)
     ts = [t for t, _ in rows]
@@ -1001,7 +1270,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     loc = b.js(f"window.__op.find({tag!r}, {json.dumps(ctrl['target'])})")
     rect, x, y = loc["rect"], loc["x"], loc["y"]
     S = "window.__op.sstate()"
-    b.hover(2, 2); time.sleep(0.2)
+    b.hover(2, 2); b.wait(0.2)
     s0 = b.js(S)
     # E1 attend
     e1 = Edge(("Idle", "Attend", "Idle"), "Attend: hover plays the preview",
@@ -1020,7 +1289,7 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # E2 activate
     e2 = Edge(("Idle", "Activate", "Idle"), "Activate: the thumb snaps on the snap clock", "A native checkbox toggle; the thumb transitions over --op-motion-snap.")
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     b.click(x, y)
     rows = sample(b, S, 0.5, 0.02, t0=t0, film=film, rect=rect)
     lefts = [s["thumb"] for _, s in rows]
@@ -1030,7 +1299,10 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
               series=[{"label": "thumb travel", "series": SERIES["thumb"], "t": ts, "y": travel, "lw": 2.4, "at": 0.5}])
     moved_by = next((t for t, s in rows if abs(s["thumb"] - lefts[-1]) < 0.5), None)
     e2.checks += [Check("checked state toggled", rows[-1][1]["checked"] != s0["checked"]),
-                  Check("thumb transitions (not a jump)", len({round(l) for l in lefts[:6]}) > 2, f"first positions {[round(l, 1) for l in lefts[:6]]}"),
+                  # the detail prints the positions the check itself decides on, whole
+                  # pixels: a finer figure would report a transition's last bit of
+                  # floating-point wobble and differ between two identical runs
+                  Check("thumb transitions (not a jump)", len({round(l) for l in lefts[:6]}) > 2, f"first positions {[round(l) for l in lefts[:6]]}"),
                   # the snap is 160 ms; arrival is polled from before the click, and the recording's
                   # encoder competes with the compositor on a two-core runner, so the window is three
                   # snaps: a jump still fails the check above, and a stalled transition still fails here
@@ -1043,9 +1315,9 @@ def run_switch(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     rep.edges.append(e3)
     # E4 reduced motion
     e4 = Edge(("Idle", "Attend", "Idle"), "Reduced motion: static preview", "The loop is off; the preview appears at the destination while attended.")
-    b.reduced_motion(True); time.sleep(0.2)
+    b.reduced_motion(True); b.wait(0.2)
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     b.hover(x, y)
     film += burst(b, rect, 0.6, t0=t0, scale=2)
     s_rm = b.js(S)
@@ -1072,13 +1344,13 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
         return rep
     rect = loc["host"]
     x, y = loc["x"], loc["y"]
-    b.hover(2, 2); b.js("window.__op.blur()"); time.sleep(0.2)
+    b.hover(2, 2); b.js("window.__op.blur()"); b.wait(0.2)
     base_sig = b.js("window.__op.sig()")
     rest_png = b.frame_bytes(rect, scale=1.5)
     # attend
     e1 = Edge(("Idle", "Attend", "Idle"), "Attend: hover", "A real pointer over the control must change something visible.")
     film = [(0.0, rest_png)]
-    t0 = time.time()
+    t0 = b.now()
     b.hover(x, y)
     film += burst(b, rect, 0.5, t0=t0)
     hov = b.js("window.__op.sig()")
@@ -1093,9 +1365,9 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     rep.edges.append(e1)
     # focus-visible
     e2 = Edge(("Idle", "Focus", "Idle"), "Attend: visible focus", "Keyboard-style focus must show a focus ring or equivalent.")
-    b.hover(2, 2); time.sleep(0.2)
+    b.hover(2, 2); b.wait(0.2)
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     landed = b.js("window.__op.focusVisible()")
     film += burst(b, rect, 0.4, t0=t0)
     foc = b.js("window.__op.sig()")
@@ -1111,9 +1383,11 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     before = b.js(expr) if expr else None
     if b.js("window.__op.holdLink()"):
         e3.note = "a navigating link: clicked with navigation suppressed"
-    b.hover(x, y); time.sleep(0.15)
+    if b.synthetic and b.js("window.__op.holdPopup()"):
+        e3.note = "a select: clicked with its popup held, since a popup is a browser window and holds every frame of the page while it is open"
+    b.hover(x, y); b.wait(0.15)
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     b.click(x, y)
     film += burst(b, rect, 0.6, t0=t0)
     after = b.js(expr) if expr else None
@@ -1125,7 +1399,7 @@ def run_attention(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport
     rep.edges.append(e3)
     # neglect
     e4 = Edge(("Idle", "Neglect", "Idle"), "Neglect", "Leaving returns the control to rest.")
-    b.hover(2, 2); b.js("window.__op.blur()"); time.sleep(0.4)
+    b.hover(2, 2); b.js("window.__op.blur()"); b.wait(0.4)
     e4.checks.append(Check("returns toward the rest signature", b.js("window.__op.sig()") != hov or hov == base_sig))
     rep.edges.append(e4)
     return rep
@@ -1309,7 +1583,7 @@ def render_control(rep: ControlReport, out: Path):
     passed = sum(1 for c in rep.checks if c.ok)
     parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{rep.tag} — interaction report</title><style>{CSS}</style></head><body>",
              f"<p><a href='../index.html'>All controls</a></p><h1>&lt;{rep.tag}&gt; — interaction report</h1>",
-             f"<p class='note'>Kind: <code>{rep.kind}</code>. Page: <code>{rep.page}</code>. Every frame and sample below comes from real pointer and keyboard events in headless Chromium against the built site.</p>",
+             f"<p class='note'>Kind: <code>{rep.kind}</code>. Page: <code>{rep.page}</code>. {clock_note(rep.clock)}. Every frame and sample below comes from real pointer and keyboard events in headless Chromium against the built site.</p>",
              f"<p class='summary'><span class='{'ok' if passed == total else 'fail'}'>{passed} of {total} checks pass</span></p>",
              "<h2>The machine</h2><div class='machine'>" + machine_svg(rep.nodes, rep.machine_edges, None) + "</div>",
              "<p class='note'>Nodes are flight states; loops are inputs that leave the flight alone. Below, each behaviour highlights the edge it exercises.</p>"]
@@ -1369,7 +1643,7 @@ def render_index(reports: list[ControlReport], statics: list[str], out: Path):
         rows.append(f"<tr><td><a href='{r.tag}/index.html'>{r.tag}</a></td><td>{r.kind}</td><td class='{'ok' if passed == total else 'fail'}'>{passed}/{total}</td></tr>")
     html = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Interaction report</title><style>{CSS}</style></head><body>",
             "<h1>Interaction report — every control, every machine edge, real input</h1>",
-            "<p class='note'>Generated by tools/interaction_report/report.py. The machine diagrams come from the code's own transition table; the frames and curves from CDP mouse and keyboard events with the pointer resting on the control. A failing check here fails the build.</p>",
+            f"<p class='note'>Generated by tools/interaction_report/report.py. {clock_note(CLOCK)}. The machine diagrams come from the code's own transition table; the frames and curves from CDP mouse and keyboard events with the pointer resting on the control. A failing check here fails the build.</p>",
             "<table><tr><th>control</th><th>kind</th><th>checks</th></tr>" + "".join(rows) + "</table>",
             "<h2>Declared static (no interaction)</h2><p class='note'>" + ", ".join(statics) + "</p>",
             "</body></html>"]
@@ -1412,7 +1686,7 @@ def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str
              f"<opt-site-header heading=\"{esc(rep.tag)}\" tagline=\"Interaction report: every edge of its machine, driven with real input.\"></opt-site-header>\n<main>\n"
              f"<p><a href=\"../\">All controls</a></p>\n"
              f"<opt-kpi label=\"checks pass\" value=\"{passed} of {total}\"><opt-term scheme=\"outcome\" value=\"{outcome}\"></opt-term></opt-kpi>\n"
-             f"<p>Kind: <code>{rep.kind}</code>. Page under test: <code>{esc(rep.page)}</code>. Every frame and sample comes from real pointer and keyboard events in headless Chromium against the built site; this page is rendered with the site's own elements.</p>\n"
+             f"<p>Kind: <code>{rep.kind}</code>. Page under test: <code>{esc(rep.page)}</code>. {clock_note(rep.clock)}. Every frame and sample comes from real pointer and keyboard events in headless Chromium against the built site; this page is rendered with the site's own elements.</p>\n"
              f"<h2>The machine</h2>\n<opt-machine><script type=\"application/json\">{json.dumps(machine)}</script></opt-machine>\n"
              f"<p>Nodes are flight states; loops are inputs that leave the flight alone. Each behaviour below lights the edge it exercises; during playback the machine's own playhead rests on the settled node and travels the edge at each recorded transition.</p>\n"]
     for i, e in enumerate(rep.edges, 1):
@@ -1452,7 +1726,7 @@ def integrated_index(reports: list[ControlReport], statics: list[str], head: str
             f"<link rel=\"canonical\" href=\"https://www.openpower.tools{prefix}\" />{head}</head>\n<body>\n<opt-theme-toggle></opt-theme-toggle>\n{nav}\n"
             f"<opt-site-header heading=\"Interaction reports\" tagline=\"Every control, every machine edge, real input - rendered with the controls themselves.\"></opt-site-header>\n<main>\n"
             f"<opt-kpi label=\"controls\" value=\"{len(reports)}\"><opt-term scheme=\"outcome\" value=\"{'pass' if all_ok else 'fail'}\"></opt-term></opt-kpi>\n"
-            f"<p>Generated by tools/interaction_report/report.py from the code's own machine table. The ad hoc revision of the same evidence, which depends on none of these elements, is kept as a build artifact so gross failures in the controls can still be read.</p>\n"
+            f"<p>Generated by tools/interaction_report/report.py from the code's own machine table. {clock_note(CLOCK)}. The ad hoc revision of the same evidence, which depends on none of these elements, is kept as a build artifact so gross failures in the controls can still be read.</p>\n"
             f"<opt-table lined=\"\"><table><thead><tr><th>control</th><th>kind</th><th>checks</th><th>outcome</th></tr></thead><tbody>{''.join(rows)}</tbody></table></opt-table>\n"
             f"<h2>Declared static</h2><p>{esc(', '.join(statics))}</p>\n</main>\n<opt-site-footer></opt-site-footer>\n</body>\n</html>\n")
 
@@ -1500,7 +1774,7 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # E1 play/pause: frames, custom state, the linked machine's token, and the other film untouched
     e1 = Edge(("Paused", "Play", "Playing"), "Play: the clock runs", "Frames advance on real time, the host exposes :state(playing), the machine linked by for= moves its token, and a sibling film is unaffected.")
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
     b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
     film += burst(b, rect, 1.6, fps=8, t0=t0, scale=1)
     s1 = b.js(S)
@@ -1625,9 +1899,9 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     e3 = Edge(("Paused", "Peek", "Paused"), "Peek: hover without seeking", "The pointer over the chart shows a thumbnail and exposes :state(peeking); the playhead stays.")
     cr = b.js(f"(() => {{ const r = {F}.shadowRoot.querySelector('.chart').getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()")
     before = b.js(S)
-    b.hover(cr[0] + cr[2] * 0.6, cr[1] + cr[3] * 0.4); time.sleep(0.15)
+    b.hover(cr[0] + cr[2] * 0.6, cr[1] + cr[3] * 0.4); b.wait(0.15)
     peek = b.js(S)
-    b.hover(2, 2); time.sleep(0.1)
+    b.hover(2, 2); b.wait(0.1)
     after = b.js(S)
     e3.checks += [Check("peeking exposed while hovering the chart", peek["peeking"] and not after["peeking"]),
                   Check("peek leaves the playhead alone", peek["t"] == before["t"])]
@@ -1638,15 +1912,15 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     b.call("Input.dispatchKeyEvent", type="keyDown", key="Home", code="Home"); b.call("Input.dispatchKeyEvent", type="keyUp", key="Home", code="Home")
     # frames 0..2 share the strip's first page; a frame on another page is clipped and cannot be hit
     cells = b.js(f"(() => [...{F}.shadowRoot.querySelectorAll('.fr .cell')].slice(0, 3).map(c => {{ const r = c.getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; }}))()")
-    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[1][0], y=cells[1][1], button="left", clickCount=1); time.sleep(0.1)
+    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[1][0], y=cells[1][1], button="left", clickCount=1); b.wait(0.1)
     p1 = b.js(S)
-    b.call("Input.dispatchMouseEvent", type="mouseMoved", x=cells[2][0], y=cells[2][1], button="left", buttons=1); time.sleep(0.1)
+    b.call("Input.dispatchMouseEvent", type="mouseMoved", x=cells[2][0], y=cells[2][1], button="left", buttons=1); b.wait(0.1)
     p2 = b.js(S)
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[2][0], y=cells[2][1], button="left", clickCount=1); time.sleep(0.1)
+    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[2][0], y=cells[2][1], button="left", clickCount=1); b.wait(0.1)
     p3 = b.js(S)
-    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); time.sleep(0.1)
+    b.call("Input.dispatchMouseEvent", type="mousePressed", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); b.wait(0.1)
     b.call("Input.dispatchKeyEvent", type="keyDown", key="Escape", code="Escape"); b.call("Input.dispatchKeyEvent", type="keyUp", key="Escape", code="Escape")
-    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); time.sleep(0.1)
+    b.call("Input.dispatchMouseEvent", type="mouseReleased", x=cells[0][0], y=cells[0][1], button="left", clickCount=1); b.wait(0.1)
     p4 = b.js(S)
     e4.checks += [Check("press marks a pending frame with the custom state", p1["pending"] == 1 and p1["pend_state"], f"pending {p1['pending']}"),
                   Check("dragging moves the pending frame, not the playhead", p2["pending"] == 2 and p2["k"] == 0, f"pending {p2['pending']}, playhead {p2['k']}"),
@@ -1663,13 +1937,13 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         token1: getComputedStyle({F}).getPropertyValue('--op-series-1').trim(), strong: getComputedStyle({F}).getPropertyValue('--op-border-strong').trim()}}; }})()"""
     normal = b.js(CH)
     b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "active"}])
-    time.sleep(0.2)
+    b.wait(0.2)
     forced = b.js(CH)
     b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "none"}, {"name": "prefers-contrast", "value": "more"}])
-    time.sleep(0.2)
+    b.wait(0.2)
     more = b.js(CH)
     b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "none"}, {"name": "prefers-contrast", "value": "no-preference"}])
-    time.sleep(0.2)
+    b.wait(0.2)
     back = b.js(CH)
 
     def rgb(value):
@@ -1694,30 +1968,54 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     e6 = Edge(("Paused", "Play", "Playing"), "The stage plays the recording",
               "A film with a video plays it on its own clock: the video's time tracks the readout while playing, lands exactly on a seek, and pauses with the film.")
     VS = f"""(() => {{ const f = {F}, sr = f.shadowRoot, v = sr.querySelector('video.stagevideo');
+      const s = f.querySelector('script[type="application/json"]'), times = ((s ? JSON.parse(s.textContent).times : null) || [0]);
       return {{present: !!v, ready: v ? v.readyState : -1, shown: v ? getComputedStyle(v).display : null, vt: v ? v.currentTime : null, paused: v ? v.paused : null,
-        t: parseFloat(sr.querySelector('.t').textContent), src: v ? v.currentSrc : null, w: v ? v.videoWidth : 0}}; }})()"""
+        t: parseFloat(sr.querySelector('.t').textContent), src: v ? v.currentSrc : null, w: v ? v.videoWidth : 0,
+        muted: v ? v.muted : null, dur: v ? v.duration : null, last: times[times.length - 1]}}; }})()"""
     b.js(f"{F}.focus(); 'ok'")
     key("Home", "Home")
     v0 = b.js(VS)
     if v0["present"]:
+        # a media element decodes on the real clock whichever clock the page runs
+        # on, so this wait is a real one; the synthetic run waits for the terminal
+        # readyState, which a fully fetched local file reaches every time
+        want_ready = 4 if b.synthetic else 2
         for _ in range(40):
-            if b.js(VS)["ready"] >= 2:
+            if b.js(VS)["ready"] >= want_ready:
                 break
             time.sleep(0.1)
+            b.frame()
         v0 = b.js(VS)
         b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
-        time.sleep(0.9)
+        b.wait(0.9)
         v1 = b.js(VS)
         b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
-        time.sleep(0.15)
+        b.wait(0.15)
         v2 = b.js(VS)
         key("End", "End")
-        time.sleep(0.3)
+        b.wait(0.3)
         v3 = b.js(VS)
-        e6.checks += [Check("the recording loads and is shown over the stage", v0["ready"] >= 2 and v0["shown"] == "block" and v0["w"] > 0, f"readyState {v0['ready']}, display {v0['shown']}, {v0['w']}px wide"),
-                      Check("while playing the video's time tracks the film's clock", v1["paused"] is False and v1["vt"] > 0.3 and abs(v1["vt"] - v1["t"]) < 0.2, f"video {v1['vt']:.2f}s vs readout {v1['t']:.2f}s"),
-                      Check("pausing the film pauses the video", v2["paused"] is True, f"paused {v2['paused']}"),
-                      Check("a seek lands the video on the film's time", abs(v3["vt"] - v3["t"]) < 0.05 and v3["paused"] is True, f"video {v3['vt']:.2f}s vs readout {v3['t']:.2f}s")]
+        dur = v0["dur"] if isinstance(v0["dur"], (int, float)) else None
+        last = v0["last"] if isinstance(v0["last"], (int, float)) else 0.0
+        e6.checks.append(Check("the recording loads and is shown over the stage", v0["ready"] >= 2 and v0["shown"] == "block" and v0["w"] > 0, f"readyState {v0['ready']}, display {v0['shown']}, {v0['w']}px wide"))
+        if b.synthetic:
+            # the video plays on the real clock while the film plays on the synthetic
+            # one, so the drift between them while playing is not a property of the
+            # page and is not measured here; where the film puts the video when it
+            # stops is, and so are the recording's own facts
+            e6.note = ("Under the synthetic clock the media element still runs on real time, so the check that the "
+                       "video tracks the film's clock while playing is not emitted: it would measure the machine, not "
+                       "the page. What the film owns is measured instead: where it leaves the video when it stops, and "
+                       "the recording it was given.")
+            e6.checks += [Check("pausing the film pauses the video", v2["paused"] is True, f"paused {v2['paused']}"),
+                          Check("a paused film puts the video on its own time", v2["vt"] is not None and abs(v2["vt"] - v2["t"]) < 0.15, f"video {v2['vt']:.2f}s vs readout {v2['t']:.2f}s"),
+                          Check("the recording is muted and as long as the film", v0["muted"] is True and dur is not None and last <= dur <= last + 1.0,
+                                f"muted {v0['muted']}, duration {'none' if dur is None else format(dur, '.2f')}s for a film ending at {last:.2f}s"),
+                          Check("a seek lands the video on the film's time", abs(v3["vt"] - v3["t"]) < 0.05 and v3["paused"] is True, f"video {v3['vt']:.2f}s vs readout {v3['t']:.2f}s")]
+        else:
+            e6.checks += [Check("while playing the video's time tracks the film's clock", v1["paused"] is False and v1["vt"] > 0.3 and abs(v1["vt"] - v1["t"]) < 0.2, f"video {v1['vt']:.2f}s vs readout {v1['t']:.2f}s"),
+                          Check("pausing the film pauses the video", v2["paused"] is True, f"paused {v2['paused']}"),
+                          Check("a seek lands the video on the film's time", abs(v3["vt"] - v3["t"]) < 0.05 and v3["paused"] is True, f"video {v3['vt']:.2f}s vs readout {v3['t']:.2f}s")]
     else:
         e6.checks.append(Check("this film carries a recording", False, "no video element on the stage: the run that produced this page had no screencast or no ffmpeg"))
     rep.edges.append(e6)
@@ -1742,7 +2040,7 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     b.js(f"{F}.scrollIntoView({{block: 'center'}}); 'ok'")
     # the pointer's last position left the film peeking; the thumbnail would cover the chart's edge
     b.hover(2, 2)
-    time.sleep(0.3)
+    b.wait(0.3)
     geom = b.js(GEOM)
     baseline_stroke = b.js(STROKE1)
     rx, ry, rw, rh = geom["rect"]
@@ -1756,11 +2054,15 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     def emulate(how):
         b.call("Emulation.setEmulatedMedia", features=how["media"])
         b.call("Emulation.setEmulatedVisionDeficiency", type=how["vision"])
-        time.sleep(0.25)
+        b.wait(0.25)
 
     def capture(mode):
-        shot = b.call("Page.captureScreenshot", format="png", clip={"x": x0, "y": y0, "width": rw, "height": rh, "scale": 1.0})
-        png = base64.b64decode(shot["data"])
+        if b.synthetic:
+            # from the frame itself, at the device scale, exactly the chart's box
+            png = b.frame_bytes((rx, ry, rw, rh), margin=0, scale=DPR)
+        else:
+            shot = b.call("Page.captureScreenshot", format="png", clip={"x": x0, "y": y0, "width": rw, "height": rh, "scale": 1.0})
+            png = base64.b64decode(shot["data"])
         (d / f"matrix-{mode}.png").write_bytes(png)
         return Image.open(io.BytesIO(png)).convert("RGB")
 
@@ -1875,11 +2177,11 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         for w in (640, 360):
             b.call("Emulation.setDeviceMetricsOverride", width=w, height=1000, deviceScaleFactor=0, mobile=False)
             b.goto(base + ctrl["page"], f"!!{C}")
-            time.sleep(0.3)
+            b.wait(0.3)
             p = b.js(PROBE)
             rect = b.js(LOC)
-            time.sleep(0.15)
-            b.frame(d / f"nojs-{w}.png", rect, scale=1)
+            b.wait(0.15)
+            b.save_frame(d / f"nojs-{w}.png", rect, scale=1)
             e1.matrix.append((f"no JavaScript, {w} px viewport", f"nojs-{w}.png"))
             labels = (p.get("ticks") or []) + (p.get("ends") or [])
             smallest = min(labels) if labels else 0
@@ -1901,7 +2203,7 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
               "When the element upgrades it finds the declarative root and the matching data-hash and keeps the markup (the hydrated state); "
               "on the page the build rendered for, the wide pre-rendered svg fits the container, so it survives upgrade untouched and only its narrow sibling is removed.")
     b.goto(base + ctrl["page"], READY)
-    time.sleep(0.5)
+    b.wait(0.5)
     p2 = b.js(PROBE)
     rect = b.js(LOC)
     e2.checks += [Check("element defined and hydrated from the declarative root", p2.get("defined") and p2.get("hydrated"), f"defined={p2.get('defined')} hydrated={p2.get('hydrated')}"),
@@ -1919,9 +2221,11 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
               "The film plays to its end; at every sample the chart's readout matches the film's clock, its playhead moves monotonically to where the time maps on the plot, "
               "and the machine bound to the same film moves its token.")
     film = b.film_start(rect)
-    t0 = time.time()
+    t0 = b.now()
+    # the sampling period: a frame on the synthetic clock, where every frame is a sample
+    period = INTERVAL_MS / 1000 if b.synthetic else 0.05
     b.js(f"{F}.shadowRoot.querySelector('button.play').click(); 'ok'")
-    rows = sample(b, PROBE, duration + 0.6, period=0.05, t0=t0, film=film, rect=rect)
+    rows = sample(b, PROBE, duration + 0.6, period=period, t0=t0, film=film, rect=rect)
     b.js(f"(() => {{ const f = {F}; if (f.matches(':state(playing)')) f.shadowRoot.querySelector('button.play').click(); return 'ok'; }})()")
     xs = [s["x"] for _, s in rows if s.get("x") is not None]
     travel = [(x - xs[0]) / max(1e-6, xs[-1] - xs[0]) * 100 for x in xs] if xs else []
@@ -1941,8 +2245,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # own readout changes rather than assumed, and the bound adds the sampling period and the
     # 0.01 s readout rounding
     changes = [t for (t, _, f), (_, _, fp) in zip(pairs[1:], pairs) if f != fp]
-    frame = max((b_ - a for a, b_ in zip(changes, changes[1:])), default=0.05)
-    allowed = frame + 0.05 + 0.011
+    frame = max((b_ - a for a, b_ in zip(changes, changes[1:])), default=period)
+    allowed = frame + period + 0.011
     bar = p2.get("bar") or [0, 0]
     # the playhead is judged against the chart's own readout, the time it drew, not the film's
     # clock: the chart draws one animation frame after the tick, and under the recording that
@@ -1952,11 +2256,16 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     monotone = all(b_ >= a - 1e-6 for a, b_ in zip(xs, xs[1:]))
     tokens = [tuple(s["token"]) for _, s in rows if s.get("token")]
     last = rows[-1][1] if rows else {}
-    e3.checks += [Check("readout never runs ahead of the film", behind and min(behind) >= -0.011, f"chart ahead by at most {-min(behind) if behind else 'n/a'} s"),
-                  Check("readout trails the film by at most one frame", behind and max(behind) <= allowed, f"max {max(behind) if behind else 'n/a'} s behind, frame interval {frame:.3f} s, allowed {allowed:.3f} s, {len(behind)} samples"),
+    # the measurements are reported at the resolution they are judged at: a millisecond
+    # of clock and a hundredth of a pixel of plot, not the last digit of a double
+    ahead_s = f"{-min(behind):.3f}" if behind else "n/a"
+    behind_s = f"{max(behind):.3f}" if behind else "n/a"
+    off_px = f"{max(off):.2f}" if off else "n/a"
+    e3.checks += [Check("readout never runs ahead of the film", behind and min(behind) >= -0.011, f"chart ahead by at most {ahead_s} s"),
+                  Check("readout trails the film by at most one frame", behind and max(behind) <= allowed, f"max {behind_s} s behind, frame interval {frame:.3f} s, allowed {allowed:.3f} s, {len(behind)} samples"),
                   Check("playhead moves monotonically", len(xs) > 5 and monotone, f"{len(xs)} positions, {xs[0] if xs else '-'} to {xs[-1] if xs else '-'}"),
                   # the readout is rounded to 0.01 s, which is up to 1.8 px of plot at this duration
-                  Check("playhead sits where its readout maps on the plot", off and max(off) <= 2.0, f"max offset {max(off) if off else 'n/a'} px"),
+                  Check("playhead sits where its readout maps on the plot", off and max(off) <= 2.0, f"max offset {off_px} px"),
                   Check("following the film once its ticks arrive", bool(last.get("following")), f"following={last.get('following')}"),
                   Check("the play reached the end", (seconds(last.get("film_t")) or 0) >= duration - 0.05, f"film at {last.get('film_t')} of {duration}s"),
                   Check("the machine bound to the film moved its token", len(set(tokens)) > 1, f"{len(set(tokens))} distinct token positions")]
@@ -1972,7 +2281,7 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
             b.call("Emulation.setDeviceMetricsOverride", width=w, height=1000, deviceScaleFactor=0, mobile=False)
             if i == 0:
                 b.goto(base + ctrl["page"], READY)
-            time.sleep(0.6)
+            b.wait(0.6)
             p = b.js(PROBE)
             counts[w] = p
             e4.checks += [Check(f"{w} px: viewBox equals the CSS box", p.get("vbw") is not None and p.get("cssw") is not None and abs(p["vbw"] - p["cssw"]) <= 1, f"viewBox {p.get('vbw')} vs css {p.get('cssw')}"),
@@ -1994,9 +2303,26 @@ def main():
     ap.add_argument("--contract", default="data/interaction-contract.json")
     ap.add_argument("--machine", help="machine table JSON (default: cargo run machine_table)")
     ap.add_argument("--chrome")
+    ap.add_argument("--clock", choices=(CLOCK_SYNTHETIC, CLOCK_REAL),
+                    help="page timing: a synthetic frame clock (chrome-headless-shell, deterministic) or real time "
+                         "(default: synthetic when a shell is found)")
+    ap.add_argument("--shell", help="the chrome-headless-shell the synthetic clock drives")
+    ap.add_argument("--checks-json", help="write every control's checks (name, outcome, detail) here as JSON")
     ap.add_argument("--only", help="comma-separated tags")
     ap.add_argument("--publish", action="store_true", help="copy the integrated revision into <dist>/reports/interactions/ (deploys with the site)")
     args = ap.parse_args()
+
+    shell = find_shell(args.shell)
+    if args.clock == CLOCK_SYNTHETIC and not shell:
+        sys.exit("--clock synthetic needs a chrome-headless-shell: pass --shell PATH or set OP_HEADLESS_SHELL")
+    clock = args.clock or (CLOCK_SYNTHETIC if shell else CLOCK_REAL)
+    if args.clock is None and not shell:
+        print("clock: no chrome-headless-shell found (--shell, OP_HEADLESS_SHELL, ~/.cache/puppeteer, ./ or /tmp), "
+              "so the pages run on the real clock")
+    binary = shell if clock == CLOCK_SYNTHETIC else find_chrome(args.chrome)
+    global CLOCK
+    CLOCK = clock
+    print(f"{clock_note(clock)}; {binary} ({binary_version(binary)})", flush=True)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -2020,7 +2346,7 @@ def main():
     integrated = out / "integrated"
     adhoc.mkdir(parents=True, exist_ok=True)
     work = out / ".work"
-    b = Browser(find_chrome(args.chrome), work)
+    b = Browser(binary, work, synthetic=(clock == CLOCK_SYNTHETIC))
     global RECORDER
     RECORDER = b
     reports, statics, failed = [], [], False
@@ -2045,6 +2371,7 @@ def main():
             e = Edge(("Idle", "Attend", "Idle"), "Run failed", "")
             e.checks.append(Check("run completes", False, repr(exc)[:300]))
             rep.edges.append(e)
+        rep.clock = clock
         render_control(rep, adhoc)
         reports.append(rep)
         for c in rep.checks:
@@ -2055,7 +2382,8 @@ def main():
 
     try:
         b.goto(base + "/", "document.readyState === 'complete'")
-        b.calibrate_clip()
+        if clock == CLOCK_REAL:
+            b.calibrate_clip()
         selected = [c for c in contract if not only or c["tag"] in only]
         statics = [c["tag"] for c in selected if c["kind"] == "static"]
         # phase 1: every control except the film, which needs the integrated pages to exist
@@ -2085,6 +2413,12 @@ def main():
         if server:
             server.kill()
         shutil.rmtree(work, ignore_errors=True)
+    if args.checks_json:
+        Path(args.checks_json).write_text(json.dumps(
+            [{"tag": r.tag, "kind": r.kind, "clock": r.clock,
+              "checks": [{"name": c.name, "ok": c.ok, "detail": c.detail} for c in r.checks]} for r in reports],
+            indent=1) + "\n")
+        print(f"checks:            {args.checks_json}")
     print(f"ad hoc report:     {adhoc / 'index.html'}")
     print(f"integrated report: {integrated / 'index.html'}" + (f"  (published to {Path(args.dist) / 'reports' / 'interactions'})" if args.publish and args.dist else ""))
     sys.exit(1 if failed else 0)

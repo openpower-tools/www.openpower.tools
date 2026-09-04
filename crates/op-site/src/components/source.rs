@@ -2,8 +2,11 @@
 //! with a copy control. The label names the language, file or origin; the
 //! button copies the pre's text (clipboard access needs a secure context).
 
+use std::rc::Rc;
+
 use op_webc::{CustomElement, ElementDefinition};
 use wasm_bindgen::JsCast;
+use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use web_sys::HtmlElement;
 
@@ -19,9 +22,14 @@ pub const DEFINITION: ElementDefinition = ElementDefinition {
         Box::new(Source {
             host,
             retained: Vec::new(),
+            swallowed: Vec::new(),
         })
     },
 };
+
+/// A handler for the clipboard's rejected promise, shared with the click
+/// closure that installs it.
+type Swallow = Rc<Closure<dyn FnMut(JsValue)>>;
 
 struct Source {
     host: HtmlElement,
@@ -29,6 +37,9 @@ struct Source {
     /// Re-renders append rather than replace, so a pending "Copied" reset
     /// can still fire safely after the label changes.
     retained: Vec<Closure<dyn FnMut()>>,
+    /// The clipboard's rejection handlers, one per render, kept for the
+    /// same reason.
+    swallowed: Vec<Swallow>,
 }
 
 impl Source {
@@ -85,9 +96,14 @@ button:hover {{ color: var(--op-text); border-color: var(--op-accent); }}
             move || button.set_text_content(Some("Copy"))
         });
         let revert_fn = revert.as_ref().unchecked_ref::<js_sys::Function>().clone();
+        // A browser may refuse the clipboard, and the refusal arrives as a
+        // rejected promise: swallow it here, or it surfaces as an uncaught
+        // error. The button's own label is the feedback either way.
+        let swallow: Swallow = Rc::new(Closure::<dyn FnMut(JsValue)>::new(|_| {}));
         let click = Closure::<dyn FnMut()>::new({
             let host = self.host.clone();
             let button = button.clone();
+            let swallow = Rc::clone(&swallow);
             move || {
                 let Some(window) = web_sys::window() else {
                     return;
@@ -98,7 +114,11 @@ button:hover {{ color: var(--op-text); border-color: var(--op-accent); }}
                     .flatten()
                     .and_then(|pre| pre.text_content())
                     .unwrap_or_default();
-                let _ = window.navigator().clipboard().write_text(&text);
+                let _ = window
+                    .navigator()
+                    .clipboard()
+                    .write_text(&text)
+                    .catch(&swallow);
                 button.set_text_content(Some("Copied"));
                 let _ =
                     window.set_timeout_with_callback_and_timeout_and_arguments_0(&revert_fn, 1500);
@@ -107,6 +127,7 @@ button:hover {{ color: var(--op-text); border-color: var(--op-accent); }}
         let _ = button.add_event_listener_with_callback("click", click.as_ref().unchecked_ref());
         self.retained.push(click);
         self.retained.push(revert);
+        self.swallowed.push(swallow);
     }
 }
 
