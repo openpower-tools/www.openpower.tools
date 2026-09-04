@@ -48,7 +48,8 @@ REPORT = _report()
 
 def reduced(path: pathlib.Path, size: tuple[int, int]) -> list:
     im = Image.open(path).convert("RGB").resize(size, Image.LANCZOS)
-    return list(im.getdata())
+    raw = im.tobytes()
+    return [tuple(raw[i:i + 3]) for i in range(0, len(raw), 3)]
 
 
 def difference(a: pathlib.Path, b: pathlib.Path) -> tuple[float, float, str]:
