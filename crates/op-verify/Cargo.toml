@@ -1,0 +1,20 @@
+[package]
+name = "op-verify"
+description = "Reproducibility checks for the interaction report: a second pass decided the same, measured within a frame, and drew the same"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+op-chart.workspace = true
+op-colour.workspace = true
+png.workspace = true
+
+[[bin]]
+name = "compare-checks"
+path = "src/bin/compare_checks.rs"
+
+[[bin]]
+name = "compare-frames"
+path = "src/bin/compare_frames.rs"
