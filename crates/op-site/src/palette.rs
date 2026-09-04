@@ -134,12 +134,12 @@ fn tokens_after(selector: &str) -> BTreeMap<String, String> {
 }
 
 /// Dark is the default: the tokens in the first `:root` block.
-fn dark() -> BTreeMap<String, String> {
+pub(crate) fn dark() -> BTreeMap<String, String> {
     tokens_after(":root,\n.opt-theme-dark {")
 }
 
 /// Light, when explicitly chosen (`data-theme="light"`).
-fn light() -> BTreeMap<String, String> {
+pub(crate) fn light() -> BTreeMap<String, String> {
     tokens_after(":root[data-theme=\"light\"],\n.opt-theme-light {")
 }
 

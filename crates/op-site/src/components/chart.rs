@@ -5,10 +5,32 @@
 //!
 //! The markup is built by pure functions (`shadow_markup`,
 //! [`prerender`]) that the page build calls natively, so a page ships the
-//! chart finished: the SVG, a caption with a one-paragraph summary, and
-//! the data as a real table behind a disclosure. Nothing of that needs a
-//! script, which is what keeps the chart complete where WebAssembly is
-//! unavailable (Firefox on ppc64le).
+//! chart finished: the SVG, a caption with a one-paragraph summary and a
+//! line naming the keys, and the data as a real table behind a
+//! disclosure. Nothing of that needs a script, which is what keeps the
+//! chart complete where WebAssembly is unavailable (Firefox on ppc64le).
+//!
+//! Decision 15's structure is that markup and the host's own internals:
+//! the host is a `group` named by the caption's heading and described by
+//! the summary and the key line, the SVG is a `graphics-document` named by
+//! the same heading, the drawing that only decorates it is hidden from the
+//! accessibility tree, each series and each cue is exposed as itself, and
+//! the playhead is the slider. Its value is the film's clock, written by
+//! the same tick that moves it. A chart inside a film's own shadow tree
+//! keeps all of that but the slider: the film's native range input is the
+//! one control there, so the chart's thumb is decoration and is hidden
+//! from the accessibility tree (decision 15).
+//!
+//! What is announced is decision 18's. The thumb's `aria-valuetext` says
+//! the time in words with the chapter appended, adding the whole duration
+//! and the frame index whenever the thumb has not got the focus, so they
+//! are spoken once when it is focused and left out of every step after
+//! that; clock-driven writes wait for the focus and a 300 ms debounce, and
+//! a key or a pointer seek writes at once. A polite status region sits in
+//! the shadow root from the first render, empty, and receives one short
+//! message on a committed seek, on play, on pause, and on a chapter
+//! entered while the film plays. A peek and a seek being aimed announce
+//! nothing.
 //!
 //! A pre-render scales with its viewBox, so a 640 unit box at a 360 px
 //! viewport would shrink its 12 px labels to about 6 px. The build
@@ -41,9 +63,14 @@
 //! press that does not move seeks on release; a press that moves, or one
 //! held on a coarse pointer, aims a seek with the peek as its preview,
 //! committed on release and cancelled by Escape or by coming back to where
-//! it started and letting go there. The SVG is the one tab stop that
-//! reaches the chart itself - the data table's disclosure is a tab stop of
-//! its own - and it answers decision 17's key table while it has focus.
+//! it started and letting go there. Tab reaches the playhead that is the
+//! chart's slider, then the data table's disclosure, and the element
+//! answers decision 17's key table while the focus is anywhere in the
+//! chart itself. Which node the root delegates a focus to is the engine's
+//! own choice and is not the thumb, so an arrival on the svg or on the
+//! host is moved onto it here ([`takes_the_stop`]). A re-layout draws a
+//! new thumb and gives it the focus the old one had, so a chart that
+//! reflows under a reader's hands does not turn them out of it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -53,15 +80,20 @@ use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement, ShadowRoot};
 
+use super::BASE_CSS;
 use super::chart_style::{CHART_CUE_CSS, CHART_SHAPE_CSS, chart_rules};
 use super::machine_diagram::film_time_of;
-use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
 pub const DEFINITION: ElementDefinition = ElementDefinition {
     source: op_webc::here!(),
     tag: "opt-chart",
-    observed_attributes: &["for", "initial-width", "ratio"],
+    // decision 1's four primitives, which are everything an attribute may
+    // carry here: the rich data is a block and a property. `step` is
+    // decision 17's key unit in seconds ([`step_attr`]), read where it is
+    // used so an attribute set after the upgrade takes effect at the next
+    // key rather than at the next render
+    observed_attributes: &["for", "initial-width", "ratio", "step"],
     properties: &["data", "forElement"],
     create: |host| {
         Box::new(Chart {
@@ -86,8 +118,15 @@ pub(crate) const NARROW_WIDTH: f64 = 360.0;
 /// 10 px floor.
 pub(crate) const NARROW_AT: f64 = 532.0;
 /// Below this container width every second time label and the chapter cues
-/// are dropped: they cannot be read at that size and they overprint.
+/// are dropped: they cannot be read at that size and they overprint. The
+/// cue's button goes with its tick, so a chapter that is not drawn is not
+/// named to a reader and not hittable by a pointer either.
 const DROP_AT: f64 = 480.0;
+/// What a chapter cue's rect and its button both carry in `data-cue`, and
+/// what the rule that drops them below [`DROP_AT`] names them by. One
+/// spelling, so the rule that hides a cue and the set the roving walks
+/// ([`cue_is_drawn`]) cannot come to mean different cues.
+const CHAPTER_CUE: &str = "chapter";
 
 /// What the caption says drew the markup: the build, or the element.
 const BY_PAGES: &str = "op-pages";
@@ -157,7 +196,10 @@ pub(crate) fn tick_change(prev_x: f64, x: f64, prev_label: &str, label: &str) ->
     !((x - prev_x).abs() < 0.5 && prev_label == label)
 }
 
-/// The playhead's readout, in the format the film's own chart uses.
+/// A clock reading as this project draws one, on the chart's playhead and
+/// on the film's own labels: seconds to a hundredth, which is finer than
+/// any film it draws is sampled. It is drawn, not spoken; [`in_words`] is
+/// what a listener hears.
 pub(crate) fn readout(t: f64) -> String {
     format!("{t:.2}s")
 }
@@ -248,9 +290,62 @@ fn summary_of(d: &Data) -> String {
         hi = hi.max(*value);
     }
     if lo <= hi {
-        parts.push(format!("values from {lo} to {hi}"));
+        parts.push(format!(
+            "values from {} to {}",
+            op_chart::announced(lo),
+            op_chart::announced(hi)
+        ));
     }
-    format!("{}.", parts.join("; "))
+    let takeaway = takeaway_of(d);
+    format!("{}.{takeaway}", parts.join("; "))
+}
+
+/// Decision 15's takeaway: the sentence that says what the chart shows
+/// rather than what it contains.
+///
+/// A generated summary cannot have an opinion, so this states the one
+/// thing the samples decide on their own: where each series ended up
+/// against where it started. A reader who is being told rather than shown
+/// gets the shape of the line, which is what a sighted reader takes from
+/// the picture in a glance and what the list of counts above never says.
+///
+/// Empty where the block gives it nothing to compare: a chart with no
+/// series, or one whose series carry no samples, has no shape to report
+/// and an invented one would be worse than none.
+fn takeaway_of(d: &Data) -> String {
+    let mut moves: Vec<String> = Vec::new();
+    for (i, series) in d.series.iter().enumerate() {
+        let present: Vec<f64> = d
+            .rows
+            .iter()
+            .filter_map(|r| r.values.get(i).copied().flatten())
+            .collect();
+        let (Some(first), Some(last)) = (present.first(), present.last()) else {
+            continue;
+        };
+        let unit = if series.unit.is_empty() {
+            String::new()
+        } else {
+            format!(" {}", series.unit)
+        };
+        let label = if series.label.is_empty() {
+            format!("series {}", i + 1)
+        } else {
+            series.label.clone()
+        };
+        let (from, to) = (op_chart::announced(*first), op_chart::announced(*last));
+        moves.push(if first == last {
+            format!("{label} holds at {from}{unit}")
+        } else {
+            let verb = if last > first { "rises" } else { "falls" };
+            format!("{label} {verb} from {from} to {to}{unit}")
+        });
+    }
+    if moves.is_empty() {
+        String::new()
+    } else {
+        format!(" Overall, {}.", join(&moves))
+    }
 }
 
 /// The title of the chapter a time falls in: the latest one at or before
@@ -261,6 +356,144 @@ fn chapter_at(d: &Data, t: f64) -> String {
         .rfind(|c| c.t <= t + 1e-9)
         .map(|c| c.label.clone())
         .unwrap_or_default()
+}
+
+// ---- announcements ----------------------------------------------------
+
+/// A time as a listener should hear it: "1 minute 32 seconds", not "92"
+/// (decision 18).
+///
+/// Seconds carry a tenth where they have one. A film of a few seconds is
+/// the case this chart is drawn for, and whole seconds there would give
+/// every position on the track the same words; over a minute the tenth
+/// falls out of its own accord, because a minute of film is not sampled
+/// that finely.
+pub(crate) fn in_words(t: f64) -> String {
+    let tenths = (t.max(0.0) * 10.0).round() as i64;
+    let minutes = tenths / 600;
+    let rest = tenths % 600;
+    let mut said: Vec<String> = Vec::new();
+    if minutes > 0 {
+        said.push(count(minutes as usize, "minute"));
+    }
+    // seconds are said whenever there are any, and on a whole minute they
+    // are not said at all; a time of zero is "0 seconds" and not silence
+    if rest > 0 || minutes == 0 {
+        let number = if rest % 10 == 0 {
+            format!("{}", rest / 10)
+        } else {
+            format!("{}.{}", rest / 10, rest % 10)
+        };
+        let noun = if rest == 10 { "second" } else { "seconds" };
+        said.push(format!("{number} {noun}"));
+    }
+    said.join(" ")
+}
+
+/// What the status region has to say. Decision 18's whole list: a seek
+/// that committed, play, pause, and a chapter entered while the film
+/// plays. Nothing is ever said for a peek or for a seek still being aimed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Said {
+    Seeked,
+    Playing,
+    Paused,
+    Chapter,
+}
+
+/// The one short message the status region receives. `chapter` is the
+/// title of the chapter `t` falls in, empty where the block names none and
+/// then left out rather than said as an empty name.
+pub(crate) fn message(said: Said, t: f64, chapter: &str) -> String {
+    match said {
+        Said::Seeked if chapter.is_empty() => format!("Seeked to {}", in_words(t)),
+        Said::Seeked => format!("Seeked to {}, chapter {chapter}", in_words(t)),
+        // play and pause say what happened and no more: where the clock is
+        // stands in the thumb's own value, and repeating it here would be
+        // the double announcement decision 18 is written against
+        Said::Playing => "Playing".to_owned(),
+        Said::Paused => "Paused".to_owned(),
+        Said::Chapter if chapter.is_empty() => format!("Chapter at {}", in_words(t)),
+        Said::Chapter => format!("Chapter {chapter}"),
+    }
+}
+
+/// The time a committed seek announces: the clock's own answer where the
+/// emit moved it, and the time asked for where it did not.
+///
+/// The two are the same on the docs page and differ wherever the announced
+/// duration outlives the film. The chart clamps a key to
+/// [`key_duration`], which is the block's `duration` or the axis end,
+/// whichever is later; the film clamps to its own last frame. End on such
+/// a block asks for a time the clock never reaches, and the status region
+/// used to name the request while the thumb's value named the arrival.
+/// Where the film is elsewhere in the document and answers later, there is
+/// no arrival yet and the request is the only time there is to say.
+pub(crate) fn seeked_time(asked: f64, before: f64, landed: f64) -> f64 {
+    if landed == before { asked } else { landed }
+}
+
+/// What the thumb's value says beyond the time and the chapter: the whole
+/// timeline, and which sample the time sits on.
+///
+/// It is written at initialisation and again on blur, so it is waiting to
+/// be spoken when the thumb next gains focus, and is left out of every
+/// change while the thumb has focus (decision 18): a listener stepping
+/// along the track is told the total once, not on every step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Whole {
+    /// The announced timeline, which is what `aria-valuemax` carries.
+    pub duration: f64,
+    /// The sample the time sits on, counted from one.
+    pub frame: usize,
+    /// How many samples there are. No frame is named where there are none.
+    pub frames: usize,
+}
+
+/// The thumb's `aria-valuetext`: the time in words with the chapter title
+/// appended, and, where `whole` is given, the duration and the frame index
+/// as well.
+pub(crate) fn valuetext(t: f64, chapter: &str, whole: Option<Whole>) -> String {
+    let mut said = match whole {
+        Some(whole) => format!("{} of {}", in_words(t), in_words(whole.duration)),
+        None => in_words(t),
+    };
+    if let Some(whole) = whole.filter(|whole| whole.frames > 0) {
+        said.push_str(&format!(", frame {} of {}", whole.frame, whole.frames));
+    }
+    if !chapter.is_empty() {
+        said.push_str(&format!(", chapter {chapter}"));
+    }
+    said
+}
+
+/// The chapter entered between `prev` and `now`, and [`None`] where no
+/// boundary falls between them.
+///
+/// Forwards only, and by the shape of the question rather than by a guard
+/// in front of it: a start can be past `prev` and at or before `now` only
+/// where `now` is the later of the two, so a clock that stands still or
+/// runs back crosses nothing. What this rate-limits is the status region,
+/// which speaks on a boundary and never per sample (decision 18). A
+/// boundary exactly at `prev` was already entered; one exactly at `now` has
+/// just been. A tick that steps over several names the chapter it ends in.
+pub(crate) fn chapter_crossed(prev: f64, now: f64, starts: &[f64]) -> Option<usize> {
+    starts
+        .iter()
+        .rposition(|start| *start > prev + T_EPS && *start <= now + T_EPS)
+}
+
+/// How long a clock-driven `aria-valuetext` write waits behind the last
+/// one: decision 18's 300 ms, in the seconds [`now`] counts.
+pub(crate) const VALUETEXT_WAIT: f64 = 0.3;
+
+/// Whether a clock tick may write the thumb's `aria-valuetext`: only while
+/// the thumb has the focus, which is when its value is being spoken at
+/// all, and only [`VALUETEXT_WAIT`] after the last write, so a playing film
+/// does not queue a phrase per frame. A key or a pointer seek never asks
+/// this: it writes at once.
+pub(crate) fn valuetext_due(last: f64, now: f64, focused: bool) -> bool {
+    focused && now - last >= VALUETEXT_WAIT
 }
 
 /// The data as a real table: one row per sample under the chapter it falls
@@ -356,34 +589,191 @@ fn table_of(d: &Data) -> String {
 /// The id the caption's heading carries, so the figure can name itself.
 /// Ids are scoped to the shadow root, so every chart on a page uses it.
 const TITLE_ID: &str = "chart-title";
+/// The id of the caption's one-paragraph summary.
+const SUMMARY_ID: &str = "chart-summary";
+/// The id of the visible line naming the keys the chart answers.
+const KEYS_ID: &str = "chart-keys";
+/// What the host is described by, in the order a reader hears it: what the
+/// chart holds, and then how to drive it (decision 15).
+const DESCRIBED_BY: [&str; 2] = [SUMMARY_ID, KEYS_ID];
 
-/// One chart, with the hooks the element adds to op-chart's markup: the
-/// class that a container query switches on, the mark that says which side
-/// drew it, and an opening tag that is not the film's slider.
+/// The status region, after the svg and before the table where decision 15
+/// puts it: in the shadow root from the first render and empty, never made
+/// when a message arrives, because a live region has to be in the tree
+/// before the text lands in it for the change to be announced at all.
+/// Polite and never assertive, and out of the way visually as the film's
+/// own is: what it holds is said, not read.
+const STATUS: &str = "<div class=\"live\" role=\"status\" aria-live=\"polite\"></div>";
+
+/// The element a chart would find as the host of the shadow tree it sits
+/// in, where that tree is a film's.
+const FILM_TAG: &str = "opt-film";
+
+/// The chart's shadow root, attached with `delegatesFocus` where it has to
+/// be attached at all: decision 17 wants one tab stop into a chart, so a
+/// click on the host or a `focus()` on it belongs on the control and not
+/// on the host.
 ///
-/// The emitter opens every chart as the film's `role="slider"`, which is
-/// right there: the film's chart is a control, and the film writes its
-/// `aria-valuenow` on every tick. Nothing here drives a thumb - the
-/// playhead follows the film's clock and this chart only asks it to move -
-/// so a focusable slider frozen at zero would be a control that reports
-/// the wrong value. The tag is rewritten as a graphics document labelled
-/// by the caption instead, carrying the one `tabindex` that puts a tab
-/// stop on the chart itself and, since it answers decision 17's keys, an
-/// operable one. That is not the shadow root's only tab stop: the data
-/// table's disclosure takes the focus too, and the key handler relies on
-/// it. `part="chart"` and the viewBox are the emitter's own.
-fn svg_of(spec: &op_chart::Spec, layout: Layout, class: &str, rendered_by: &str) -> String {
-    let rendered = op_chart::render(spec, layout).svg;
-    let (head, body) = match rendered.split_once('>') {
-        Some(split) => split,
-        None => return rendered,
+/// Which node it is delegated to is the engine's to choose, and the engine
+/// does not choose the thumb. A `focus()` on a host whose root holds this
+/// drawing leaves the root's active element on the outermost svg, which
+/// carries no `tabindex`, is not a tab stop and answers no keys, even
+/// though the `role="slider"` group inside it is all three. So the
+/// attribute says where a focus enters and never where it settles, and
+/// [`takes_the_stop`] is what puts it on the control.
+///
+/// A pre-rendered chart is hydrated instead, and the root it is hydrated
+/// into carries `shadowrootdelegatesfocus` from the template the build
+/// wrote (`op-pages`), which is the only way that root can have it:
+/// `attachShadow` on an element that already has a declarative shadow root
+/// does not apply the init it was handed. It empties the root it found and
+/// returns it, which would throw away the very markup this element is here
+/// to keep, and would leave `delegatesFocus` as the parser set it either
+/// way. So the two paths agree by each stating it at the one moment its
+/// own root is made, and a pre-render written without the attribute cannot
+/// be corrected after the fact: it is a template to redraw, not a flag to
+/// set.
+///
+/// `delegatesFocus` is not settable through web-sys 0.3's
+/// [`web_sys::ShadowRootInit`], which exposes `mode` alone; the dictionary
+/// is a plain JS object, so the field is written onto it.
+fn delegating_shadow_root(host: &HtmlElement) -> ShadowRoot {
+    if let Some(existing) = host.shadow_root() {
+        return existing;
+    }
+    let init = web_sys::ShadowRootInit::new(web_sys::ShadowRootMode::Open);
+    let _ = js_sys::Reflect::set(
+        &init,
+        &JsValue::from_str("delegatesFocus"),
+        &JsValue::from_bool(true),
+    );
+    host.attach_shadow(&init).expect("attach shadow root")
+}
+
+/// Whether this chart's thumb is the widget's slider, from the tag of the
+/// element whose shadow tree the chart sits in ([`None`] for a chart in a
+/// document, which is where every chart the build writes lands).
+///
+/// One slider per widget (decision 15). The film owns the time, and a
+/// chart inside the film's own shadow tree is a second picture of the
+/// timeline the film's native range input already controls, so the chart's
+/// thumb is decoration there: no slider role, no tab stop, no value, and
+/// hidden from the accessibility tree. Inside anything else - a page's own
+/// wrapper element - the chart is still the only control over its
+/// timeline and keeps the slider.
+pub(crate) fn owns_slider(host_tag: Option<&str>) -> bool {
+    !host_tag.is_some_and(|tag| tag.eq_ignore_ascii_case(FILM_TAG))
+}
+
+/// Which node this chart's focus is about, from [`owns_slider`]'s answer:
+/// the thumb where the chart owns the widget's slider, and the svg where
+/// it does not.
+///
+/// One answer, because three things have to agree about it and once did
+/// not: the node a press moves the focus to, the node the record of the
+/// focus is about, and so the node whose focus decides the words the
+/// value takes (decision 18). It follows the markup, where the thumb
+/// carries `tabindex="0"` and the svg gives up its own exactly when the
+/// thumb is the slider, and a test holds the two together.
+/// [`Follower::focus_target`] is where this becomes an element.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stop {
+    Thumb,
+    Svg,
+}
+
+/// See [`Stop`].
+pub(crate) const fn focus_stop(slider: bool) -> Stop {
+    if slider { Stop::Thumb } else { Stop::Svg }
+}
+
+/// What the shadow root says about a focus that has just arrived in this
+/// chart, as the three facts [`takes_the_stop`] turns into a decision.
+/// [`Follower::arrival`] reads it out of the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Arrival {
+    /// The root has an active element at all. False is the focus on the
+    /// host itself, which is where it stays when an engine asked to
+    /// delegate finds nothing inside to delegate to.
+    pub(crate) inside: bool,
+    /// That element is the node this element's focus is about
+    /// ([`focus_stop`]).
+    pub(crate) stop: bool,
+    /// It is the svg the drawing sits in.
+    pub(crate) svg: bool,
+}
+
+/// Whether the element has to move a focus that has just arrived onto its
+/// own stop.
+///
+/// `delegatesFocus` is a request and not a promise: the root is attached
+/// with it ([`delegating_shadow_root`]) and the engine still picks the
+/// delegate, which here is the outermost svg rather than the thumb inside
+/// it. The widget cannot leave the focus where that lands, since the svg
+/// is not a tab stop and the words the value takes are about the thumb
+/// (decision 18), so it moves it.
+///
+/// Only where the engine chose. The two nodes it can leave a focus on are
+/// the host, which a root reports by having no active element at all, and
+/// the svg. Everywhere else in the root is somewhere a reader went on
+/// purpose, a cue button during the roving or the data table's disclosure,
+/// and taking a focus off those would be the widget arguing with the
+/// person using it. The stop keeps the focus whichever node the stop is,
+/// which is also what stops a chart inside a film, whose stop is that same
+/// svg (decision 15), from chasing itself.
+pub(crate) const fn takes_the_stop(at: Arrival) -> bool {
+    !at.stop && (!at.inside || at.svg)
+}
+
+/// What the emitter's accessible structure is told about this chart
+/// (decision 15): the caption's heading is the visible title that names
+/// the svg and the thumb, each series is measured in the unit its block
+/// gave, and the thumb is this widget's slider. A standalone chart owns
+/// the one control that answers for its timeline; a chart inside the
+/// film's shadow tree does not, and the film's own range input is the
+/// slider there.
+fn aria_of(data: &Data, slider: bool) -> op_chart::Aria {
+    op_chart::Aria {
+        title: TITLE_ID.to_owned(),
+        units: data.series.iter().map(|s| s.unit.clone()).collect(),
+        slider,
+    }
+}
+
+/// The opening of the thumb group the emitter draws, which is the one
+/// group carrying that part (a test in op-chart holds it to one).
+const THUMB_OPEN: &str = "<g class=\"playhead\" part=\"playhead\"";
+
+/// One chart, with the two hooks the element adds to op-chart's markup:
+/// the class a container query switches on, in place of the emitter's own,
+/// and the mark that says which side drew it. Everything else in the
+/// opening tag is the emitter's, including decision 15's
+/// `graphics-document` role and the caption heading it is named by, so the
+/// role the chart carries is written in one place and not two.
+fn svg_of(
+    spec: &op_chart::Spec,
+    aria: &op_chart::Aria,
+    layout: Layout,
+    class: &str,
+    rendered_by: &str,
+) -> String {
+    let rendered = op_chart::render_with(spec, layout, aria).svg;
+    // A thumb that is not the widget's slider is decoration, and
+    // decoration is out of the accessibility tree. The emitter already
+    // leaves the group with no role, no tab stop and no value; the
+    // `aria-hidden` that says the playhead is a picture of the film's own
+    // control, and not a second control, is written here (decision 15).
+    let rendered = if aria.slider {
+        rendered
+    } else {
+        rendered.replace(THUMB_OPEN, &format!("{THUMB_OPEN} aria-hidden=\"true\""))
     };
-    let view = head
-        .split_once("viewBox=\"")
-        .and_then(|(_, rest)| rest.split_once('"'))
-        .map_or("", |(value, _)| value);
+    const OPEN: &str = "<svg class=\"chart\"";
+    let Some(rest) = rendered.strip_prefix(OPEN) else {
+        return rendered;
+    };
     format!(
-        "<svg class=\"{}\" part=\"chart\" data-rendered-by=\"{}\" viewBox=\"{view}\" tabindex=\"0\" role=\"graphics-document\" aria-labelledby=\"{TITLE_ID}\">{body}",
+        "<svg class=\"{}\" data-rendered-by=\"{}\"{rest}",
         escape(class),
         escape(rendered_by),
     )
@@ -392,16 +782,22 @@ fn svg_of(spec: &op_chart::Spec, layout: Layout, class: &str, rendered_by: &str)
 /// The whole inner HTML of a chart's shadow root. With a `narrow` layout
 /// the figure carries both pre-renders and the stylesheet chooses; with
 /// none it carries the single chart the element just drew.
+///
+/// `slider` is [`owns_slider`]'s answer: it decides the thumb alone, and
+/// everything else about the chart is the same either way.
 pub(crate) fn shadow_markup(
     data: &Data,
     wide: Layout,
     narrow: Option<Layout>,
     ratio: f64,
     rendered_by: &str,
+    slider: bool,
 ) -> String {
     let spec = data.to_spec();
+    let aria = aria_of(data, slider);
     let mut charts = svg_of(
         &spec,
+        &aria,
         wide,
         if narrow.is_some() {
             "chart wide"
@@ -411,13 +807,19 @@ pub(crate) fn shadow_markup(
         rendered_by,
     );
     if let Some(narrow) = narrow {
-        charts.push_str(&svg_of(&spec, narrow, "chart narrow", rendered_by));
+        charts.push_str(&svg_of(&spec, &aria, narrow, "chart narrow", rendered_by));
     }
+    // the caption is the chart's name and its description in one place:
+    // the heading names it, the paragraph says what it holds, and the line
+    // after that says what it answers. All three are visible, which
+    // decision 15 prefers to a hidden description, and the host points at
+    // them through its internals.
     format!(
-        "<style>{BASE_CSS}{}</style><figure class=\"chart\">{charts}<figcaption><strong class=\"title\" id=\"{TITLE_ID}\">{}</strong><p class=\"summary\">{}</p></figcaption></figure>{}",
+        "<style>{BASE_CSS}{}</style><figure class=\"chart\">{charts}<figcaption><strong class=\"title\" id=\"{TITLE_ID}\">{}</strong><p class=\"summary\" id=\"{SUMMARY_ID}\">{}</p><p class=\"keys\" id=\"{KEYS_ID}\">{}</p></figcaption></figure>{STATUS}{}",
         stylesheet(ratio),
         escape(&title_of(data)),
         escape(&summary_of(data)),
+        escape(&instructions()),
         table_of(data)
     )
 }
@@ -442,6 +844,11 @@ pub fn prerender(block: &str, initial_width: f64, ratio: f64) -> Result<Prerende
         Some(Layout::sized(NARROW_WIDTH, NARROW_WIDTH / ratio, end)),
         ratio,
         BY_PAGES,
+        // the build writes a chart into a page's own tree, never into a
+        // film's shadow tree, so a pre-rendered chart always owns its
+        // slider; the embedded case can only arise at runtime, and the
+        // element decides it there ([`owns_slider`])
+        true,
     );
     // the element reads the text of the emitted script, which is the
     // escaped block, so that is the text the hash has to be over; the two
@@ -473,12 +880,41 @@ pub fn prerender(block: &str, initial_width: f64, ratio: f64) -> Result<Prerende
 /// there. Nothing here paints a pointer target: the hit rects carry the
 /// class `target` alone, and no rule names it.
 ///
-/// The chart is a tab stop, so it carries the site's focus ring, on
-/// `:focus-visible` alone: a press must not ring the chart it is scrubbing.
+/// The thumb is the chart's first tab stop, and it takes the ring the
+/// emitter drew around it, 2 px outside its target, rather than an
+/// outline: an outline on an SVG node is laid out in user space, so it
+/// scales with the viewBox and is clipped by the viewport, and the 2 px
+/// the criterion asks for is whatever the box happens to be drawn at
+/// (decision 20). No rule here puts an outline on any node of the drawing;
+/// the site's own `:focus-visible` ring, which reaches every element in
+/// the tree, is turned off on the thumb for the same reason and the ring
+/// stands in its place. The ring is `stroke: currentColor` over a `color`
+/// of the focus token: a forced palette adjusts `color` and leaves SVG
+/// paints alone, so the ring follows the forced text colour with no
+/// mapping of its own, where `stroke: var(--op-focus)` would keep the
+/// theme's colour on a forced one. Decision 20 asks for a stronger stroke
+/// on the thumb as well as the ring, which is the `head` rule beneath it.
+///
+/// The cue buttons take the same treatment for the same reason, and they
+/// need it more: they carry no class at all, so the site's ring was the
+/// only indicator they had ([`cue_indicator_css`]).
+///
+/// Below [`DROP_AT`] the chapter ticks are hidden, and the container
+/// query takes their buttons with them: a cue that is not drawn is not
+/// named and not hittable either, where hiding the ticks alone left an
+/// invisible chapter with a 24 px target and an announced button.
+///
+/// The svg carries no focus rules at all now. Where this chart owns its
+/// slider the svg is not a tab stop and never has the focus; where it does
+/// not, the svg is the only thing here a keyboard can reach and takes the
+/// site's own ring, which is the same 2 px of the same token this
+/// stylesheet used to write out a second time.
+///
 /// `touch-action: pan-y` leaves the page its vertical scroll and claims
 /// the horizontal drag, which is the one this element reads.
 pub(crate) fn stylesheet(ratio: f64) -> String {
     let rules = chart_rules();
+    let cues = cue_indicator_css();
     // the default box is written as the fraction it was designed as
     let ratio = if ratio == DEFAULT_RATIO {
         "16 / 6".to_owned()
@@ -490,9 +926,8 @@ pub(crate) fn stylesheet(ratio: f64) -> String {
 :host {{ display: block; container-type: inline-size; }}
 :host([hidden]) {{ display: none; }}
 figure.chart {{ margin: 0; }}
+.live {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 svg.chart {{ display: block; width: 100%; height: auto; aspect-ratio: var(--op-chart-ratio, {ratio}); font-family: var(--op-font-sans); font-size: 12px; touch-action: pan-y; }}
-svg.chart:focus {{ outline: none; }}
-svg.chart:focus-visible {{ outline: 2px solid var(--op-focus); outline-offset: 2px; }}
 svg.chart.narrow {{ display: none; }}
 {CHART_SHAPE_CSS}
 .chart .band, .chart .peek-band {{ fill: var(--op-band); fill-opacity: 0.5; }}
@@ -500,16 +935,20 @@ svg.chart.narrow {{ display: none; }}
 {CHART_CUE_CSS}
 .chart .head {{ stroke: var(--op-playhead); stroke-width: 1.5; }} .chart .head-dot {{ fill: var(--op-playhead); }}
 .chart .head-t {{ fill: var(--op-playhead); font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+.chart .playhead:focus {{ outline: none; }}
+.chart .playhead:focus-visible .head-ring {{ color: var(--op-focus); stroke: currentColor; stroke-width: 2; }}
+.chart .playhead:focus-visible .head {{ stroke-width: 2.5; }}
+{cues}
 {rules}
 figcaption {{ margin-top: 0.4rem; font-size: 0.9rem; }}
 figcaption .title {{ display: block; font-family: var(--op-font-heading); }}
-figcaption .summary {{ color: var(--op-muted); margin: 0.2rem 0 0; }}
+figcaption .summary, figcaption .keys {{ color: var(--op-muted); margin: 0.2rem 0 0; }}
 details.data {{ margin-top: 0.4rem; font-size: 0.85rem; }}
 details.data summary {{ cursor: pointer; color: var(--op-muted); }}
 details.data table {{ border-collapse: collapse; margin-top: 0.4rem; font-variant-numeric: tabular-nums; }}
 details.data th, details.data td {{ border-bottom: 1px solid var(--op-border); padding: 0.1rem 0.5rem 0.1rem 0; text-align: left; }}
 @container (max-width: {NARROW_AT}px) {{ svg.chart.wide {{ display: none; }} svg.chart.narrow {{ display: block; }} }}
-@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} }}"
+@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} .chart .targets g[data-cue=\"{CHAPTER_CUE}\"] {{ display: none; }} }}"
     )
 }
 
@@ -562,6 +1001,18 @@ pub(crate) enum Intent {
     Cancel,
 }
 
+/// Whether an intent ends the press that is in flight.
+///
+/// A seek commits at once, whatever aimed it: a key seek therefore never
+/// leaves a press aiming and never enters the pending state, which is
+/// decision 17's answer, and a pointer seek is the
+/// release of the press it ends. A cancel drops the press. A peek and a
+/// toggle leave it exactly as it was, so a scrub that crosses its own
+/// origin is one gesture throughout.
+pub(crate) fn ends_press(intent: Intent) -> bool {
+    matches!(intent, Intent::Seek(_) | Intent::Cancel)
+}
+
 /// What a key press is read against: the sample times the chart drew, the
 /// duration it announces, and the chapter starts a page key steps between.
 #[derive(Clone, Copy, Debug)]
@@ -571,6 +1022,25 @@ pub(crate) struct Keys<'a> {
     /// not from the axis. Stepping between samples is bounded by `times`.
     pub duration: f64,
     pub chapters: &'a [f64],
+    /// The `step` attribute, in seconds, where the element carries a
+    /// usable one ([`step_attr`]). It overrides the sample step alone
+    /// (decision 17): comma and full stop, the bare arrows and J and L
+    /// count in it instead of in samples, and every other key is
+    /// untouched. The chapter keys walk the chapters, Home and End and the
+    /// digits are fractions of the announced duration, and Shift with an
+    /// arrow was already a second and is not a sample step at all.
+    pub step: Option<f64>,
+}
+
+/// The `step` attribute as seconds, and [`None`] where the element carries
+/// none or carries nonsense. A step must be a finite positive number of
+/// seconds: an empty attribute, a word, a negative and an infinity all
+/// leave the keys counting in samples rather than moving the playhead to
+/// somewhere no arithmetic can name.
+pub(crate) fn step_attr(value: Option<&str>) -> Option<f64> {
+    value
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v > 0.0)
 }
 
 /// The duration End, a digit and a one-second jump are read against: the
@@ -598,9 +1068,16 @@ impl Keys<'_> {
             .unwrap_or(0)
     }
 
-    /// `n` samples along from `t`, held at either end. Nothing at all when
-    /// nothing was sampled: there is no sample to step onto.
-    fn step(&self, t: f64, n: i64) -> Option<f64> {
+    /// `n` steps along from `t`, held at either end by the caller's clamp.
+    /// A step is one sample, or `step` seconds where the element states one
+    /// (decision 17): a chart whose rows are irregular, or which carries no
+    /// rows at all, can then say what a key is worth. Nothing at all when
+    /// nothing was sampled and nothing was stated: there is no sample to
+    /// step onto and no distance to step by.
+    fn stepped(&self, t: f64, n: i64) -> Option<f64> {
+        if let Some(step) = self.step {
+            return Some(n as f64 * step + t);
+        }
         if self.times.is_empty() {
             return None;
         }
@@ -633,9 +1110,76 @@ impl Keys<'_> {
     }
 }
 
+/// The keys the instructions line names: for each clause, the key values
+/// [`key_intent`] answers for it and the words the line spells it with.
+///
+/// One table, so the visible line and the key handling cannot drift apart.
+/// A second hand-written list would go stale the first time a key moved,
+/// and a reader would be told to press something the chart refuses;
+/// `the_instructions_line_names_every_key_the_element_answers_and_no_other`
+/// holds the two ends together by walking a keyboard's worth of keys
+/// through [`key_intent`].
+const KEY_LINE: &[(&[&str], &str)] = &[
+    (&[",", "."], "comma and full stop step one sample"),
+    (&["ArrowLeft", "ArrowRight"], "the arrow keys five"),
+    (&["j", "J", "l", "L"], "J and L ten"),
+    (
+        &["ArrowLeft", "ArrowRight"],
+        "Shift with an arrow one second",
+    ),
+    (
+        &["PageUp", "PageDown"],
+        "Page Up and Page Down, or Ctrl with an arrow, step by chapter",
+    ),
+    (&["Home", "End"], "Home and End go to either end"),
+    (
+        &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+        "a digit seeks to that tenth",
+    ),
+    (&[" ", "k", "K"], "Space or K plays and pauses"),
+    (&["Escape"], "Escape drops a seek being aimed"),
+];
+
+/// The roving's own keys in words, in [`KEY_LINE`]'s shape: the entry
+/// gesture above all, which decision 17 leaves unstated and which a reader
+/// cannot guess. The key table never sees any of these while a cue has the
+/// focus, and [`roving_key`] answers them; the same test that holds
+/// [`KEY_LINE`] to the key table holds this to that function.
+const ROVE_LINE: &[(&[&str], &str)] = &[
+    (
+        &["ArrowDown"],
+        "Down from the playhead reaches the marks and the chapters",
+    ),
+    (&["ArrowLeft", "ArrowRight"], "the arrows step between them"),
+    (
+        &["Enter", " "],
+        "Enter or Space seeks to the one that has the focus",
+    ),
+    (
+        &["ArrowUp", "Escape"],
+        "Up or Escape returns to the playhead",
+    ),
+];
+
+/// The visible line naming the keys, which decision 15 asks for beside the
+/// summary: Chartability rates missing instructions as critical, and a
+/// sighted keyboard user needs them as much as a screen reader does, so
+/// this is text on the page and not a hidden description.
+///
+/// Two sentences, because there are two places to stand: the thumb, which
+/// moves the clock, and a cue, which does not. The second is where the
+/// entry gesture is documented, since a set nothing announces the way into
+/// is a set no keyboard reader finds.
+fn instructions() -> String {
+    let clauses: Vec<&str> = KEY_LINE.iter().map(|(_, words)| *words).collect();
+    let roving: Vec<&str> = ROVE_LINE.iter().map(|(_, words)| *words).collect();
+    format!("Keys: {}. {}.", clauses.join("; "), roving.join("; "))
+}
+
 /// The intent a key press carries, [`None`] for a key the chart does not
 /// answer. Decision 17's whole set: the film's own table, less the speed
-/// keys the film owns, plus the digits.
+/// keys the film owns, plus the digits. [`KEY_LINE`] is the same set in
+/// words, and a test holds them together.
 ///
 /// `at` is the clock the chart last saw and `chapter_mod` is Ctrl or Alt,
 /// which alias the page keys onto the arrows. Every time returned is
@@ -649,7 +1193,7 @@ pub(crate) fn key_intent(
 ) -> Option<Intent> {
     let seek = |t: f64| Some(Intent::Seek(t.clamp(0.0, ctx.duration)));
     let step = |n: i64| {
-        ctx.step(at, n)
+        ctx.stepped(at, n)
             .map(|t| Intent::Seek(t.clamp(0.0, ctx.duration)))
     };
     match key {
@@ -677,6 +1221,150 @@ pub(crate) fn key_intent(
         }
         _ => None,
     }
+}
+
+/// The cue buttons the emitter draws, which are the marks and the chapter
+/// ticks: one `role="button"` apiece, each holding the hit rect that names
+/// its time. Asked of the svg, which is the drawing itself. The film reads
+/// its own chart's cues back by these same words.
+pub(crate) const CUE_BUTTONS: &str = ".targets g[role=\"button\"]";
+
+/// The same buttons as a stylesheet has to name them: a rule is written
+/// against the whole shadow tree and has to say which drawing it means,
+/// where the query above is already asked of one. They are named by their
+/// role because they carry no class: a class on a cue would be the class
+/// the drawn rule or tick is painted by, and a class of the button's own
+/// is what the z-ordered groups are read by. A test holds the two
+/// spellings together.
+pub(crate) const CUE_RULE: &str = ".chart .targets g[role=\"button\"]";
+
+/// Decision 20's indicator on a cue button, which both stylesheets that
+/// draw cues include whole ([`stylesheet`] and the film's `chart_css`).
+///
+/// [`BASE_CSS`] is inlined above every drawing and its `:focus-visible`
+/// reaches the emitter's cue buttons; an outline on an SVG node is laid
+/// out in user space, so it scales with the viewBox and is clipped by the
+/// viewport, which here is a hairline around a `<g>` at either end of the
+/// track. So the ring is turned off and the indicator is a stroke on the
+/// hit rect that is already there, painted off `color` so a forced palette
+/// adjusts it with the text. Hover and focus paint the same stroke off the
+/// same token, which is the same decision's focus mirrors hover.
+///
+/// One function rather than a copy apiece: a reader who meets a cue in a
+/// chart and in a film meets one indicator, and the day it changes it
+/// changes in both.
+pub(crate) fn cue_indicator_css() -> String {
+    format!(
+        "{CUE_RULE}:focus {{ outline: none; }}
+{CUE_RULE}:hover {{ color: var(--op-accent); }}
+{CUE_RULE}:focus-visible {{ color: var(--op-focus); }}
+{CUE_RULE}:hover .target, {CUE_RULE}:focus-visible .target {{ stroke: currentColor; stroke-width: 2; }}"
+    )
+}
+
+/// Where the focus stands in decision 17's roving set: on the thumb, or on
+/// the cue at this position in time order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Roving {
+    Thumb,
+    Cue(usize),
+}
+
+/// What a key does while the roving set has the focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Roved {
+    /// Take the tab stop and the focus to this member of the set.
+    To(Roving),
+    /// Seek to the focused cue's own time. A `role="button"` answers Enter
+    /// and Space or it is not a button, and Space on a cue reached the
+    /// key table before this and played the film.
+    Press,
+}
+
+/// Decision 17's roving tabindex, as the decision behind it: where the
+/// focus goes from where it is, given the key, and [`None`] for every key
+/// that is somebody else's. `count` is how many cues the drawing has.
+///
+/// One tab stop moves over the whole set. Down from the thumb is the entry
+/// gesture the decision leaves unstated, and it is free: no key in
+/// [`KEY_LINE`] answers either vertical arrow, and the chart's timeline
+/// runs along x, so down is out of the clock's own axis and into the
+/// things standing on it. Up and Escape both leave, because a reader who
+/// stepped in by one of them will try the other.
+///
+/// Between the cues the list never wraps: an arrow at either end leaves
+/// the focus where it is, so the reader learns the end of the timeline by
+/// the focus not moving rather than by arriving at the other end of it.
+///
+/// Tab is not here and never can be: decision 17 says a roving tabindex
+/// never intercepts it, and one that did would shut the reader inside the
+/// cues. Escape on the thumb is not here either: there it is the key that
+/// drops a seek being aimed, which is the key table's answer.
+pub(crate) fn roving_key(at: Roving, count: usize, key: &str) -> Option<Roved> {
+    let to = |where_: Roving| Some(Roved::To(where_));
+    match (at, key) {
+        // in, at the first cue along the timeline, where there is one
+        (Roving::Thumb, "ArrowDown") => (count > 0).then_some(Roved::To(Roving::Cue(0))),
+        // and out, by either key that means "back where I came from"
+        (Roving::Cue(_), "ArrowUp" | "Escape") => to(Roving::Thumb),
+        (Roving::Cue(i), "ArrowRight") if i + 1 < count => to(Roving::Cue(i + 1)),
+        (Roving::Cue(i), "ArrowLeft") if i > 0 => to(Roving::Cue(i - 1)),
+        (Roving::Cue(_), "Enter" | " ") => Some(Roved::Press),
+        _ => None,
+    }
+}
+
+/// Whether the drawing shows this cue at this container width, which is
+/// whether a reader can reach it at all: the roving walks what is drawn
+/// and not what the markup carries.
+///
+/// The stylesheet drops every chapter cue below [`DROP_AT`], its button
+/// with its tick, and a `display: none` node refuses the focus. Counting
+/// one took the element's only tab stop somewhere nobody can stand: the
+/// stop left the thumb, the hidden chapter took it, and the focus that
+/// should have followed went nowhere, so the widget stopped being
+/// reachable until something else restored a stop.
+///
+/// The threshold is consulted rather than the layout. This answer and the
+/// rule are written from the one constant and the one spelling, so they
+/// cannot come to disagree, where a per-cue rect read would ask the engine
+/// the same question in a second language and would force a synchronous
+/// layout inside the re-layout that calls it ([`Follower::capture`]) as
+/// well as on every key press. The width is the host's own, which is the
+/// box `container-type: inline-size` makes the query container, and it is
+/// the measurement this element already draws itself from
+/// ([`Follower::width`]).
+pub(crate) fn cue_is_drawn(kind: &str, width: f64) -> bool {
+    kind != CHAPTER_CUE || width > DROP_AT
+}
+
+/// Where the one tab stop lands, given how many cues the drawing shows and
+/// which of them the caller asked for, with [`None`] for the element's own
+/// stop and for a node the set does not hold.
+///
+/// A cue the drawing does not show cannot be focused, so it cannot hold
+/// the stop either: the write would put the element's only `tabindex="0"`
+/// on a node that then refuses the focus meant to follow it. The stop goes
+/// to the thumb instead, which is the one member of the set that is always
+/// drawn, so a set that shrank between the read and the write lands
+/// somewhere a reader can stand rather than nowhere.
+pub(crate) fn stop_lands(drawn: usize, want: Option<usize>) -> Roving {
+    match want {
+        Some(i) if i < drawn => Roving::Cue(i),
+        _ => Roving::Thumb,
+    }
+}
+
+/// The cues in time order, as positions in the order the emitter wrote
+/// them. The markup carries every mark first and every chapter tick after,
+/// each group in its own order, so document order stops being time order
+/// the moment a chart has both kinds; the roving walks a timeline, so the
+/// order it walks is made here. Equal times keep the order they were
+/// written in, which is a stable sort's promise.
+pub(crate) fn in_time_order(times: &[f64]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..times.len()).collect();
+    order.sort_by(|a, b| times[*a].total_cmp(&times[*b]));
+    order
 }
 
 /// A press in progress: where it went down, whether it has already become
@@ -847,6 +1535,36 @@ struct Dom {
     /// The renderer's peek rule, drawn hidden and shown at the peeked time.
     peek_line: Option<Element>,
     figure: Option<Element>,
+    /// The status region, which sits beside the figure rather than in it
+    /// and so outlives every re-layout.
+    live: Option<Element>,
+}
+
+/// One cue button in the drawing as the element reads it back: what its
+/// own hit rect says it stands for, and the node the focus goes on.
+struct Cue {
+    /// `data-cue`: `mark` or `chapter`.
+    kind: String,
+    /// `data-t` exactly as the markup carries it. A re-layout matches on
+    /// the written text and never on the number, because the same block
+    /// drawn again writes the same three decimals and a parsed float
+    /// compared for equality would depend on that being exactly true.
+    stamp: String,
+    /// The same instant as a number, which is what the roving orders the
+    /// cues by and what a press on one seeks to.
+    t: f64,
+    node: Element,
+}
+
+/// What had the focus in the drawing before its markup was replaced.
+///
+/// The element's own tab stop is one node whatever the markup, so it needs
+/// no more than saying so; a cue is one of many and is named by the pair
+/// its rect carries, which survives the re-layout the node does not.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Held {
+    Stop,
+    Cue(String, String),
 }
 
 /// What the element keeps between ticks.
@@ -929,16 +1647,56 @@ struct Follower {
     /// The markup the build wrote is still on screen, so a re-layout at the
     /// width it was drawn for can keep it.
     hydrated: Cell<bool>,
+    /// Whether this chart's thumb is the widget's slider ([`owns_slider`]),
+    /// answered once from the tree the host was connected into.
+    slider: bool,
+    /// Whether the node this element's focus is about ([`focus_stop`]) has
+    /// it, which for a chart that owns its slider is the thumb, and is the
+    /// only time a clock tick writes its `aria-valuetext` (decision 18).
+    /// Written from the tree ([`Follower::stop_has_focus`]) and from the
+    /// focus events, never assumed.
+    focused: Cell<bool>,
+    /// A move onto the stop is in flight. Focusing a node raises a
+    /// `focusin` of its own, and raises it synchronously, so the move that
+    /// answers one arrival runs inside the handler for the next; this is
+    /// what makes that second arrival the end of the first move rather
+    /// than the start of another.
+    moving_focus: Cell<bool>,
+    /// When that value was last written, on the page's own clock.
+    value_written: Cell<f64>,
+    /// The next write skips the wait: a key or a pointer seek says the new
+    /// value at once rather than on the debounce.
+    value_at_once: Cell<bool>,
+    /// The film's play state as the last tick reported it, so play and
+    /// pause are announced when they change and not once a frame.
+    playing: Cell<Option<bool>>,
 }
 
 fn document() -> Option<web_sys::Document> {
     web_sys::window()?.document()
 }
 
-/// The page's clock in seconds, for the long press. A page with no
-/// performance clock never reaches the delay, so a press there stays a tap
-/// until it moves.
-fn now() -> f64 {
+/// Put the focus on an SVG node the element moved it to, without letting
+/// the page scroll to it: `preventScroll` is decision 20's rule for every
+/// focus this element moves itself. A chart is a wide thing in a narrow
+/// column, and a roving tabindex that scrolled the page each time it
+/// stepped along the timeline would be the widget deciding where the
+/// reader looks.
+fn give_focus(element: &Element) {
+    let Some(node) = element.dyn_ref::<web_sys::SvgElement>() else {
+        return;
+    };
+    let options = web_sys::FocusOptions::new();
+    options.set_prevent_scroll(true);
+    let _ = node.focus_with_options(&options);
+}
+
+/// The page's clock in seconds, which is the unit [`LONG_PRESS`] and
+/// [`VALUETEXT_WAIT`] are counted in, here and in the film that keeps the
+/// same wait ([`valuetext_due`]). A page with no performance clock reads
+/// zero for ever, so neither delay is ever reached there: a press stays a
+/// tap until it moves, and a tick never comes due.
+pub(crate) fn now() -> f64 {
     web_sys::window()
         .and_then(|w| w.performance())
         .map_or(0.0, |p| p.now() / 1000.0)
@@ -948,7 +1706,18 @@ impl Follower {
     /// Re-read the parts the effects act on out of `svg`, move the
     /// gestures onto it, and put the preview back where it was: a
     /// re-layout draws a fresh chart, whose peek rule starts hidden.
-    fn capture(&self, svg: Option<Element>) {
+    ///
+    /// `refocus` is what had the focus before the markup it stood in went,
+    /// which is the whole roving set and not the tab stop alone: a resize
+    /// with a cue focused destroyed that cue and dropped the reader onto
+    /// the page. The caller asks the tree for it, because it cannot be
+    /// asked here and the record cannot answer either: a browser removing
+    /// the focused node fires `focusout` as it goes and leaves the shadow
+    /// root with no active element, so by now both say the focus has left.
+    /// It has not; the node it was on has. The focus goes back on the cue
+    /// this markup drew for the same instant, and on the stop where that
+    /// cue is gone from the data as well as from the markup.
+    fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {
         let find = |selector: &str| {
             svg.as_ref()
                 .and_then(|s| s.query_selector(selector).ok().flatten())
@@ -965,9 +1734,34 @@ impl Follower {
             played: find(".bar-played"),
             peek_line: find(".peek-line"),
             figure: self.root.query_selector("figure").ok().flatten(),
+            live: self.root.query_selector("[role=\"status\"]").ok().flatten(),
             svg,
         };
         self.place_peek();
+        if let Some(held) = refocus {
+            let back = match &held {
+                Held::Stop => None,
+                Held::Cue(kind, stamp) => self
+                    .cues()
+                    .into_iter()
+                    .find(|cue| &cue.kind == kind && &cue.stamp == stamp)
+                    .map(|cue| cue.node),
+            };
+            if let Some(target) = back.or_else(|| self.focus_target()) {
+                self.move_stop(&target);
+            }
+        }
+        // the record is what the tree says once that is done and never a
+        // constant: it decides the words the value takes, and a value
+        // written as though the focus had gone would tell a reader who is
+        // still on the thumb the whole timeline again (decision 18)
+        self.focused.set(self.stop_has_focus());
+        // this thumb is new markup, carrying the value the emitter drew it
+        // at, so the words for the clock the element is actually on go in
+        // now: at a first render, a re-layout, and the upgrade of a chart
+        // the build wrote
+        let t = self.live.borrow().time;
+        self.write_value(t);
     }
 
     /// The host's width in CSS px, or the width the element was told to
@@ -986,17 +1780,58 @@ impl Follower {
     /// property replaces the block.
     fn render(&self) {
         let width = self.width();
+        // asked before the markup goes, which is the only moment the tree
+        // can still answer it ([`Follower::capture`])
+        let refocus = self.holds_focus();
         let (markup, layout) = {
             let live = self.live.borrow();
             let layout = Layout::sized(width, width / live.ratio, live.data.end());
             (
-                shadow_markup(&live.data, layout, None, live.ratio, BY_SITE),
+                shadow_markup(&live.data, layout, None, live.ratio, BY_SITE, self.slider),
                 layout,
             )
         };
         self.root.set_inner_html(&markup);
         self.live.borrow_mut().layout = layout;
-        self.capture(self.root.query_selector("svg.chart").ok().flatten());
+        self.capture(
+            self.root.query_selector("svg.chart").ok().flatten(),
+            refocus,
+        );
+        // the caption is new markup, so the host's references to it are
+        // stale until they are taken again
+        self.describe();
+    }
+
+    /// The host's own semantics, through its internals rather than stamped
+    /// on the element as attributes: the chart is a group, named by the
+    /// caption's heading and described by the summary and the instructions
+    /// line (decision 15). The three sit in the shadow tree, where no id in
+    /// the page's scope can reach them, so the host points at the elements
+    /// themselves, which is what internals are for. A browser without the
+    /// element references loses the naming and keeps the rest, and a page
+    /// that writes its own `role` or `aria-label` still wins: internals are
+    /// the default semantics and the attribute is the author's word.
+    fn describe(&self) {
+        let Some(internals) = op_webc::internals(&self.host) else {
+            return;
+        };
+        let set = |key: &str, value: &JsValue| {
+            let _ = js_sys::Reflect::set(&internals, &JsValue::from_str(key), value);
+        };
+        set("role", &JsValue::from_str("group"));
+        let by_id = |id: &str| self.root.query_selector(&format!("#{id}")).ok().flatten();
+        if let Some(title) = by_id(TITLE_ID) {
+            set("ariaLabelledByElements", &js_sys::Array::of1(&title));
+        }
+        let described = js_sys::Array::new();
+        for id in DESCRIBED_BY {
+            if let Some(element) = by_id(id) {
+                described.push(&element);
+            }
+        }
+        if described.length() > 0 {
+            set("ariaDescribedByElements", &described);
+        }
     }
 
     /// Keep the pre-render at `width` when it was drawn for that box: the
@@ -1005,6 +1840,7 @@ impl Follower {
     /// geometry it was drawn with. False when there is nothing to keep, and
     /// the caller draws its own.
     fn keep(&self, width: f64) -> bool {
+        let refocus = self.holds_focus();
         let (ratio, wide, end) = {
             let live = self.live.borrow();
             (live.ratio, live.fallback_width, live.data.end())
@@ -1026,7 +1862,7 @@ impl Follower {
         // the box the survivor was drawn in, not the measured width: they
         // agree to within a pixel, and the viewBox is in those units
         self.live.borrow_mut().layout = Layout::sized(drawn, drawn / ratio, end);
-        self.capture(Some(svg));
+        self.capture(Some(svg), refocus);
         true
     }
 
@@ -1047,10 +1883,19 @@ impl Follower {
             let live = self.live.borrow();
             let layout = Layout::sized(width, width / live.ratio, live.data.end());
             (
-                svg_of(&live.data.to_spec(), layout, "chart", BY_SITE),
+                svg_of(
+                    &live.data.to_spec(),
+                    &aria_of(&live.data, self.slider),
+                    layout,
+                    "chart",
+                    BY_SITE,
+                ),
                 layout,
             )
         };
+        // asked before the markup goes, which is the only moment the tree
+        // can still answer it ([`Follower::capture`])
+        let refocus = self.holds_focus();
         // the build's markup leaves the screen here, so the host's state
         // says so too: hydrated means the pre-render is what is shown
         self.hydrated.set(false);
@@ -1079,20 +1924,34 @@ impl Follower {
             }
         }
         self.live.borrow_mut().layout = layout;
-        self.capture(self.root.query_selector("svg.chart").ok().flatten());
+        self.capture(
+            self.root.query_selector("svg.chart").ok().flatten(),
+            refocus,
+        );
     }
 
-    /// Put the playhead, its readout and the played bar at the stored time.
-    /// `force` re-applies them after a re-layout, where the geometry
-    /// changed under an unchanged clock.
+    /// Put the playhead, its readout and the played bar at the stored time,
+    /// and say the time as the thumb's own value. `force` re-applies them
+    /// after a re-layout, where the geometry changed under an unchanged
+    /// clock.
     ///
-    /// Nothing here announces a value. The chart's `graphics-document`
-    /// role does not carry the `aria-value` family, so a value written on
-    /// it would be written for nobody: no assistive technology reads it,
-    /// and the attribute is invalid where it lands. Announcing the time
-    /// wants the thumb and the slider role of decision 15, with decision
-    /// 18's wording, and both are phase 4; until then the chart is
-    /// operable and announces no value.
+    /// The value goes on the playhead group and nowhere else: that group
+    /// is the slider (decision 15), and the svg around it is a
+    /// `graphics-document`, a role with no value to carry. Where the thumb
+    /// is not this widget's slider it carries no value at all, and only
+    /// the geometry here moves. The readout follows a preview while one is
+    /// showing and the value never does: nothing is announced for a peek
+    /// (decision 18).
+    ///
+    /// The number and the words for it are written on different clocks.
+    /// `aria-valuenow` is the machine-readable value and follows every
+    /// tick; `aria-valuetext` is what a listener hears, so it waits for
+    /// the focus and the debounce ([`valuetext_due`]) unless a gesture
+    /// has just asked for it. When the words do go in, the number goes in
+    /// beside them ([`Follower::write_value`]) rather than a frame later,
+    /// so the two never name different instants: a committed seek writes
+    /// both in the frame the key was handled in, and the animation frame
+    /// after it finds nothing to change.
     fn apply(&self, force: bool) {
         let (t, layout, prev_x, prev_label) = {
             let live = self.live.borrow();
@@ -1117,9 +1976,165 @@ impl Follower {
             let _ = played.set_attribute("width", &format!("{:.1}", (x - layout.left).max(0.0)));
         }
         drop(dom);
+        if self.value_at_once.replace(false)
+            || valuetext_due(self.value_written.get(), now(), self.focused.get())
+        {
+            self.write_value(t);
+        } else {
+            self.write_valuenow(t);
+        }
         let mut live = self.live.borrow_mut();
         live.x = x;
         live.label = label;
+    }
+
+    /// Write the thumb's `aria-valuenow` now: the machine-readable value,
+    /// which follows every tick whether or not the words do.
+    fn write_valuenow(&self, t: f64) {
+        let Some(playhead) = self.thumb() else {
+            return;
+        };
+        let _ = playhead.set_attribute("aria-valuenow", &format!("{t:.2}"));
+    }
+
+    /// Write the thumb's whole value now: the number, and the words for it
+    /// in the form the focus asks for (decision 18).
+    ///
+    /// The two go in together. `aria-valuenow` on its own follows the
+    /// clock every frame, but a frame in which the words are written is a
+    /// frame in which the number has to agree with them: a seek used to
+    /// write the words in the handler and the number in the animation
+    /// frame after it, so for one frame the value said one instant and
+    /// read another.
+    ///
+    /// The long form, with the whole timeline and the frame index, goes in
+    /// whenever the thumb does not have the focus: that is initialisation,
+    /// the blur the decision names, and a re-layout that had no focus to
+    /// put back, so the total is there to be spoken when focus next
+    /// arrives. While the thumb has the focus every change is the short
+    /// form, so a listener stepping along the track is not told the total
+    /// again on every step.
+    ///
+    /// A chart whose thumb is not the widget's slider writes nothing here:
+    /// [`Follower::thumb`] gives it nothing to write on.
+    fn write_value(&self, t: f64) {
+        let Some(playhead) = self.thumb() else {
+            return;
+        };
+        self.write_valuenow(t);
+        let text = {
+            let live = self.live.borrow();
+            let whole = (!self.focused.get()).then(|| {
+                let keys = Keys {
+                    times: &live.times,
+                    duration: key_duration(&live.data, live.layout.end),
+                    chapters: &live.chapters,
+                    // nothing steps here: the frame the words name is a
+                    // position among the rows, whatever a key is worth
+                    step: None,
+                };
+                Whole {
+                    duration: keys.duration,
+                    frame: keys.index_at(t) + 1,
+                    frames: keys.times.len(),
+                }
+            });
+            valuetext(t, &chapter_at(&live.data, t), whole)
+        };
+        let _ = playhead.set_attribute("aria-valuetext", &text);
+        self.value_written.set(now());
+    }
+
+    /// The thumb, where it is this widget's slider and so has a value to
+    /// carry at all. A chart inside a film's shadow tree gets nothing here:
+    /// its playhead is decoration, hidden from the accessibility tree, and
+    /// the film's own range input is what announces the time (decision 15).
+    /// Both aria value writes go through this, so the rule is asked once.
+    fn thumb(&self) -> Option<Element> {
+        self.slider
+            .then(|| self.dom.borrow().playhead.clone())
+            .flatten()
+    }
+
+    /// Put one short message in the status region, which has been in the
+    /// shadow root since the first render and is never made on demand
+    /// (decision 18). Four things reach it: a seek that committed, play,
+    /// pause, and a chapter entered while the film plays. Nothing about a
+    /// peek or a seek still being aimed is ever said, and the region is
+    /// polite.
+    fn say(&self, text: &str) {
+        if let Some(live) = &self.dom.borrow().live {
+            live.set_text_content(Some(text));
+        }
+    }
+
+    /// The node this element's focus is about ([`Follower::focus_target`])
+    /// gained or lost it, which is what the value's words follow. While it
+    /// has the focus a clock tick writes the short form on the debounce;
+    /// when it goes, the long form goes in at once, so the duration and
+    /// the frame index are waiting to be spoken when the thumb is next
+    /// focused (decision 18). Focus on anything else in the chart - a cue
+    /// button the roving moved to - says nothing about the thumb.
+    ///
+    /// Read in the bubbling spelling, `focusin` and `focusout`: it is the
+    /// thumb inside the svg that takes the focus, and `focus` does not
+    /// bubble.
+    fn on_focus(&self, event: &Event, gained: bool) {
+        let stop = self.focus_target();
+        let target = event.target().and_then(|t| t.dyn_into::<Element>().ok());
+        if stop.is_none() || stop != target {
+            return;
+        }
+        self.focused.set(gained);
+        if !gained {
+            let t = self.live.borrow().time;
+            self.write_value(t);
+        }
+    }
+
+    /// Where the tree says a focus that has just arrived stands, for
+    /// [`takes_the_stop`] to judge.
+    ///
+    /// The stop is asked for in the one place that answers for it
+    /// ([`Follower::focus_target`]), and the svg is the one
+    /// [`Follower::capture`] kept, so neither can be a node of the chart
+    /// the element threw away: a pre-render ships a wide drawing and a
+    /// narrow one, with a thumb in each, until the width the host was laid
+    /// out at picks one and the other is removed.
+    fn arrival(&self) -> Arrival {
+        let Some(active) = self.root.active_element() else {
+            return Arrival {
+                inside: false,
+                stop: false,
+                svg: false,
+            };
+        };
+        let stop = self.focus_target();
+        Arrival {
+            inside: true,
+            stop: stop.as_ref() == Some(&active),
+            svg: self.dom.borrow().svg.as_ref() == Some(&active),
+        }
+    }
+
+    /// A focus has arrived somewhere in this element. Where the engine put
+    /// it there rather than the reader ([`takes_the_stop`]), it is moved
+    /// onto the stop, with the tab stop and without scrolling the page
+    /// ([`Follower::move_stop`]).
+    ///
+    /// Heard on the host and in the bubbling spelling, because one of the
+    /// two nodes an engine can leave the focus on is the host itself, and
+    /// no listener inside the root is told about that one.
+    fn on_arrival(&self) {
+        if self.moving_focus.get() || !takes_the_stop(self.arrival()) {
+            return;
+        }
+        let Some(stop) = self.focus_target() else {
+            return;
+        };
+        self.moving_focus.set(true);
+        self.move_stop(&stop);
+        self.moving_focus.set(false);
     }
 
     /// One animation frame: re-lay out when a resize asked for it, then
@@ -1167,6 +2182,12 @@ impl Follower {
     }
 
     /// A tick from the film: the clock, and the flags the chart mirrors.
+    ///
+    /// Two of decision 18's four messages are decided here, and both are
+    /// events rather than states: the play flag turning over, and a chapter
+    /// boundary crossed while the film plays. A tick that only advances the
+    /// clock says nothing at all, which is what "rate-limited to chapter
+    /// boundaries and never per sample" means.
     fn on_time(&self, event: &Event) {
         let Some(custom) = event.dyn_ref::<web_sys::CustomEvent>() else {
             return;
@@ -1181,10 +2202,33 @@ impl Follower {
         if !self.following.replace(true) {
             set_state(&self.host, "following", true);
         }
+        let mut said: Option<String> = None;
         if let Some(playing) = field("playing").and_then(|v| v.as_bool()) {
             set_state(&self.host, "playing", playing);
+            // the first tick teaches the chart what the film is doing; it
+            // is not the film starting or stopping, so it announces nothing
+            if self.playing.replace(Some(playing)) == Some(!playing) {
+                let said_now = if playing { Said::Playing } else { Said::Paused };
+                said = Some(message(said_now, t, ""));
+            }
         }
-        self.live.borrow_mut().time = t;
+        let prev = std::mem::replace(&mut self.live.borrow_mut().time, t);
+        if said.is_none() && self.playing.get() == Some(true) {
+            let live = self.live.borrow();
+            if let Some(entered) = chapter_crossed(prev, t, &live.chapters) {
+                let title = live
+                    .data
+                    .chapters
+                    .get(entered)
+                    .map(|c| c.label.clone())
+                    .unwrap_or_default();
+                drop(live);
+                said = Some(message(Said::Chapter, t, &title));
+            }
+        }
+        if let Some(said) = said {
+            self.say(&said);
+        }
         self.request_frame();
     }
 
@@ -1313,15 +2357,44 @@ impl Follower {
     /// clock answers, and the chart follows that answer like any other
     /// tick.
     fn act(&self, intent: Intent) {
+        if ends_press(intent) {
+            self.end_press();
+        }
         match intent {
             Intent::Seek(t) => {
-                // a seek commits at once and never leaves a press behind
-                self.end_press();
+                // the seek has committed, so the thumb says its new value
+                // at once instead of waiting for the debounce; the peek
+                // that aimed it said nothing (decision 18)
+                self.value_at_once.set(true);
+                let before = self.live.borrow().time;
                 self.emit_time(SEEK_EVENT, Some(t));
+                // a film in this document answers a seek where it stands,
+                // so the words for the time it landed on go in here, in
+                // the frame the key or the release was handled in, rather
+                // than in the animation frame that moves the drawing after
+                // it: "at once" is the decision's word. Where the answer
+                // comes later the flag is still set, and the tick that
+                // carries it writes without the debounce instead
+                let landed = self.live.borrow().time;
+                if landed != before && self.value_at_once.replace(false) {
+                    self.write_value(landed);
+                }
+                // and the message goes in last, after the emit and not
+                // before it. A seek made while the film plays pauses it,
+                // and the film's pause renders and dispatches a tick of
+                // its own with the play flag turned over; this element
+                // hears that tick inside the emit above and says "Paused"
+                // on it. A message written before the emit is the one that
+                // is overwritten, in exactly the case a reader seeks most
+                let spoken = seeked_time(t, before, landed);
+                let chapter = chapter_at(&self.live.borrow().data, spoken);
+                self.say(&message(Said::Seeked, spoken, &chapter));
             }
             Intent::Peek(t) => self.set_peek(t),
             Intent::Toggle => self.emit(TOGGLE_EVENT, None),
-            Intent::Cancel => self.end_press(),
+            // the press is already back; a cancel says nothing, because
+            // nothing happened to the clock
+            Intent::Cancel => {}
         }
     }
 
@@ -1405,14 +2478,16 @@ impl Follower {
         // events, which are what would select the chart's labels under a
         // drag; it suppresses the focus a press would have given it too,
         // so the focus is taken here instead and Escape can then cancel
-        // the very drag this press is starting. The ring is
-        // `:focus-visible` only, so a press does not draw one.
+        // the very drag this press is starting. It goes to the thumb, as a
+        // press on a range input's track puts the focus on that input, and
+        // the thumb is this chart's tab stop; the ring is `:focus-visible`
+        // only, so a press does not draw one.
         event.prevent_default();
         if let Some(svg) = &self.dom.borrow().svg {
             let _ = svg.set_pointer_capture(pointer.pointer_id());
-            if let Some(svg) = svg.dyn_ref::<web_sys::SvgElement>() {
-                let _ = svg.focus();
-            }
+        }
+        if let Some(target) = self.focus_target() {
+            self.move_stop(&target);
         }
         // the pointer that made this press is what says whether it takes
         // the long press, and it says so once: the moves that follow carry
@@ -1512,15 +2587,217 @@ impl Follower {
         }
     }
 
-    /// A key, acted on only while the chart itself has the focus. The
-    /// chart is not the shadow root's only tab stop: the data table's
-    /// disclosure takes the focus too and keeps its own keys, so Space
-    /// there opens the table and seeks nothing.
+    /// The node this chart's focus is about ([`focus_stop`]) as an
+    /// element: the tab stop the element hands the focus to, where an
+    /// embedded chart has no thumb of its own and the svg is the only
+    /// thing here a keyboard can reach. [`Follower::thumb`] answers for
+    /// the value and says no to a decoration; this answers for the focus,
+    /// and a decoration is still where a press on it belongs.
+    fn focus_target(&self) -> Option<Element> {
+        let dom = self.dom.borrow();
+        match focus_stop(self.slider) {
+            Stop::Thumb => dom.playhead.clone(),
+            Stop::Svg => dom.svg.clone(),
+        }
+    }
+
+    /// Whether the tree says that node has the focus now. Everything about
+    /// the focus is written from this rather than assumed: the record
+    /// [`Follower::focused`] keeps, and whether a re-layout has a focus to
+    /// put back.
+    fn stop_has_focus(&self) -> bool {
+        let target = self.focus_target();
+        target.is_some() && target == self.root.active_element()
+    }
+
+    /// The cue buttons a reader can reach in the drawing, in the order the
+    /// markup carries them, each with the instant and the kind its own
+    /// rect names.
+    ///
+    /// Read out of the markup rather than off the data, because the markup
+    /// is what has the focus and what a re-layout replaces: a chart the
+    /// build wrote and a chart the element drew both answer here.
+    ///
+    /// The set is what the container query leaves drawn ([`cue_is_drawn`])
+    /// and not every button in the tree, and that is asked here alone: the
+    /// roving's keys, the lookup that says where the focus stands, the
+    /// record a re-layout puts back and the tab stop's own write all walk
+    /// this one set, so none of them can count a cue another cannot reach.
+    fn cues(&self) -> Vec<Cue> {
+        let width = self.width();
+        let dom = self.dom.borrow();
+        let Some(nodes) = dom
+            .svg
+            .as_ref()
+            .and_then(|svg| svg.query_selector_all(CUE_BUTTONS).ok())
+        else {
+            return Vec::new();
+        };
+        (0..nodes.length())
+            .filter_map(|i| nodes.get(i)?.dyn_into::<Element>().ok())
+            .map(|node| {
+                let rect = node.query_selector("[data-t]").ok().flatten();
+                let stamp = rect
+                    .as_ref()
+                    .and_then(|rect| rect.get_attribute("data-t"))
+                    .unwrap_or_default();
+                let kind = rect
+                    .as_ref()
+                    .and_then(|rect| rect.get_attribute("data-cue"))
+                    .unwrap_or_default();
+                // a cue whose rect says nothing sorts to the end of the
+                // timeline rather than to the start of it, where it would
+                // take the entry gesture's first cue
+                let t = stamp.parse::<f64>().unwrap_or(f64::INFINITY);
+                Cue {
+                    kind,
+                    stamp,
+                    t,
+                    node,
+                }
+            })
+            .filter(|cue| cue_is_drawn(&cue.kind, width))
+            .collect()
+    }
+
+    /// Which member of the roving set the tree says has the focus, and
+    /// [`None`] where the focus is somewhere else entirely: the data
+    /// table's disclosure, or another element on the page. `order` is
+    /// [`in_time_order`] over `cues`, so a cue's position is the one the
+    /// arrows move over.
+    fn roving_at(&self, cues: &[Cue], order: &[usize]) -> Option<Roving> {
+        if self.stop_has_focus() {
+            return Some(Roving::Thumb);
+        }
+        let active = self.root.active_element()?;
+        order
+            .iter()
+            .position(|i| active.is_same_node(Some(cues[*i].node.as_ref())))
+            .map(Roving::Cue)
+    }
+
+    /// What the tree says has the focus in this drawing, as something that
+    /// outlives the markup it was read from: a re-layout throws every node
+    /// away, so a cue is remembered by the pair its rect carries and found
+    /// again in the markup that replaces it.
+    fn holds_focus(&self) -> Option<Held> {
+        if self.stop_has_focus() {
+            return Some(Held::Stop);
+        }
+        let active = self.root.active_element()?;
+        self.cues()
+            .into_iter()
+            .find(|cue| active.is_same_node(Some(cue.node.as_ref())))
+            .map(|cue| Held::Cue(cue.kind, cue.stamp))
+    }
+
+    /// Put the one tab stop on `to`, and the focus with it.
+    ///
+    /// Decision 17's roving tabindex is an attribute that moves. The set
+    /// is the element's own stop and every cue button the drawing shows;
+    /// exactly one of them is in the tab order at a time and the rest are
+    /// at `-1`, so Tab leaves the chart from wherever the reader stands in
+    /// it. Shift with Tab comes back to the thumb rather than to the cue
+    /// it left from: that is `delegatesFocus` entering at the delegate,
+    /// which [`Follower::on_arrival`] then normalises onto the stop. The
+    /// emitter draws the set at rest, with the stop at `0` and every cue
+    /// at `-1`, so fresh markup needs nothing done to it until the focus
+    /// moves off the stop.
+    ///
+    /// Where `to` is not in that set the stop falls back to the thumb
+    /// ([`stop_lands`]) and the write follows the decision rather than
+    /// running ahead of it: a `0` on a node the drawing is not showing
+    /// would be the element's only tab stop, and the focus written after
+    /// it would silently go nowhere.
+    fn move_stop(&self, to: &Element) {
+        let stop = self.focus_target();
+        let cues = self.cues();
+        let want = cues
+            .iter()
+            .position(|cue| cue.node.is_same_node(Some(to.as_ref())));
+        let onto = match stop_lands(cues.len(), want) {
+            Roving::Cue(i) => Some(&cues[i].node),
+            Roving::Thumb => stop.as_ref(),
+        };
+        let Some(onto) = onto else {
+            return;
+        };
+        for node in stop.iter().chain(cues.iter().map(|cue| &cue.node)) {
+            let at = if node.is_same_node(Some(onto.as_ref())) {
+                "0"
+            } else {
+                "-1"
+            };
+            let _ = node.set_attribute("tabindex", at);
+        }
+        give_focus(onto);
+    }
+
+    /// Decision 17's roving tabindex as the element runs it, answered
+    /// before the key table: the entry gesture from the thumb, the arrows
+    /// between the cues, the two keys that leave, and the press that seeks
+    /// to the focused cue's own time. Says whether the key was the
+    /// roving's own, so the key table never sees one it answered.
+    ///
+    /// Every key the roving answers leaves by the one `true` at the end,
+    /// so a key cannot be acted on and left to the key table as well:
+    /// Space on a cue both sought and played the film before, because the
+    /// answer and the claim were two decisions instead of one.
+    fn roved(&self, key: &str) -> bool {
+        let cues = self.cues();
+        let times: Vec<f64> = cues.iter().map(|cue| cue.t).collect();
+        let order = in_time_order(&times);
+        let Some(at) = self.roving_at(&cues, &order) else {
+            return false;
+        };
+        let Some(answer) = roving_key(at, order.len(), key) else {
+            return false;
+        };
+        match answer {
+            Roved::To(Roving::Thumb) => {
+                if let Some(stop) = self.focus_target() {
+                    self.move_stop(&stop);
+                }
+            }
+            Roved::To(Roving::Cue(i)) => self.move_stop(&cues[order[i]].node),
+            Roved::Press => {
+                if let Roving::Cue(i) = at {
+                    let t = cues[order[i]].t;
+                    let duration = {
+                        let live = self.live.borrow();
+                        key_duration(&live.data, live.layout.end)
+                    };
+                    self.act(Intent::Seek(t.clamp(0.0, duration)));
+                }
+            }
+        }
+        true
+    }
+
+    /// A key, acted on only while the focus is on the chart: the svg, or
+    /// anything inside it, which is the thumb that is its slider and the
+    /// cue buttons the roving moves between. The chart is not the shadow
+    /// root's only tab stop: the data table's disclosure takes the focus
+    /// too and keeps its own keys, so Space there opens the table and seeks
+    /// nothing.
     fn on_key(&self, event: &Event) {
         let Some(key) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
             return;
         };
-        if self.root.active_element() != self.dom.borrow().svg {
+        let active = self.root.active_element();
+        let ours = match (&self.dom.borrow().svg, &active) {
+            (Some(svg), Some(active)) => svg.contains(Some(active.as_ref())),
+            _ => false,
+        };
+        if !ours {
+            return;
+        }
+        // the roving answered it: the way into the cues, a step between
+        // them, the way back, or a press on the one that has the focus.
+        // The key table never sees a key the roving took, which is what
+        // kept Space on a chapter from playing the film as well
+        if self.roved(&key.key()) {
+            key.prevent_default();
             return;
         }
         let intent = {
@@ -1534,6 +2811,9 @@ impl Follower {
                     times: &live.times,
                     duration: key_duration(&live.data, live.layout.end),
                     chapters: &live.chapters,
+                    // read at the key, so an attribute set after the
+                    // upgrade is answered by the next press of one
+                    step: step_attr(self.host.get_attribute("step").as_deref()),
                 },
             )
         };
@@ -1555,6 +2835,9 @@ struct Wiring {
     /// Keys ride on the host, which outlives every re-layout; the handler
     /// asks the shadow root whether the chart is the focused thing.
     on_key: Closure<dyn FnMut(Event)>,
+    /// A focus arriving rides on the host for the same reason, and for one
+    /// more: the arrival it answers can be on the host itself.
+    on_focus_in: Closure<dyn FnMut(Event)>,
     observer: Option<web_sys::ResizeObserver>,
     _on_resize: Closure<dyn FnMut(js_sys::Array)>,
 }
@@ -1591,7 +2874,7 @@ impl Chart {
     }
 
     fn fail(&self, message: &str) {
-        shadow_root(&self.host).set_inner_html(&format!(
+        delegating_shadow_root(&self.host).set_inner_html(&format!(
             "<style>{BASE_CSS}</style><p>opt-chart: {}</p>",
             escape(message)
         ));
@@ -1685,7 +2968,7 @@ impl CustomElement for Chart {
         };
         let follower = Rc::new(Follower {
             host: self.host.clone(),
-            root: shadow_root(&self.host),
+            root: delegating_shadow_root(&self.host),
             dom: RefCell::new(Dom::default()),
             live: RefCell::new(live),
             on_tick: RefCell::new(None),
@@ -1697,6 +2980,14 @@ impl CustomElement for Chart {
             peek: Cell::new(None),
             following: Cell::new(false),
             hydrated: Cell::new(false),
+            // one slider per widget: a chart in a film's shadow tree leaves
+            // the slider to the film's own range input (decision 15)
+            slider: owns_slider(host_tag(&self.host).as_deref()),
+            focused: Cell::new(false),
+            moving_focus: Cell::new(false),
+            value_written: Cell::new(f64::NEG_INFINITY),
+            value_at_once: Cell::new(false),
+            playing: Cell::new(None),
         });
 
         // the gestures are built before anything is drawn, because it is
@@ -1726,6 +3017,20 @@ impl CustomElement for Chart {
             );
             let f = follower.clone();
             on("pointerleave", Closure::new(move |_| f.on_leave()));
+            // focus is read in its bubbling spelling, because it is the
+            // thumb inside the svg that takes it and `focus` does not
+            // bubble; the handler asks whether the target is the node this
+            // element's focus is about ([`Follower::focus_target`])
+            let f = follower.clone();
+            on(
+                "focusin",
+                Closure::new(move |e: Event| f.on_focus(&e, true)),
+            );
+            let f = follower.clone();
+            on(
+                "focusout",
+                Closure::new(move |e: Event| f.on_focus(&e, false)),
+            );
         }
 
         match action {
@@ -1743,7 +3048,10 @@ impl CustomElement for Chart {
                 };
                 let svg = svg.or_else(|| pick("svg.chart"));
                 follower.live.borrow_mut().layout = Layout::sized(width, width / ratio, end);
-                follower.capture(svg);
+                follower.capture(svg, None);
+                // the build wrote the caption this names; a render would
+                // have written its own
+                follower.describe();
                 follower.hydrated.set(true);
                 set_state(&self.host, "hydrated", true);
             }
@@ -1805,6 +3113,14 @@ impl CustomElement for Chart {
             .host
             .add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref());
 
+        let on_focus_in = {
+            let f = follower.clone();
+            Closure::<dyn FnMut(Event)>::new(move |_: Event| f.on_arrival())
+        };
+        let _ = self
+            .host
+            .add_event_listener_with_callback("focusin", on_focus_in.as_ref().unchecked_ref());
+
         let on_resize = {
             let f = follower.clone();
             Closure::<dyn FnMut(js_sys::Array)>::new(move |_: js_sys::Array| {
@@ -1822,6 +3138,7 @@ impl CustomElement for Chart {
             on_tick,
             on_document,
             on_key,
+            on_focus_in,
             observer,
             _on_resize: on_resize,
         });
@@ -1859,6 +3176,10 @@ impl CustomElement for Chart {
         let _ = self
             .host
             .remove_event_listener_with_callback("keydown", wiring.on_key.as_ref().unchecked_ref());
+        let _ = self.host.remove_event_listener_with_callback(
+            "focusin",
+            wiring.on_focus_in.as_ref().unchecked_ref(),
+        );
         let bound = wiring.follower.live.borrow_mut().bound.take();
         if let Some(bound) = bound {
             let _ = bound.remove_event_listener_with_callback(
@@ -1924,6 +3245,16 @@ impl CustomElement for Chart {
             _ => {}
         }
     }
+}
+
+/// The tag of the element whose shadow tree this host sits in, and nothing
+/// at all for a host in a document. This is what [`owns_slider`] is asked,
+/// and it is all the element can know about the widget it is part of: the
+/// root node it was connected into.
+fn host_tag(host: &HtmlElement) -> Option<String> {
+    host.get_root_node()
+        .dyn_ref::<ShadowRoot>()
+        .map(|root| root.host().local_name())
 }
 
 /// The element `id` names: this element's own tree scope first (a shadow
@@ -2061,27 +3392,40 @@ mod tests {
             None,
             DEFAULT_RATIO,
             BY_SITE,
+            true,
         );
         assert_eq!(one.matches("<svg ").count(), 1);
-        assert!(one.contains("<svg class=\"chart\" part=\"chart\" data-rendered-by=\"op-site\""));
+        assert!(one.contains("<svg class=\"chart\" data-rendered-by=\"op-site\" part=\"chart\""));
         assert!(!one.contains("chart wide") && !one.contains("chart narrow"));
     }
 
-    /// Decision 15: the element's chart is not a control. The renderer opens
-    /// every chart as the film's slider, because the film drives one; this
-    /// chart has no thumb and no value of its own, so a focusable slider
-    /// frozen at zero would announce a value that is never the chart's.
-    /// It is still a tab stop: it answers decision 17's keys.
-    #[test]
-    fn an_element_drawn_chart_is_a_labelled_graphics_document_and_not_a_slider() {
+    /// The markup of one chart at the element's own width, drawn as the
+    /// standalone chart that owns its widget's slider.
+    fn one_chart() -> String {
+        chart_owning(true)
+    }
+
+    /// The same chart, drawn for whichever answer [`owns_slider`] gave.
+    fn chart_owning(slider: bool) -> String {
         let d = data();
-        let one = shadow_markup(
+        shadow_markup(
             &d,
             Layout::sized(800.0, 300.0, d.end()),
             None,
             DEFAULT_RATIO,
             BY_SITE,
-        );
+            slider,
+        )
+    }
+
+    /// Decision 15: the svg is the document and the thumb is the control.
+    /// A slider role on the svg would make everything under it
+    /// presentational, and `role="img"` would collapse the subtree the
+    /// series groups are exposed through; the value belongs to the thumb,
+    /// which is the operable thing and the one that moves.
+    #[test]
+    fn the_chart_is_a_labelled_document_whose_thumb_is_the_slider() {
+        let one = one_chart();
         let pair = built().shadow;
         for markup in [&one, &pair] {
             assert!(markup.contains("role=\"graphics-document\""), "{markup}");
@@ -2097,37 +3441,885 @@ mod tests {
             );
             // a tab stop on the chart itself, and an operable one: it
             // answers keys. The data table's disclosure is a tab stop of
-            // its own, so the shadow root has two
+            // its own, so the shadow root has more than one
             assert!(markup.contains("tabindex=\"0\""), "{markup}");
             assert!(markup.contains("<summary>Data table</summary>"), "{markup}");
-            for frozen in [
-                "role=\"slider\"",
-                "aria-valuenow",
-                "aria-valuemin",
-                "aria-valuemax",
-                "aria-valuetext",
-                "aria-label=\"playhead\"",
-            ] {
-                assert!(!markup.contains(frozen), "{frozen} survived: {markup}");
+            // the svg is never the control and never an image
+            for head in heads(markup, "svg") {
+                for never in ["role=\"slider\"", "role=\"img\"", "aria-value"] {
+                    assert!(!head.contains(never), "{never} on an svg: {head}");
+                }
+                assert_eq!(attr(head, "role"), "graphics-document", "{head}");
+                assert_eq!(attr(head, "aria-labelledby"), TITLE_ID, "{head}");
             }
             // and the box the emitter drew is untouched
             assert!(markup.contains("part=\"chart\""));
             assert!(markup.contains("viewBox=\"0 0 "));
         }
-        // one role per chart, wide and narrow alike
+        // one document and one slider per chart, wide and narrow alike
         assert_eq!(pair.matches("role=\"graphics-document\"").count(), 2);
-        // and no tick puts a value back on that role, for the reason
-        // `Follower::apply` gives
+        assert_eq!(pair.matches("role=\"slider\"").count(), 2);
+        // the thumb is the slider, named by the same heading and carrying
+        // the value the tick writes
+        let thumb = heads(&one, "g")
+            .into_iter()
+            .find(|head| attr(head, "class") == "playhead")
+            .expect("the thumb");
+        assert_eq!(attr(thumb, "role"), "slider");
+        assert_eq!(attr(thumb, "tabindex"), "0");
+        // the control is named for what it moves. The caption's heading
+        // names the document, which is what the chart is a chart of; a
+        // slider named by that list announces the whole legend before its
+        // own value on every step along the track
+        assert_eq!(attr(thumb, "aria-label"), "Time");
+        assert_eq!(attr(thumb, "aria-labelledby"), "");
+        assert_eq!(attr(thumb, "aria-valuemin"), "0");
+        assert_eq!(attr(thumb, "aria-valuemax"), format!("{:.2}", data().end()));
+        assert_eq!(attr(thumb, "aria-valuenow"), "0");
+        assert_eq!(attr(thumb, "aria-valuetext"), "0.00 seconds");
+        // the readout is inside that slider, and written once, so the time
+        // is not read again as loose text beside it
+        assert_eq!(one.matches("class=\"head-t\"").count(), 1);
+        let group = one
+            .split_once("<g class=\"playhead\"")
+            .expect("the thumb")
+            .1
+            .split_once("</g>")
+            .expect("it closes")
+            .0;
+        assert!(group.contains("class=\"head-t\""), "{group}");
+        // and the tick writes the value through that group and no other
+        // handle: the svg's document role has no value to carry
         let source = include_str!("chart.rs");
-        let write = ["set_attribute(\"aria", "-value"].concat();
+        let writes: Vec<&str> = source
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains("set_attribute(\"aria-value"))
+            .collect();
+        assert_eq!(writes.len(), 2, "{writes:?}");
+        for write in writes {
+            assert!(write.starts_with("let _ = playhead."), "{write}");
+        }
+        // and the number is written beside the words whenever the words go
+        // in, so the two can never name different instants: a seek used to
+        // write the words in the handler and the number in the animation
+        // frame after it, and for that frame the value said one time and
+        // read another. `aria-valuenow` still follows every tick of
+        // its own, which is the other half of decision 13
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let write_value = body_of("fn write_value(&self, t: f64) {");
         assert!(
-            !source.contains(&write),
-            "a tick must not write an aria value onto the document role"
+            write_value.contains("self.write_valuenow(t)"),
+            "{write_value}"
         );
-        // the film's own chart keeps the renderer's slider: it has a thumb,
-        // and it writes aria-valuenow on every tick
-        let film = op_chart::render(&d.to_spec(), Layout::film(d.end())).svg;
-        assert!(film.contains("role=\"slider\"") && film.contains("aria-valuenow=\"0\""));
+        assert!(write_value.contains("aria-valuetext"), "{write_value}");
+        let now = body_of("fn write_valuenow(&self, t: f64) {");
+        assert!(now.contains("aria-valuenow"), "{now}");
+        let apply = body_of("fn apply(&self, force: bool) {");
+        assert!(apply.contains("self.write_value(t)"), "{apply}");
+        assert!(apply.contains("self.write_valuenow(t)"), "{apply}");
+        // and the value is nowhere else at all: the animation frame no
+        // longer writes the number on its own beside the transform
+        assert!(!apply.contains("set_attribute(\"aria-"), "{apply}");
+        // and that handle is `thumb`, which asks whether this chart owns
+        // the widget's slider at all: an embedded chart's playhead is
+        // decoration and no tick may write a value onto it. The needle is
+        // assembled, so this line is not one of the occurrences it counts
+        let handle = ["self.", "thumb()"].concat();
+        assert_eq!(source.matches(&handle).count(), 2, "{source}");
+        let body = source
+            .split_once("fn thumb(&self)")
+            .expect("the thumb accessor")
+            .1;
+        let body = body.split_once("\n    }").expect("it ends").0;
+        assert!(body.contains("self.slider"), "{body}");
+    }
+
+    /// Decision 15's last clauses: a chart inside the film's own shadow
+    /// tree is a second picture of a timeline the film's native range input
+    /// already controls, so one slider per widget makes the chart's thumb
+    /// decoration there. Anywhere else - a document, a page's own wrapper
+    /// element - the chart is the only control over its timeline and keeps
+    /// the slider.
+    #[test]
+    fn a_chart_inside_a_film_leaves_the_slider_to_the_film() {
+        // the decision, as the element can ask it: what the root node's
+        // host is
+        assert!(owns_slider(None));
+        assert!(!owns_slider(Some(FILM_TAG)));
+        // the tag comes off the DOM, which spells it in whatever case the
+        // page wrote
+        assert!(!owns_slider(Some("OPT-FILM")));
+        // every other host is somebody's wrapper, not the widget that owns
+        // the time
+        for host in ["opt-machine", "opt-scene", "div", "opt-film-strip"] {
+            assert!(owns_slider(Some(host)), "{host}");
+        }
+
+        let embedded = chart_owning(false);
+        let thumb = heads(&embedded, "g")
+            .into_iter()
+            .find(|head| attr(head, "class") == "playhead")
+            .expect("the thumb");
+        // no role, no tab stop, no value, and out of the accessibility
+        // tree, which is what decoration is
+        assert_eq!(attr(thumb, "role"), "");
+        assert_eq!(attr(thumb, "tabindex"), "");
+        assert_eq!(attr(thumb, "aria-hidden"), "true");
+        assert!(!thumb.contains("aria-value"), "{thumb}");
+        assert!(!embedded.contains("role=\"slider\""), "{embedded}");
+
+        // and everything else about the chart is exactly as it was: the
+        // document role and its name, the caption, the instructions, the
+        // series groups, the cue buttons, the status region and the table
+        let standalone = one_chart();
+        for same in [
+            "role=\"graphics-document\"",
+            "<strong class=\"title\" id=\"chart-title\">",
+            "<p class=\"summary\"",
+            "<p class=\"keys\"",
+            "role=\"graphics-object\"",
+            "<g role=\"button\" tabindex=\"-1\"",
+            STATUS,
+            "<summary>Data table</summary>",
+        ] {
+            assert_eq!(
+                embedded.matches(same).count(),
+                standalone.matches(same).count(),
+                "`{same}` differs between an embedded chart and a standalone one"
+            );
+        }
+        // one tab stop either way, and it is whichever of the two can be
+        // driven: the thumb where the chart owns the slider, and the svg
+        // where it does not, since a decoration is no use to a keyboard
+        // and the chart would otherwise be unreachable inside the film
+        assert_eq!(embedded.matches("tabindex=\"0\"").count(), 1);
+        assert_eq!(standalone.matches("tabindex=\"0\"").count(), 1);
+        for head in heads(&embedded, "svg") {
+            assert_eq!(attr(head, "tabindex"), "0", "{head}");
+        }
+        for head in heads(&standalone, "svg") {
+            assert_eq!(attr(head, "tabindex"), "", "{head}");
+        }
+        // the caption's heading still names the document; the thumb is not
+        // named at all, having nothing left to be named as
+        for head in heads(&embedded, "svg") {
+            assert_eq!(attr(head, "aria-labelledby"), TITLE_ID, "{head}");
+        }
+        assert_eq!(
+            embedded.matches("aria-labelledby=\"chart-title\"").count(),
+            1
+        );
+        // one reference per chart, wherever it stands: the document takes
+        // the caption's heading and the thumb is named "Time"
+        assert_eq!(
+            standalone
+                .matches("aria-labelledby=\"chart-title\"")
+                .count(),
+            1
+        );
+        assert_eq!(standalone.matches("aria-label=\"Time\"").count(), 1);
+        assert_eq!(embedded.matches("aria-label=\"Time\"").count(), 0);
+        // and the thumb the build writes is always the slider, because the
+        // build writes charts into a page and never into a film
+        assert!(built().shadow.contains("role=\"slider\""));
+    }
+
+    /// The one answer about the focus, held to the markup: the node
+    /// [`focus_stop`] names is the node the emitter gives the tab stop to,
+    /// for either answer of [`owns_slider`].
+    ///
+    /// This is the check the phase went without. Two stories moved the tab
+    /// stop onto the thumb in the markup and left the element focusing and
+    /// watching the svg, and nothing native said so: a press then focused a
+    /// node that is no longer a stop, the record of the focus was about a
+    /// node that never gained it, and the value said the whole timeline to
+    /// a reader stepping along the track. The markup here is the emitter's
+    /// own, so the two cannot drift apart again without this failing.
+    #[test]
+    fn the_focus_stop_is_the_node_the_markup_gives_the_tab_stop_to() {
+        for slider in [true, false] {
+            let markup = chart_owning(slider);
+            let stops: Vec<&str> = heads(&markup, "g")
+                .into_iter()
+                .chain(heads(&markup, "svg"))
+                .filter(|head| attr(head, "tabindex") == "0")
+                .collect();
+            assert_eq!(stops.len(), 1, "{stops:?}");
+            // the class the element finds that node by, which is what
+            // `capture` reads the two handles out of the markup with
+            let class = match focus_stop(slider) {
+                Stop::Thumb => "playhead",
+                Stop::Svg => "chart",
+            };
+            assert_eq!(attr(stops[0], "class"), class, "{}", stops[0]);
+        }
+        // the two answers are different nodes, so the pass above is not one
+        // shape checked twice
+        assert_ne!(focus_stop(true), focus_stop(false));
+        // and the answer is the decision the element can actually ask: what
+        // the root node it was connected into is
+        assert_eq!(focus_stop(owns_slider(None)), Stop::Thumb);
+        assert_eq!(focus_stop(owns_slider(Some(FILM_TAG))), Stop::Svg);
+    }
+
+    /// The element focuses the node it treats as focusable, judges the
+    /// focus by that same node, and puts the focus back on it after a
+    /// re-layout. No native test can reach a shadow root's active element,
+    /// so this is read off the source, as the other guards in this file
+    /// are.
+    #[test]
+    fn the_element_focuses_and_watches_the_one_node_it_calls_its_stop() {
+        let source = include_str!("chart.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        // `focus_stop` becomes an element in one place, so there is one
+        // answer and not one per caller. The needle is assembled, so this
+        // line is not the occurrence it counts
+        let once = ["focus_", "stop(self.slider)"].concat();
+        assert_eq!(source.matches(&once).count(), 1, "{source}");
+
+        // everything that moves the focus by hand takes the node from
+        // there. The roving moves it along the cues as well, and hands it
+        // back to the stop when Up or Escape leaves them. That each of
+        // them goes through the one mover is
+        // `the_tab_stop_is_an_attribute_that_moves_over_the_whole_set`,
+        // over this same list
+        for mover in [
+            "fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {",
+            "fn on_down(&self, event: &Event) {",
+            "fn roved(&self, key: &str) -> bool {",
+            "fn on_arrival(&self) {",
+        ] {
+            let body = body_of(mover);
+            assert!(body.contains("self.focus_target()"), "{mover}: {body}");
+        }
+        // and everything that judges the focus asks about that same node,
+        // directly or through the one place that does, and names none of
+        // its own
+        for judge in [
+            "fn on_focus(&self, event: &Event, gained: bool) {",
+            "fn stop_has_focus(&self) -> bool {",
+            "fn holds_focus(&self) -> Option<Held> {",
+            "fn roving_at(&self, cues: &[Cue], order: &[usize]) -> Option<Roving> {",
+        ] {
+            let body = body_of(judge);
+            assert!(
+                body.contains("self.focus_target()") || body.contains("self.stop_has_focus()"),
+                "{judge}: {body}"
+            );
+            for own in ["playhead", "dom.svg", "self.slider"] {
+                assert!(!body.contains(own), "{judge} names {own}: {body}");
+            }
+        }
+
+        // a re-layout takes the record from the tree and never from a
+        // constant: it had put the focus back a moment earlier, and a
+        // record saying otherwise would tell a reader still on the thumb
+        // the whole timeline again on the next tick
+        let capture = body_of("fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {");
+        assert!(
+            capture.contains("self.focused.set(self.stop_has_focus())"),
+            "{capture}"
+        );
+        for constant in ["focused.set(false)", "focused.set(true)"] {
+            assert!(!capture.contains(constant), "{capture}");
+        }
+        // and every caller asks the tree before the markup goes, which is
+        // the only moment it can still answer: a browser removing the
+        // focused node fires `focusout` and empties the root's active
+        // element on its way out
+        for caller in [
+            "fn render(&self) {",
+            "fn keep(&self, width: f64) -> bool {",
+            "fn relayout(&self) {",
+        ] {
+            let body = body_of(caller);
+            let asked = body.find("self.holds_focus()").expect(caller);
+            let captured = body.find("self.capture(").expect(caller);
+            assert!(asked < captured, "{caller}: {body}");
+            for swap in ["set_inner_html", "set_outer_html", ".remove()"] {
+                if let Some(at) = body.find(swap) {
+                    assert!(asked < at, "{caller} asks after {swap}: {body}");
+                }
+            }
+        }
+    }
+
+    /// A re-layout puts the focus back where it was, and where it was is
+    /// the whole roving set and not the tab stop alone.
+    ///
+    /// The markup goes on a container width change, a font load and a
+    /// window resize, and every node in it with it. The stop is one node
+    /// whatever the markup, so it needs no more than saying so; a cue is
+    /// one of many and is remembered by what its own rect says it stands
+    /// for. That pair has to survive the redraw, which is what this pins:
+    /// the same block at three widths writes the same cues with the same
+    /// stamps, while every coordinate in the drawing moves.
+    #[test]
+    fn a_relayout_finds_the_cue_it_took_the_focus_from() {
+        let d = data();
+        let cues = |width: f64| -> Vec<(String, String, String)> {
+            let svg = svg_of(
+                &d.to_spec(),
+                &aria_of(&d, true),
+                Layout::sized(width, width / DEFAULT_RATIO, d.end()),
+                "chart",
+                BY_SITE,
+            );
+            heads(&svg, "rect")
+                .into_iter()
+                .filter(|head| attr(head, "part") == "target")
+                .map(|head| {
+                    (
+                        attr(head, "data-cue"),
+                        attr(head, "data-t"),
+                        attr(head, "x"),
+                    )
+                })
+                .collect()
+        };
+        let wide = cues(DEFAULT_WIDTH);
+        // the block draws a mark and a chapter, so both kinds are here and
+        // the pair really does have to tell them apart
+        assert_eq!(wide.len(), 2, "{wide:?}");
+        assert_eq!(wide[0].0, "mark");
+        assert_eq!(wide[1].0, "chapter");
+        for width in [NARROW_WIDTH, 900.0] {
+            let drawn = cues(width);
+            let pairs = |c: &[(String, String, String)]| -> Vec<(String, String)> {
+                c.iter().map(|(k, t, _)| (k.clone(), t.clone())).collect()
+            };
+            assert_eq!(pairs(&drawn), pairs(&wide), "at {width}");
+            // and the drawing really was laid out again, so the pair is
+            // not steady because nothing moved
+            assert_ne!(drawn[0].2, wide[0].2, "at {width}");
+        }
+
+        // the element asks the tree for the whole set before the markup
+        // goes, and looks the pair up in the markup that replaces it,
+        // falling back to the stop where the cue is gone from the data too
+        let source = include_str!("chart.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let held = body_of("fn holds_focus(&self) -> Option<Held> {");
+        assert!(held.contains("Held::Stop"), "{held}");
+        assert!(held.contains("Held::Cue("), "{held}");
+        assert!(held.contains("self.cues()"), "{held}");
+        let capture = body_of("fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {");
+        assert!(capture.contains("cue.kind == kind"), "{capture}");
+        assert!(capture.contains("cue.stamp == stamp"), "{capture}");
+        assert!(
+            capture.contains("or_else(|| self.focus_target())"),
+            "{capture}"
+        );
+    }
+
+    /// Decision 18's "at once": a committed seek says the new time in the
+    /// frame the key or the release was handled in, and not in the
+    /// animation frame that moves the drawing after it. The debounce is
+    /// for the clock's own ticks ([`valuetext_due`]) and never for a
+    /// gesture, and a value one frame late is a value the reader hears
+    /// after the seek they made.
+    #[test]
+    fn a_committed_seek_says_the_new_time_before_the_frame_that_draws_it() {
+        let source = include_str!("chart.rs");
+        let act = source
+            .split_once("fn act(&self, intent: Intent) {")
+            .expect("the act")
+            .1;
+        let act = act.split_once("\n    }").expect("it ends").0;
+        // the film answers where it stands, so the words go in after the
+        // seek is emitted and before `act` returns
+        let emit = act
+            .find("emit_time(SEEK_EVENT")
+            .expect("the seek is emitted");
+        let write = act
+            .find("self.write_value(")
+            .expect("act must say the new time itself");
+        assert!(emit < write, "{act}");
+        // what is said is the film's answer and not the time asked for: the
+        // clock is the film's, and a value that named the request would
+        // disagree with the readout beside it
+        assert!(act.contains("self.live.borrow().time"), "{act}");
+        // and the write takes the flag the animation frame reads, so one
+        // seek is not announced twice
+        assert!(act.contains("self.value_at_once.replace(false)"), "{act}");
+    }
+
+    /// Decision 18's commit message, and the order that decides whether a
+    /// reader hears it.
+    ///
+    /// A seek made while the film plays pauses it. The film's pause
+    /// renders, and rendering dispatches a tick with the play flag turned
+    /// over, which this element hears and answers with "Paused" - inside
+    /// the emit, before the emit returns. So a message written before the
+    /// emit is the message that is overwritten, in exactly the case a
+    /// reader seeks most: while watching.
+    ///
+    /// The order is all this can hold from here. That the region's last
+    /// word is the seek and not the pause is a fact about two elements in
+    /// a live document, and only the browser can say it: the check the
+    /// interaction report needs is a seek driven while the film plays,
+    /// reading the region afterwards.
+    #[test]
+    fn a_seek_is_announced_after_the_emit_and_names_the_time_the_clock_reached() {
+        // the time the message names: the clock's own answer where the
+        // emit moved it, and the request where it did not. The two differ
+        // wherever the announced duration outlives the film, which is
+        // where End asks for a time the film cannot reach
+        assert_eq!(seeked_time(3.3, 0.0, 3.0), 3.0);
+        assert_eq!(seeked_time(3.3, 1.0, 1.0), 3.3);
+        // a seek to where the clock already stands is answered by no move
+        // at all, and the time asked for is the time it is on
+        assert_eq!(seeked_time(2.0, 2.0, 2.0), 2.0);
+        assert_eq!(seeked_time(0.0, 1.5, 0.0), 0.0);
+
+        let source = include_str!("chart.rs");
+        let act = source
+            .split_once("fn act(&self, intent: Intent) {")
+            .expect("the act")
+            .1;
+        let act = act.split_once("\n    }").expect("it ends").0;
+        let emit = act
+            .find("emit_time(SEEK_EVENT")
+            .expect("the seek is emitted");
+        let said = act.find("Said::Seeked").expect("the seek is announced");
+        assert!(
+            emit < said,
+            "the seek is announced before the emit that can overwrite it: {act}"
+        );
+        // and what it names is the decision above and not the request
+        assert!(act.contains("seeked_time("), "{act}");
+        assert!(
+            !act.contains("message(Said::Seeked, t,"),
+            "the message names the time asked for: {act}"
+        );
+    }
+
+    /// Decision 18's status region: in the shadow root from the first
+    /// render, empty, and never made when a message arrives. A live region
+    /// created to hold a message is not observed changing, so nothing is
+    /// announced at all.
+    #[test]
+    fn the_status_region_ships_empty_in_every_render_and_is_never_assertive() {
+        for markup in [one_chart(), chart_owning(false), built().shadow] {
+            assert_eq!(markup.matches(STATUS).count(), 1, "{markup}");
+            assert_eq!(markup.matches("role=\"status\"").count(), 1, "{markup}");
+            // it ships empty: the region is the tree the message lands in,
+            // not the message
+            assert!(markup.contains("aria-live=\"polite\"></div>"), "{markup}");
+            // one region for a pre-render's two charts as much as for one
+            assert_eq!(markup.matches("aria-live").count(), 1, "{markup}");
+            // and nothing here interrupts a reader
+            assert!(!markup.contains("assertive"), "{markup}");
+            assert!(!markup.contains("aria-atomic"), "{markup}");
+            // after the svg and before the table, where decision 15 puts it
+            let at = markup.find(STATUS).expect("the region");
+            assert!(
+                at > markup.find("</figure>").expect("the figure"),
+                "{markup}"
+            );
+            assert!(at < markup.find("<details").expect("the table"), "{markup}");
+        }
+        // it is said, not read: the region is out of sight, as the film's
+        // own is
+        let css = stylesheet(DEFAULT_RATIO);
+        assert!(
+            css.contains(
+                ".live { position: absolute; width: 1px; height: 1px; overflow: hidden; \
+                 clip: rect(0 0 0 0); white-space: nowrap; }"
+            ),
+            "{css}"
+        );
+    }
+
+    /// A time as a listener hears it (decision 18). The tenth is kept
+    /// because this chart is drawn for films of a few seconds, where whole
+    /// seconds would give every position on the track the same words; over
+    /// a minute it falls out on its own, since a minute of film is not
+    /// sampled that finely.
+    #[test]
+    fn a_time_is_said_in_words_and_keeps_the_tenth_a_short_film_needs() {
+        // decision 18's own example, and the total beside it
+        assert_eq!(in_words(92.0), "1 minute 32 seconds");
+        assert_eq!(in_words(243.0), "4 minutes 3 seconds");
+        // the singular is said as a singular, at either scale
+        assert_eq!(in_words(1.0), "1 second");
+        assert_eq!(in_words(61.0), "1 minute 1 second");
+        assert_eq!(in_words(60.0), "1 minute");
+        assert_eq!(in_words(120.0), "2 minutes");
+        // a whole minute says no seconds at all, and zero says seconds
+        assert_eq!(in_words(0.0), "0 seconds");
+        // the tenth the chart's own films need
+        assert_eq!(in_words(3.3), "3.3 seconds");
+        assert_eq!(in_words(0.1), "0.1 seconds");
+        assert_eq!(in_words(92.5), "1 minute 32.5 seconds");
+        // rounded to the tenth, and across the minute with it
+        assert_eq!(in_words(3.34), "3.3 seconds");
+        assert_eq!(in_words(59.97), "1 minute");
+        // and a clock that ran below zero is still a time
+        assert_eq!(in_words(-1.0), "0 seconds");
+    }
+
+    /// The four things the status region says, and no fifth: a peek and a
+    /// seek being aimed say nothing at all (decision 18).
+    #[test]
+    fn each_thing_the_status_region_says_has_its_own_words() {
+        assert_eq!(
+            message(Said::Seeked, 92.0, "Boot"),
+            "Seeked to 1 minute 32 seconds, chapter Boot"
+        );
+        // a block that names no chapter leaves the clause out rather than
+        // saying an empty name
+        assert_eq!(
+            message(Said::Seeked, 92.0, ""),
+            "Seeked to 1 minute 32 seconds"
+        );
+        // play and pause say what happened and no more: where the clock is
+        // stands in the thumb's own value
+        assert_eq!(message(Said::Playing, 92.0, "Boot"), "Playing");
+        assert_eq!(message(Said::Paused, 92.0, "Boot"), "Paused");
+        // the chapter message is the context response, a few words
+        assert_eq!(message(Said::Chapter, 92.0, "Boot"), "Chapter Boot");
+        assert_eq!(
+            message(Said::Chapter, 92.0, ""),
+            "Chapter at 1 minute 32 seconds"
+        );
+        // all four differ, so no two of them are the same announcement
+        let all = [Said::Seeked, Said::Playing, Said::Paused, Said::Chapter];
+        let said: std::collections::BTreeSet<String> = all
+            .iter()
+            .map(|said| message(*said, 92.0, "Boot"))
+            .collect();
+        assert_eq!(said.len(), all.len(), "{said:?}");
+        // and none of them is about a preview
+        for words in said {
+            for never in ["peek", "pending", "aiming", "preview"] {
+                assert!(!words.to_lowercase().contains(never), "{words}");
+            }
+        }
+    }
+
+    /// The thumb's `aria-valuetext`: the time in words with the chapter
+    /// appended, and the whole timeline and the frame index only where the
+    /// thumb has not got the focus (decision 18). A listener stepping along
+    /// the track is told the total once, when focus arrives, and not again
+    /// on every step.
+    #[test]
+    fn the_valuetext_carries_the_total_and_the_frame_only_off_focus() {
+        let whole = Whole {
+            duration: 243.0,
+            frame: 12,
+            frames: 40,
+        };
+        assert_eq!(
+            valuetext(92.0, "Boot", Some(whole)),
+            "1 minute 32 seconds of 4 minutes 3 seconds, frame 12 of 40, chapter Boot"
+        );
+        assert_eq!(
+            valuetext(92.0, "Boot", None),
+            "1 minute 32 seconds, chapter Boot"
+        );
+        // the chapter clause goes where the block names none, at either
+        // length
+        assert_eq!(valuetext(92.0, "", None), "1 minute 32 seconds");
+        assert_eq!(
+            valuetext(92.0, "", Some(whole)),
+            "1 minute 32 seconds of 4 minutes 3 seconds, frame 12 of 40"
+        );
+        // and a chart with nothing sampled names no frame, having none
+        assert_eq!(
+            valuetext(
+                0.0,
+                "flight",
+                Some(Whole {
+                    duration: 3.3,
+                    frame: 1,
+                    frames: 0
+                })
+            ),
+            "0 seconds of 3.3 seconds, chapter flight"
+        );
+    }
+
+    /// A chapter boundary is crossed once, on the tick that passes it, and
+    /// only going forwards: that is what makes the status message
+    /// rate-limited to chapters and never one per sample (decision 18).
+    #[test]
+    fn a_chapter_is_entered_once_going_forwards_and_never_by_standing_still() {
+        let starts = [0.0, 1.65, 2.36];
+        // the tick that steps over the boundary, and the one that lands on
+        // it exactly
+        assert_eq!(chapter_crossed(1.0, 2.0, &starts), Some(1));
+        assert_eq!(chapter_crossed(1.0, 1.65, &starts), Some(1));
+        // and never again after that: a boundary at `prev` was entered on
+        // the tick before, which is the rate limit itself
+        assert_eq!(chapter_crossed(1.65, 2.0, &starts), None);
+        assert_eq!(chapter_crossed(1.7, 2.0, &starts), None);
+        // a tick that steps over two names the chapter it ends in
+        assert_eq!(chapter_crossed(0.5, 3.0, &starts), Some(2));
+        // the first chapter starts the axis: a clock at zero is already in
+        // it and does not enter it
+        assert_eq!(chapter_crossed(0.0, 0.5, &starts), None);
+        // standing still crosses nothing, however long the film plays on
+        // one sample
+        assert_eq!(chapter_crossed(2.0, 2.0, &starts), None);
+        // and neither does running back: a seek is announced as a seek
+        assert_eq!(chapter_crossed(2.0, 1.0, &starts), None);
+        assert_eq!(chapter_crossed(3.0, 0.0, &starts), None);
+        // a film with no chapters announces none
+        assert_eq!(chapter_crossed(0.0, 9.0, &[]), None);
+    }
+
+    /// A clock-driven value waits for the focus and for the debounce; a
+    /// gesture does not wait at all (decision 18).
+    #[test]
+    fn a_clock_driven_value_waits_for_the_focus_and_for_the_debounce() {
+        assert_eq!(VALUETEXT_WAIT, 0.3);
+        // focused, and the wait is over
+        assert!(valuetext_due(1.0, 1.3, true));
+        assert!(valuetext_due(1.0, 9.0, true));
+        // focused, and it is not
+        assert!(!valuetext_due(1.0, 1.29, true));
+        assert!(!valuetext_due(1.0, 1.0, true));
+        // the wait being over is not enough: an unfocused thumb is not
+        // being spoken, so a playing film writes nothing onto it
+        assert!(!valuetext_due(1.0, 9.0, false));
+        assert!(!valuetext_due(1.0, 1.3, false));
+        // and the first write of all is due as soon as the thumb is
+        // focused, having no last write to wait behind
+        assert!(valuetext_due(f64::NEG_INFINITY, 0.0, true));
+    }
+
+    /// Decision 17's answer: a keyboard seek commits
+    /// immediately and never enters the pending state. Three things hold
+    /// it. No key previews, and the preview is what a pending seek is; a
+    /// pending phase can only come out of a press, which a key has not
+    /// made; and a seek ends whatever press is in flight before it emits,
+    /// so even a key struck mid-drag commits rather than aiming.
+    #[test]
+    fn a_key_seek_commits_at_once_and_never_enters_the_pending_state() {
+        assert!(ends_press(Intent::Seek(1.0)));
+        assert!(ends_press(Intent::Cancel));
+        assert!(!ends_press(Intent::Peek(Some(1.0))));
+        assert!(!ends_press(Intent::Peek(None)));
+        assert!(!ends_press(Intent::Toggle));
+
+        // no key the element answers previews anything
+        let times = key_times();
+        let ctx = Keys {
+            times: &times,
+            duration: 3.3,
+            chapters: &[0.0, 1.65],
+            step: None,
+        };
+        let mut seeks = 0;
+        for (keys, _) in KEY_LINE {
+            for key in *keys {
+                for shift in [false, true] {
+                    for chapter_mod in [false, true] {
+                        let Some(intent) = key_intent(key, shift, chapter_mod, 1.0, &ctx) else {
+                            continue;
+                        };
+                        assert!(
+                            !matches!(intent, Intent::Peek(_)),
+                            "`{key}` previews: {intent:?}"
+                        );
+                        if matches!(intent, Intent::Seek(_)) {
+                            seeks += 1;
+                            assert!(ends_press(intent), "`{key}` seeks without committing");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(seeks > 0, "no key seeks at all");
+
+        // and with no press there is no phase to be pending in
+        for x in [-10.0, 0.0, 7.0, 400.0] {
+            for elapsed in [0.0, LONG_PRESS, 10.0] {
+                for coarse in [false, true] {
+                    assert_eq!(pointer_phase(None, x, elapsed, coarse), Phase::Idle);
+                }
+            }
+        }
+
+        // the element asks the rule before it acts on the intent, so the
+        // press is back before the seek is emitted
+        let source = include_str!("chart.rs");
+        let act = source
+            .split_once("fn act(&self, intent: Intent) {")
+            .expect("the act")
+            .1;
+        let act = act.split_once("\n    }").expect("it ends").0;
+        let guard = act
+            .find("ends_press(intent)")
+            .expect("act must ask whether the intent ends the press");
+        let seek = act.find("Intent::Seek(t) =>").expect("the seek arm");
+        assert!(guard < seek, "{act}");
+    }
+
+    /// Every id the element names itself and its description by is in the
+    /// shadow root, once: a reference to a missing id names nothing, and a
+    /// duplicate id makes which of them is named a matter of order.
+    #[test]
+    fn every_id_the_naming_relies_on_is_in_the_shadow_root_exactly_once() {
+        for markup in [one_chart(), built().shadow] {
+            // the host points at these three through its internals
+            for id in [TITLE_ID, SUMMARY_ID, KEYS_ID] {
+                assert_eq!(
+                    markup.matches(&format!("id=\"{id}\"")).count(),
+                    1,
+                    "`{id}` is not in the shadow root exactly once"
+                );
+            }
+            // and every id the markup itself names resolves to one of them
+            let named: Vec<String> = markup
+                .split("aria-labelledby=\"")
+                .skip(1)
+                .chain(markup.split("aria-describedby=\"").skip(1))
+                .map(|rest| rest.split_once('"').expect("a closing quote").0.to_owned())
+                .collect();
+            assert!(!named.is_empty(), "nothing is named at all");
+            for reference in named {
+                for id in reference.split_whitespace() {
+                    assert_eq!(
+                        markup.matches(&format!("id=\"{id}\"")).count(),
+                        1,
+                        "`{id}` is named but is not in the shadow root once"
+                    );
+                }
+            }
+        }
+        // the two the host describes itself by are the summary and the
+        // instructions, in that order
+        assert_eq!(DESCRIBED_BY, [SUMMARY_ID, KEYS_ID]);
+    }
+
+    /// Decision 15's instructions line, held to the keys the element really
+    /// answers: every key named here is one `key_intent` acts on, and every
+    /// key it acts on is named here. The alternative is two lists, and a
+    /// reader told to press a key the chart refuses.
+    #[test]
+    fn the_instructions_line_names_every_key_the_element_answers_and_no_other() {
+        let line = instructions();
+        assert!(line.starts_with("Keys: ") && line.ends_with('.'), "{line}");
+        for (_, words) in KEY_LINE {
+            assert!(line.contains(words), "{words} is not in `{line}`");
+        }
+        // the line is in the markup as visible text, not a hidden
+        // description
+        let markup = one_chart();
+        assert!(
+            markup.contains(&format!("<p class=\"keys\" id=\"{KEYS_ID}\">{line}</p>")),
+            "{markup}"
+        );
+        assert!(!markup.contains("aria-hidden=\"true\"><p"), "{markup}");
+
+        let times = key_times();
+        let ctx = Keys {
+            times: &times,
+            duration: KEY_END,
+            chapters: &KEY_CHAPTERS,
+            step: None,
+        };
+        // every key a keyboard can send, tried with and without each
+        // modifier the table reads
+        let mut answered: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let named = [
+            "ArrowLeft",
+            "ArrowRight",
+            "ArrowUp",
+            "ArrowDown",
+            "PageUp",
+            "PageDown",
+            "Home",
+            "End",
+            "Escape",
+            "Enter",
+            "Tab",
+            "Backspace",
+            "Delete",
+            "Insert",
+            "F1",
+            "Shift",
+            "Control",
+            "Alt",
+            "Meta",
+            "Dead",
+        ];
+        let printable: Vec<String> = (0x20u8..0x7f).map(|c| (c as char).to_string()).collect();
+        for key in printable.iter().map(String::as_str).chain(named) {
+            for (shift, chapter) in [(false, false), (true, false), (false, true), (true, true)] {
+                if key_intent(key, shift, chapter, 1.0, &ctx).is_some() {
+                    answered.insert(key.to_owned());
+                }
+            }
+        }
+        let spelled: std::collections::BTreeSet<String> = KEY_LINE
+            .iter()
+            .flat_map(|(keys, _)| keys.iter().map(|k| (*k).to_owned()))
+            .collect();
+        assert_eq!(
+            answered, spelled,
+            "the keys the chart answers and the keys the line names differ"
+        );
+        // the probe really did reach the whole table, so this can never
+        // pass over an empty set
+        assert!(answered.len() > 20, "{answered:?}");
+
+        // and the roving's own keys, which the key table never sees: the
+        // same probe through the function that answers them. The entry
+        // gesture is the one a reader cannot guess, so the line naming it
+        // is held to the code the same way the thumb's keys are
+        let mut roving: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for key in printable.iter().map(String::as_str).chain(named) {
+            for at in [
+                Roving::Thumb,
+                Roving::Cue(0),
+                Roving::Cue(1),
+                Roving::Cue(2),
+            ] {
+                if roving_key(at, 3, key).is_some() {
+                    roving.insert(key.to_owned());
+                }
+            }
+        }
+        let spelled: std::collections::BTreeSet<String> = ROVE_LINE
+            .iter()
+            .flat_map(|(keys, _)| keys.iter().map(|k| (*k).to_owned()))
+            .collect();
+        assert_eq!(
+            roving, spelled,
+            "the keys the roving answers and the keys the line names differ"
+        );
+        // the way in is named, in the sentence a reader standing on the
+        // thumb is being told about
+        assert!(roving.contains("ArrowDown"), "{roving:?}");
+        assert!(line.contains("Down from the playhead"), "{line}");
     }
 
     #[test]
@@ -2215,7 +4407,51 @@ mod tests {
             "{summary}"
         );
         assert!(summary.contains("values from 0 to 100"), "{summary}");
+        // the range is announced at a hundredth and not as `f64`'s own
+        // Display: a block whose arithmetic left a long tail behind would
+        // be read out a digit at a time
+        let noisy = op_chart::data::parse(
+            r#"{"duration": 1, "series": [{"id": "a", "label": "a"}],
+                "rows": [[0, 0.30000000000000004], [1, 0.7000000000000001]]}"#,
+        )
+        .expect("valid");
+        assert!(
+            summary_of(&noisy).contains("values from 0.3 to 0.7."),
+            "{}",
+            summary_of(&noisy)
+        );
+        assert!(
+            summary_of(&noisy).ends_with(" Overall, a rises from 0.3 to 0.7."),
+            "{}",
+            summary_of(&noisy)
+        );
         assert!(summary.ends_with('.'), "{summary}");
+        // decision 15's takeaway: what the chart shows, which the list of
+        // counts above never says. It is the last sentence, so a reader
+        // who stops at the counts has still heard them
+        assert!(
+            summary.ends_with(
+                " Overall, palette rises from 0 to 100 % and solid thumb rises from 0 to 100 %."
+            ),
+            "{summary}"
+        );
+        // and it reads the samples rather than the domain: a falling
+        // series falls, a flat one holds, and a gap is not an end
+        let shapes = op_chart::data::parse(
+            r#"{"duration": 2, "series": [
+                {"id": "a", "label": "down", "unit": "%"},
+                {"id": "b", "label": "flat"},
+                {"id": "c", "label": "gappy"}
+            ], "rows": [[0, 90, 7, 1], [1, 50, 7, null], [2, 12.5, 7, null]]}"#,
+        )
+        .expect("valid");
+        assert!(
+            summary_of(&shapes).ends_with(
+                " Overall, down falls from 90 to 12.5 %, flat holds at 7 and gappy holds at 1."
+            ),
+            "{}",
+            summary_of(&shapes)
+        );
         // three or more labels read as a sentence, and one is just itself
         assert_eq!(
             title_of(&op_chart::data::parse(
@@ -2233,6 +4469,10 @@ mod tests {
         assert!(summary.contains("no samples"), "{summary}");
         assert!(summary.contains("no chapters"), "{summary}");
         assert!(!summary.contains("values from"), "{summary}");
+        // and no takeaway at all: a series with no samples has no shape to
+        // report, and an invented one is worse than none
+        assert!(!summary.contains("Overall"), "{summary}");
+        assert!(summary.ends_with("no chapters."), "{summary}");
     }
 
     /// The text of every cell in a table row.
@@ -2264,6 +4504,7 @@ mod tests {
             None,
             DEFAULT_RATIO,
             BY_SITE,
+            true,
         );
         let head = markup
             .split("<thead>")
@@ -2315,6 +4556,7 @@ mod tests {
             None,
             DEFAULT_RATIO,
             BY_SITE,
+            true,
         );
         for raw in ["<img", "</span>", "<b>"] {
             assert!(!markup.contains(raw), "{raw} survived into the markup");
@@ -2356,19 +4598,50 @@ mod tests {
             "the narrow chart, the width it takes over at, the 10 px floor \
              and the wide chart must be in that order: {widths:?}"
         );
+        // below the drop width the chapter ticks go, and their buttons go
+        // with them: an invisible chapter with a name and a 24 px target
+        // is a control a reader can reach and cannot see
         assert!(css.contains(&format!(
-            "@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} }}"
+            "@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} .chart .targets g[data-cue=\"chapter\"] {{ display: none; }} }}"
         )));
-        // the chart is a tab stop now, so it carries the site's focus
-        // token, and only where a ring belongs: a press must not ring the
-        // chart it is scrubbing
-        assert!(css.contains("svg.chart:focus { outline: none; }"), "{css}");
+        // the thumb is the tab stop and its ring is a rect in the drawing,
+        // shown on `:focus-visible` alone: a press must not ring the chart
+        // it is scrubbing. `currentColor` over the focus token, so a
+        // forced palette carries it without a mapping of its own
+        assert!(
+            css.contains(".chart .playhead:focus { outline: none; }"),
+            "{css}"
+        );
         assert!(
             css.contains(
-                "svg.chart:focus-visible { outline: 2px solid var(--op-focus); outline-offset: 2px; }"
+                ".chart .playhead:focus-visible .head-ring { color: var(--op-focus); stroke: currentColor; stroke-width: 2; }"
             ),
             "{css}"
         );
+        // decision 20 asks for the ring and a stronger stroke on the thumb
+        // itself, which is a wider line under a fixed 1.5
+        assert!(
+            css.contains(".chart .playhead:focus-visible .head { stroke-width: 2.5; }"),
+            "{css}"
+        );
+        // and the cue buttons take the same treatment: the site's ring
+        // turned off, because a `<g>` carrying an outline is drawn in user
+        // space, and an in-SVG indicator in its place, with hover and
+        // focus painting the same stroke off the same `color` so focus
+        // mirrors hover
+        assert_eq!(CUE_RULE, format!(".chart {CUE_BUTTONS}"));
+        for rule in [
+            format!("{CUE_RULE}:focus {{ outline: none; }}"),
+            format!("{CUE_RULE}:hover {{ color: var(--op-accent); }}"),
+            format!("{CUE_RULE}:focus-visible {{ color: var(--op-focus); }}"),
+            format!(
+                "{CUE_RULE}:hover .target, {CUE_RULE}:focus-visible .target \
+                 {{ stroke: currentColor; stroke-width: 2; }}"
+            )
+            .replace("                 ", ""),
+        ] {
+            assert!(css.contains(&rule), "`{rule}` is not in {css}");
+        }
         // and the page keeps its vertical scroll over a chart that reads
         // horizontal drags
         assert!(css.contains("touch-action: pan-y;"), "{css}");
@@ -2560,9 +4833,16 @@ mod tests {
     }
 
     /// A hit target is hit, never seen. It carries one class, `target`,
-    /// and no rule in the stylesheet names it: the defect this pins is a
-    /// target classed with the cue it stands for, which is the class the
-    /// drawn rule or tick is painted by, so every target drew a dashed box.
+    /// and the only rules in either stylesheet that name it say which
+    /// state they answer: the defect this pins is a target classed with
+    /// the cue it stands for, which is the class the drawn rule or tick is
+    /// painted by, so every target drew a dashed box, all the time.
+    ///
+    /// Decision 20's hover and focus styling is the one thing a target is
+    /// allowed to show, because a cue's button carries no geometry of its
+    /// own and the rect inside it is the only shape there is to indicate.
+    /// A rule that reaches a target and says nothing about hover or focus
+    /// paints it at rest, which is the defect either way round.
     #[test]
     fn no_rule_in_the_stylesheet_can_paint_a_pointer_target() {
         let rules: Vec<(String, String, String)> =
@@ -2602,14 +4882,27 @@ mod tests {
             .collect();
         // the block draws a mark and a chapter, so both kinds are here
         assert_eq!(targets.len(), 2, "{targets:?}");
+        let mut indicated = 0usize;
         for class in &targets {
             for (at, selector, body) in &rules {
+                if !could_reach(selector, class) {
+                    continue;
+                }
                 assert!(
-                    !could_reach(selector, class),
-                    "the rule `{at} {selector} {{{body}}}` reaches a hit target classed `{class}`"
+                    selector.contains(":hover") || selector.contains(":focus-visible"),
+                    "the rule `{at} {selector} {{{body}}}` paints a hit target \
+                     classed `{class}` at rest"
                 );
+                indicated += 1;
             }
         }
+        // and the indicator really is written, so the exception above is
+        // not a hole kept open for nothing: decision 20's last clause is
+        // the reason a target may be reached at all
+        assert!(
+            indicated > 0,
+            "no rule shows a cue's target on hover or focus"
+        );
     }
 
     /// The positive counterpart: a class the emitter writes and no rule
@@ -2921,6 +5214,7 @@ mod tests {
             times: &times,
             duration: KEY_END,
             chapters: &KEY_CHAPTERS,
+            step: None,
         };
         // the middle of the timeline, on the thirtieth sample and inside
         // the second chapter
@@ -2983,6 +5277,7 @@ mod tests {
             times: &[],
             duration: KEY_END,
             chapters: &KEY_CHAPTERS,
+            step: None,
         };
         for key in [",", ".", "ArrowLeft", "ArrowRight", "j", "l"] {
             assert_eq!(key_intent(key, false, false, at, &bare), None, "{key}");
@@ -2998,6 +5293,7 @@ mod tests {
             times: &times,
             duration: KEY_END,
             chapters: &KEY_CHAPTERS,
+            step: None,
         };
         // at the start every backward key holds at zero
         for key in [",", "ArrowLeft", "j", "Home", "PageUp", "0"] {
@@ -3025,6 +5321,7 @@ mod tests {
             times: &times,
             duration: KEY_END,
             chapters: &KEY_CHAPTERS,
+            step: None,
         };
         // inside the first chapter: forward to the second, back to the
         // start of the axis, since there is no chapter before this one
@@ -3044,6 +5341,7 @@ mod tests {
             times: &times,
             duration: KEY_END,
             chapters: &KEY_CHAPTERS[..1],
+            step: None,
         };
         seeks(key_intent("PageDown", false, false, 1.5, &one), KEY_END);
         seeks(key_intent("PageUp", false, false, 1.5, &one), 0.0);
@@ -3070,6 +5368,7 @@ mod tests {
             times: &times,
             duration,
             chapters: &[],
+            step: None,
         };
         // End lands on the announced maximum, and a digit is a tenth of it
         seeks(key_intent("End", false, false, 0.0, &k), 5.0);
@@ -3093,6 +5392,950 @@ mod tests {
         .expect("the block is valid");
         assert_eq!(key_duration(&past, past.end()), 9.0);
         assert_eq!(key_duration(&past, past.end()), past.to_spec().duration);
+    }
+
+    /// Decision 17's `step` attribute: a chart may state what a key is
+    /// worth, in seconds, and it overrides the sample step and nothing
+    /// else. The rows here are deliberately irregular, so that no sample
+    /// step is the stated one by accident and every answer below tells the
+    /// two apart.
+    #[test]
+    fn the_step_attribute_overrides_the_sample_step_and_no_other_key() {
+        // the attribute as the element reads it: seconds, positive, finite
+        assert_eq!(step_attr(Some("0.25")), Some(0.25));
+        assert_eq!(step_attr(Some("  2  ")), Some(2.0));
+        assert_eq!(step_attr(Some("1e-1")), Some(0.1));
+        // and nonsense is ignored rather than carried into the arithmetic:
+        // a step of zero would leave every key seeking where it already
+        // is, and a negative one would send the arrows backwards
+        for nonsense in [
+            None,
+            Some(""),
+            Some("   "),
+            Some("half a second"),
+            Some("0"),
+            Some("-0.5"),
+            Some("inf"),
+            Some("NaN"),
+            Some("0,25"),
+            Some("0.25s"),
+        ] {
+            assert_eq!(step_attr(nonsense), None, "{nonsense:?}");
+        }
+
+        let times = [0.0, 0.05, 0.3, 9.0, 10.0, 10.5, 24.0, 30.0];
+        let chapters = [0.0, 12.0];
+        let plain = Keys {
+            times: &times,
+            duration: 30.0,
+            chapters: &chapters,
+            step: None,
+        };
+        let stepped = Keys {
+            step: Some(0.25),
+            ..plain
+        };
+        let at = 10.0;
+        // the sample step, which walks the rows however far apart they are
+        for (key, want) in [
+            (",", 9.0),
+            (".", 10.5),
+            ("ArrowLeft", 0.0),
+            ("ArrowRight", 30.0),
+            ("j", 0.0),
+            ("l", 30.0),
+        ] {
+            seeks(key_intent(key, false, false, at, &plain), want);
+        }
+        // and the stated step, which counts in seconds: one, five and ten
+        // of them, as the samples were one, five and ten rows
+        for (key, want) in [
+            (",", 9.75),
+            (".", 10.25),
+            ("ArrowLeft", 8.75),
+            ("ArrowRight", 11.25),
+            ("j", 7.5),
+            ("l", 12.5),
+        ] {
+            seeks(key_intent(key, false, false, at, &stepped), want);
+        }
+        // every other key is untouched: the chapter keys and their alias
+        // walk the chapters, Home and End and the digits are fractions of
+        // the announced duration, and Shift with an arrow was a second
+        // before the attribute and is a second after it
+        for (key, shift, chapter_mod) in [
+            ("PageUp", false, false),
+            ("PageDown", false, false),
+            ("ArrowLeft", false, true),
+            ("ArrowRight", false, true),
+            ("ArrowLeft", true, false),
+            ("ArrowRight", true, false),
+            ("Home", false, false),
+            ("End", false, false),
+            ("0", false, false),
+            ("5", false, false),
+            ("9", false, false),
+            (" ", false, false),
+            ("Escape", false, false),
+        ] {
+            assert_eq!(
+                key_intent(key, shift, chapter_mod, at, &stepped),
+                key_intent(key, shift, chapter_mod, at, &plain),
+                "{key} answered differently with a step set"
+            );
+        }
+        // the stated step is held inside the timeline like every other key
+        seeks(key_intent("l", false, false, 29.0, &stepped), 30.0);
+        seeks(key_intent(",", false, false, 0.1, &stepped), 0.0);
+        // a chart with no rows at all can still be driven once it says
+        // what a key is worth: without the attribute there is no sample to
+        // step onto and the key is refused
+        let bare = Keys {
+            times: &[],
+            duration: 30.0,
+            chapters: &chapters,
+            step: None,
+        };
+        assert_eq!(key_intent(".", false, false, at, &bare), None);
+        seeks(
+            key_intent(
+                ".",
+                false,
+                false,
+                at,
+                &Keys {
+                    step: Some(0.25),
+                    ..bare
+                },
+            ),
+            10.25,
+        );
+        // and a nonsense attribute leaves the whole table exactly as it
+        // was, which is the point of ignoring it rather than crashing
+        let ignored = Keys {
+            step: step_attr(Some("half a second")),
+            ..plain
+        };
+        for key in [",", ".", "ArrowLeft", "ArrowRight", "j", "l", "Home", "End"] {
+            assert_eq!(
+                key_intent(key, false, false, at, &ignored),
+                key_intent(key, false, false, at, &plain),
+                "{key}"
+            );
+        }
+    }
+
+    /// The attribute is on the element's own surface, so a page may write
+    /// it: op-pages builds its vocabulary from the observed attributes, and
+    /// an attribute the element does not observe is a lowering error.
+    #[test]
+    fn the_step_attribute_is_one_a_page_may_write() {
+        assert!(
+            DEFINITION.observed_attributes.contains(&"step"),
+            "{:?}",
+            DEFINITION.observed_attributes
+        );
+        let page = |attrs: &str| {
+            format!(
+                "<opt:body xmlns:opt=\"https://www.openpower.tools/ns/opt\">\
+                 <opt:chart for=\"f\"{attrs}>\
+                 <script type=\"application/json\">{BLOCK}</script>\
+                 </opt:chart></opt:body>"
+            )
+        };
+        let html = op_pages::lower(&page(" step=\"0.25\"")).expect("a page with a step lowers");
+        assert!(html.contains("step=\"0.25\""), "{html}");
+        // and the vocabulary really is the gate this passed through
+        let errors = op_pages::lower(&page(" pace=\"0.25\"")).expect_err("an unknown attribute");
+        assert!(errors.iter().any(|e| e.contains("\"pace\"")), "{errors:?}");
+    }
+
+    /// Decision 17's roving tabindex, as the decision behind it: where the
+    /// focus goes from where it stands, given the key. One tab stop moves
+    /// over the thumb and the cues together, which is what the decision
+    /// says and what the criterion reads: a set of arrow-reachable buttons
+    /// with no way in and no way to press them is not a roving tabindex,
+    /// it is a fixed stop beside some unreachable markup.
+    #[test]
+    fn the_roving_moves_one_stop_between_the_thumb_and_the_cues() {
+        use Roved::{Press, To};
+        use Roving::{Cue, Thumb};
+        // in, and only by the key the instructions line names: the entry
+        // gesture decision 17 leaves unstated is the whole reason the cues
+        // were reachable by nothing at all
+        assert_eq!(roving_key(Thumb, 3, "ArrowDown"), Some(To(Cue(0))));
+        // and there is nothing to step into where the block draws no cue
+        assert_eq!(roving_key(Thumb, 0, "ArrowDown"), None);
+        // along the timeline
+        assert_eq!(roving_key(Cue(0), 3, "ArrowRight"), Some(To(Cue(1))));
+        assert_eq!(roving_key(Cue(1), 3, "ArrowRight"), Some(To(Cue(2))));
+        assert_eq!(roving_key(Cue(2), 3, "ArrowLeft"), Some(To(Cue(1))));
+        assert_eq!(roving_key(Cue(1), 3, "ArrowLeft"), Some(To(Cue(0))));
+        // both ends hold rather than wrapping: the focus not moving is how
+        // the reader is told this is the last cue
+        assert_eq!(roving_key(Cue(2), 3, "ArrowRight"), None);
+        assert_eq!(roving_key(Cue(0), 3, "ArrowLeft"), None);
+        // one cue is both ends at once
+        assert_eq!(roving_key(Cue(0), 1, "ArrowRight"), None);
+        assert_eq!(roving_key(Cue(0), 1, "ArrowLeft"), None);
+        // out, by either key a reader who stepped in will try
+        assert_eq!(roving_key(Cue(1), 3, "ArrowUp"), Some(To(Thumb)));
+        assert_eq!(roving_key(Cue(1), 3, "Escape"), Some(To(Thumb)));
+        // and pressed: a `role="button"` answers Enter and Space or it is
+        // not a button. Space fell through to the key table before this
+        // and played the film, which is the one thing on the chart a press
+        // on a chapter must not do
+        assert_eq!(roving_key(Cue(1), 3, "Enter"), Some(Press));
+        assert_eq!(roving_key(Cue(1), 3, " "), Some(Press));
+        // the thumb keeps its own table: Enter is nothing there, Space
+        // plays, and Escape drops a seek being aimed
+        for key in ["Enter", " ", "Escape", "ArrowLeft", "ArrowRight", "k", "."] {
+            assert_eq!(roving_key(Thumb, 3, key), None, "{key} on the thumb");
+        }
+        // every key that must leave the focus where it is, on a cue
+        for key in [
+            "Tab", "Home", "End", "PageUp", "PageDown", "k", "j", "l", ",", ".", "0", "9",
+        ] {
+            assert_eq!(roving_key(Cue(1), 3, key), None, "{key} moved the focus");
+        }
+        // Tab reaches the key table too, and is refused there as well, so
+        // nothing in the element ever prevents its default
+        assert_eq!(
+            key_intent(
+                "Tab",
+                false,
+                false,
+                1.0,
+                &Keys {
+                    times: &[0.0, 1.0, 2.0],
+                    duration: 2.0,
+                    chapters: &[0.0],
+                    step: None,
+                }
+            ),
+            None
+        );
+
+        // the order the roving moves over is the timeline and not the
+        // markup: the emitter writes every mark and then every chapter
+        // tick, so document order stops being time order as soon as a
+        // chart has both
+        assert_eq!(in_time_order(&[0.6, 2.1, 1.2]), vec![0, 2, 1]);
+        assert_eq!(in_time_order(&[3.0, 2.0, 1.0]), vec![2, 1, 0]);
+        // equal times keep the order they were written in
+        assert_eq!(in_time_order(&[1.0, 1.0, 0.0]), vec![2, 0, 1]);
+        assert_eq!(in_time_order(&[]), Vec::<usize>::new());
+
+        // and the wiring asks the roving before the key table, so a key
+        // the roving answers never reaches it
+        let source = include_str!("chart.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let body = body_of("fn on_key(&self, event: &Event)");
+        let roved = ["self.", "roved("].concat();
+        let asked = body.find(&roved).expect("the roving is asked");
+        let table = body.find("key_intent(").expect("the key table is read");
+        assert!(asked < table, "the key table is read before the roving");
+        // and every key it answers leaves by one `true`, so a key cannot
+        // be acted on and handed to the key table as well
+        let body = body_of("fn roved(&self, key: &str) -> bool {");
+        assert_eq!(body.matches("\n        true").count(), 1, "{body}");
+        assert_eq!(body.matches("true").count(), 1, "{body}");
+    }
+
+    /// B2: the roving set is the cues the drawing shows, and the one tab
+    /// stop goes nowhere else.
+    ///
+    /// Below [`DROP_AT`] the container query hides every chapter cue,
+    /// button and all. A roving that counted them anyway walked a
+    /// set larger than the drawing: one ArrowDown from the thumb wrote the
+    /// thumb down to `-1`, wrote the `0` on an invisible chapter and then
+    /// failed to focus it, because focus on a `display: none` node does
+    /// nothing at all. The element was left with no tab stop a reader
+    /// could reach until something else happened to restore one, and on a
+    /// chart of chapters and no marks that is the whole widget gone from
+    /// the keyboard at the width 1.4.10 and 400 % zoom put a keyboard
+    /// reader at.
+    ///
+    /// Both halves of the answer are here: which cues can be reached now,
+    /// and where the stop lands when that set has shrunk under it.
+    #[test]
+    fn the_roving_walks_only_the_cues_the_drawing_shows() {
+        use Roved::To;
+        use Roving::{Cue, Thumb};
+
+        // which cues can be reached now, as the one answer every reader of
+        // the set takes: a mark at every width, a chapter only above the
+        // drop, and the width the rule names belongs to the rule
+        assert!(cue_is_drawn(CHAPTER_CUE, DEFAULT_WIDTH));
+        assert!(cue_is_drawn(CHAPTER_CUE, DROP_AT + 1.0));
+        assert!(!cue_is_drawn(CHAPTER_CUE, DROP_AT));
+        assert!(!cue_is_drawn(CHAPTER_CUE, NARROW_WIDTH));
+        for width in [NARROW_WIDTH, DROP_AT, DROP_AT + 1.0, DEFAULT_WIDTH] {
+            assert!(cue_is_drawn("mark", width), "a mark at {width}");
+        }
+        // and the threshold and the spelling are the stylesheet's own, so
+        // the set cannot drift from the rule that empties it: the rule
+        // that hides a chapter cue is found by what this answer is written
+        // from, and it is the drop query it sits in
+        let hides: Vec<(String, String, String)> = rules_of(&shadow_css())
+            .into_iter()
+            .filter(|(_, selector, _)| selector.contains(&format!("[data-cue=\"{CHAPTER_CUE}\"]")))
+            .collect();
+        assert_eq!(hides.len(), 1, "{hides:?}");
+        let (at, _, body) = &hides[0];
+        assert_eq!(at, &format!("@container (max-width: {DROP_AT}px)"), "{at}");
+        assert_eq!(body.trim(), "display: none;", "{body}");
+
+        // the set really does shrink. The block draws one mark and one
+        // chapter, and below the drop the chapter is not there to be
+        // reached
+        let kinds_of = |block: &str| -> Vec<String> {
+            let d = op_chart::data::parse(block).expect("the block is valid");
+            let svg = svg_of(
+                &d.to_spec(),
+                &aria_of(&d, true),
+                Layout::sized(DEFAULT_WIDTH, DEFAULT_WIDTH / DEFAULT_RATIO, d.end()),
+                "chart",
+                BY_SITE,
+            );
+            heads(&svg, "rect")
+                .into_iter()
+                .filter(|head| attr(head, "part") == "target")
+                .map(|head| attr(head, "data-cue"))
+                .collect()
+        };
+        let kinds = kinds_of(BLOCK);
+        assert_eq!(kinds, ["mark", CHAPTER_CUE]);
+        let shown = |kinds: &[String], width: f64| -> usize {
+            kinds
+                .iter()
+                .filter(|kind| cue_is_drawn(kind, width))
+                .count()
+        };
+        assert_eq!(shown(&kinds, DEFAULT_WIDTH), 2);
+        assert_eq!(shown(&kinds, NARROW_WIDTH), 1);
+
+        // where the stop lands, given that set and the member the caller
+        // asked for. Both ends of it are members
+        assert_eq!(stop_lands(3, Some(0)), Cue(0));
+        assert_eq!(stop_lands(3, Some(2)), Cue(2));
+        // the element's own stop is where nothing was asked for, and it is
+        // all an empty set can answer: a drawing showing no cue has one
+        // node in the tab order and it is the thumb
+        assert_eq!(stop_lands(3, None), Thumb);
+        assert_eq!(stop_lands(0, None), Thumb);
+        assert_eq!(stop_lands(0, Some(0)), Thumb);
+        // and a member the drawing does not have is the thumb as well,
+        // never a `0` written on a node that would refuse the focus
+        assert_eq!(stop_lands(3, Some(3)), Thumb);
+        assert_eq!(stop_lands(1, Some(1)), Thumb);
+
+        // the shrink itself: the reader stands on the chapter at the wide
+        // width, the container narrows, and the stop lands back on the
+        // thumb rather than on the cue that has just gone
+        let chapter = kinds
+            .iter()
+            .position(|kind| kind == CHAPTER_CUE)
+            .expect("the block draws a chapter");
+        assert_eq!(
+            stop_lands(shown(&kinds, DEFAULT_WIDTH), Some(chapter)),
+            Cue(1)
+        );
+        assert_eq!(
+            stop_lands(shown(&kinds, NARROW_WIDTH), Some(chapter)),
+            Thumb
+        );
+
+        // and the trap as it was. A chart of chapters and no marks draws
+        // no reachable cue at all below the drop, so the entry gesture has
+        // nowhere to go and the stop stays where a reader can stand.
+        // Counting the hidden ones answered ArrowDown with the first of
+        // them, which is the tab stop leaving the thumb for a node that
+        // cannot take the focus
+        const CHAPTERS_ONLY: &str = r#"{
+            "duration": 3.3,
+            "series": [{"id": "palette", "label": "palette", "unit": "%"}],
+            "rows": [[0, 0], [1.65, 43.5], [3.3, 100]],
+            "chapters": [
+                {"t": 0, "title": "flight"},
+                {"t": 1.65, "title": "settle"},
+                {"t": 2.36, "title": "hold"}
+            ]
+        }"#;
+        let chapters = kinds_of(CHAPTERS_ONLY);
+        assert_eq!(chapters, [CHAPTER_CUE, CHAPTER_CUE]);
+        assert_eq!(shown(&chapters, DEFAULT_WIDTH), 2);
+        assert_eq!(shown(&chapters, NARROW_WIDTH), 0);
+        assert_eq!(
+            roving_key(Thumb, shown(&chapters, DEFAULT_WIDTH), "ArrowDown"),
+            Some(To(Cue(0)))
+        );
+        assert_eq!(
+            roving_key(Thumb, shown(&chapters, NARROW_WIDTH), "ArrowDown"),
+            None
+        );
+        // the whole markup is what the roving used to count, and counting
+        // it below the drop is the defect: the answer must not be the same
+        // as the answer over what is drawn there
+        assert_eq!(
+            roving_key(Thumb, chapters.len(), "ArrowDown"),
+            Some(To(Cue(0)))
+        );
+
+        // one place answers which cues can be reached, and every reader of
+        // the set goes through it: the roving's keys, the lookup that says
+        // where the focus stands, the record a re-layout puts back and the
+        // write itself
+        let source = include_str!("chart.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let read = body_of("fn cues(&self) -> Vec<Cue> {");
+        assert!(read.contains("cue_is_drawn("), "{read}");
+        assert!(read.contains("self.width()"), "{read}");
+        for reader in [
+            "fn holds_focus(&self) -> Option<Held> {",
+            "fn move_stop(&self, to: &Element) {",
+            "fn roved(&self, key: &str) -> bool {",
+            "fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {",
+        ] {
+            let body = body_of(reader);
+            assert!(body.contains(".cues()"), "{reader}: {body}");
+            assert!(!body.contains("query_selector_all"), "{reader}: {body}");
+        }
+        // and the index lookup is handed that same set rather than reading
+        // one of its own, so the positions the arrows move over are the
+        // positions the write knows
+        let at = body_of("fn roving_at(&self, cues: &[Cue], order: &[usize]) -> Option<Roving> {");
+        assert!(!at.contains(".cues()"), "{at}");
+        let roved = body_of("fn roved(&self, key: &str) -> bool {");
+        assert_eq!(roved.matches(".cues()").count(), 1, "{roved}");
+        // the question is asked in the one place and nowhere else, so no
+        // caller can hold a second opinion about what is drawn
+        let live = source.split_once("mod tests {").expect("the tests").0;
+        assert_eq!(live.matches("cue_is_drawn(").count(), 2, "{live}");
+
+        // and the write follows the decision instead of running ahead of
+        // it: the `0` used to go on before a focus that could silently do
+        // nothing
+        let write = body_of("fn move_stop(&self, to: &Element) {");
+        let decided = write.find("stop_lands(").expect("the stop is decided");
+        let written = write
+            .find("set_attribute(\"tabindex\"")
+            .expect("the stop is written");
+        let focused = write.find("give_focus(").expect("the focus follows");
+        assert!(decided < written, "the stop is written first: {write}");
+        assert!(written < focused, "{write}");
+        // and the fallback really is the stop: the one member of the set
+        // that is always drawn, and the node the focus then goes to
+        assert!(write.contains("Roving::Thumb => stop.as_ref()"), "{write}");
+        assert!(write.contains("give_focus(onto)"), "{write}");
+    }
+
+    /// The roving is a tabindex that moves, not a fixed stop with arrow
+    /// keys beside it. The emitter draws the set at rest and the element
+    /// moves the attribute; both halves are here, because either alone is
+    /// the thing the criterion was read as met by and was not.
+    #[test]
+    fn the_tab_stop_is_an_attribute_that_moves_over_the_whole_set() {
+        let markup = one_chart();
+        // at rest: the stop is on the thumb and every cue is at -1
+        let stops: Vec<&str> = heads(&markup, "g")
+            .into_iter()
+            .chain(heads(&markup, "svg"))
+            .filter(|head| attr(head, "tabindex") == "0")
+            .collect();
+        assert_eq!(stops.len(), 1, "{stops:?}");
+        assert_eq!(attr(stops[0], "class"), "playhead");
+        let cues: Vec<&str> = heads(&markup, "g")
+            .into_iter()
+            .filter(|head| attr(head, "role") == "button")
+            .collect();
+        assert!(!cues.is_empty(), "{markup}");
+        for cue in &cues {
+            assert_eq!(attr(cue, "tabindex"), "-1", "{cue}");
+        }
+
+        // and the element moves it: the one place that hands the focus to
+        // a node writes the attribute on every member of the set as it
+        // goes, so exactly one of them is ever in the tab order
+        let source = include_str!("chart.rs");
+        let body = source
+            .split_once("fn move_stop(&self, to: &Element) {")
+            .expect("the stop mover")
+            .1
+            .split_once("\n    }")
+            .expect("it ends")
+            .0;
+        assert!(body.contains("set_attribute(\"tabindex\""), "{body}");
+        assert!(body.contains("self.cues()"), "{body}");
+        assert!(body.contains("self.focus_target()"), "{body}");
+        assert!(body.contains("give_focus(onto)"), "{body}");
+        // and it is the only writer of the attribute, so no path can put a
+        // second stop in the set. The needle is assembled, so these lines
+        // are not among the occurrences it counts
+        let writes = ["set_attribute(\"tab", "index\""].concat();
+        assert_eq!(source.matches(&writes).count(), 1, "{source}");
+        // every mover goes through it, so none of them can move the focus
+        // and leave the tab order behind
+        for mover in [
+            "fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {",
+            "fn on_down(&self, event: &Event) {",
+            "fn roved(&self, key: &str) -> bool {",
+            "fn on_arrival(&self) {",
+        ] {
+            let body = source
+                .split_once(mover)
+                .unwrap_or_else(|| panic!("{mover}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0;
+            assert!(body.contains("self.move_stop("), "{mover}: {body}");
+            assert!(
+                !body.contains("give_focus("),
+                "{mover} moves the focus alone: {body}"
+            );
+        }
+    }
+
+    /// Decision 20's ring, as the two numbers 2.4.13 asks for rather than
+    /// as a colour name. The ring is painted with the focus token over the
+    /// surface, and the state it changes from is derived from the
+    /// stylesheet rather than assumed: every rule that can reach the ring
+    /// is read, and one that painted it while unfocused would be the other
+    /// colour of the second pair. There is none, so the ring's own pixels
+    /// show the surface until the focus arrives.
+    #[test]
+    fn the_focus_ring_clears_three_to_one_against_the_surface_and_against_itself() {
+        let css = shadow_css();
+        let ring: Vec<(String, String, String)> = rules_of(&css)
+            .into_iter()
+            .filter(|(_, selector, _)| could_reach(selector, "head-ring"))
+            .collect();
+        // the ring is painted once, on `:focus-visible` alone: a press must
+        // not ring the chart it is scrubbing
+        assert_eq!(ring.len(), 1, "{ring:?}");
+        let (at, selector, body) = &ring[0];
+        assert!(at.is_empty(), "the ring is painted inside {at}");
+        assert!(selector.contains(":focus-visible"), "{selector}");
+        assert!(body.contains("stroke: currentColor"), "{body}");
+        assert!(body.contains("color: var(--op-focus)"), "{body}");
+        assert!(body.contains("stroke-width: 2"), "{body}");
+        // what those pixels show when the ring is not shown: whatever a
+        // rule outside `:focus-visible` strokes it with, and the surface
+        // where there is none, since a rect with no stroke paints nothing
+        // and the ring's interior is `fill-opacity` 0. The token is read
+        // out of the stylesheet, so a rule that started painting the ring
+        // unfocused would be measured against instead of ignored
+        let painted: Vec<String> = ring
+            .iter()
+            .filter(|(_, selector, _)| !selector.contains(":focus-visible"))
+            .flat_map(|(_, _, body)| body.split(';').map(str::to_owned).collect::<Vec<String>>())
+            .filter(|d| d.trim_start().starts_with("stroke:"))
+            .filter_map(|d| {
+                let (_, value) = d.split_once(':')?;
+                let token = value.trim().strip_prefix("var(")?.strip_suffix(')')?;
+                Some(token.trim().to_owned())
+            })
+            .collect();
+        assert!(painted.len() <= 1, "{painted:?}");
+        let unfocused = painted
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "--op-surface".to_owned());
+
+        for (theme, tokens) in [
+            ("dark", crate::palette::dark()),
+            ("light", crate::palette::light()),
+        ] {
+            let colour = |name: &str| {
+                op_colour::Srgb::from_hex(&tokens[name])
+                    .unwrap_or_else(|| panic!("{name} is not #RRGGBB"))
+            };
+            let focus = colour("--op-focus");
+            let surface = colour("--op-surface");
+            // 2.4.13's first floor: the indicator against what is behind it
+            let against_surface = op_colour::wcag_contrast(focus, surface);
+            assert!(
+                against_surface >= 3.0,
+                "{theme}: the ring is {against_surface:.2}:1 against the surface"
+            );
+            // and its second: the same pixels, focused against unfocused,
+            // where unfocused is whatever the stylesheet says the ring is
+            // painted with before the focus arrives
+            let against_itself = op_colour::wcag_contrast(focus, colour(&unfocused));
+            assert!(
+                against_itself >= 3.0,
+                "{theme}: the ring changes by {against_itself:.2}:1 from {unfocused} when it is shown"
+            );
+        }
+    }
+
+    /// Whether a rule with this selector could reach the element whose
+    /// opening tag is `head`, by a class of its own or by an attribute
+    /// selector the element answers.
+    ///
+    /// [`could_reach`] reads the class attribute and nothing else, which
+    /// is how the site's own ring came to be drawn around the cue buttons
+    /// unseen: a `<g>` carrying no class is named by no class, so every
+    /// rule that could reach it was skipped before the scan ran.
+    fn could_reach_head(selector: &str, head: &str) -> bool {
+        if could_reach(selector, &attr(head, "class")) {
+            return true;
+        }
+        selector.split('[').skip(1).any(|rest| {
+            let Some((name, value)) = rest.split_once('=') else {
+                return false;
+            };
+            let value = value
+                .split(']')
+                .next()
+                .unwrap_or_default()
+                .trim_matches(['"', '\'']);
+            let name = name.trim_end_matches(['^', '$', '*', '~', '|']);
+            !value.is_empty() && attr(head, name) == value
+        })
+    }
+
+    /// Whether a rule reaches every element in the tree, the drawing's
+    /// nodes included: its selector names no element of its own at all,
+    /// only the state it answers. The site's shared `:focus-visible` ring
+    /// is the one of these that matters, and it is exactly the rule a
+    /// class-only reader cannot see.
+    fn reaches_everything(selector: &str) -> bool {
+        selector.split(',').any(|part| {
+            let named = part.split(':').next().unwrap_or_default().trim();
+            named.is_empty() || named == "*"
+        })
+    }
+
+    /// Every declaration in a block that sets an outline, as its property
+    /// and its value.
+    fn outlines(body: &str) -> Vec<(&str, &str)> {
+        body.split(';')
+            .filter_map(|declaration| declaration.split_once(':'))
+            .map(|(property, value)| (property.trim(), value.trim()))
+            .filter(|(property, _)| *property == "outline" || property.starts_with("outline-"))
+            .collect()
+    }
+
+    /// Decision 20's rule against outlines on SVG. An outline on an SVG
+    /// node is laid out in user space: it scales with the viewBox and the
+    /// viewport clips it, so the 2 px a focus indicator is asked for
+    /// becomes whatever the box happens to be drawn at, and at the edges
+    /// it is cut off.
+    ///
+    /// The guard is read two ways, because one of them was the hole. A
+    /// rule that names a class of the drawing is read as before, and may
+    /// set no outline but `none`. A rule that names nothing at all reaches
+    /// every element in the tree, the drawing's nodes included, and cannot
+    /// be forbidden: it is the site's own `:focus-visible` ring, which the
+    /// chart's `<summary>` and every other component's controls want. So
+    /// every node of the drawing that can take focus has to turn it off by
+    /// name, and that is what is checked here, over the nodes the emitter
+    /// writes rather than a list kept beside them.
+    ///
+    /// The root svg is not one of those nodes. It is a replaced element in
+    /// CSS layout, so an outline on it is a box outline in CSS px and is
+    /// the site's ring doing its job; that is the indicator an embedded
+    /// chart, whose svg is its only tab stop, is meant to have.
+    #[test]
+    fn no_rule_can_put_an_outline_on_a_node_of_the_drawing() {
+        // every node inside the drawing a focus can land on, read out of
+        // the markup both ways round: the thumb where this chart owns its
+        // slider, and the cue buttons either way
+        let markup = [chart_owning(true), chart_owning(false)];
+        let mut focusable: Vec<String> = Vec::new();
+        for one in &markup {
+            let svg = one.split_once("<svg class=\"chart\"").expect("a chart").1;
+            for tag in ["g", "rect", "line", "path", "text", "circle"] {
+                for head in heads(svg, tag) {
+                    if !attr(head, "tabindex").is_empty() {
+                        focusable.push(head.to_owned());
+                    }
+                }
+            }
+        }
+        // the reader found them, and both kinds are here
+        assert!(
+            focusable
+                .iter()
+                .any(|head| attr(head, "class") == "playhead"),
+            "{focusable:?}"
+        );
+        assert!(
+            focusable.iter().any(|head| attr(head, "role") == "button"),
+            "{focusable:?}"
+        );
+
+        let mut read = 0usize;
+        let mut blanket: Vec<String> = Vec::new();
+        let mut suppressions: Vec<String> = Vec::new();
+        for css in sheets() {
+            for (at, selector, body) in rules_of(&css) {
+                let names_drawing = emitted_classes()
+                    .iter()
+                    .any(|class| could_reach(&selector, class));
+                let everything = reaches_everything(&selector);
+                if !names_drawing && !everything {
+                    continue;
+                }
+                read += 1;
+                for (property, value) in outlines(&body) {
+                    if value == "none" {
+                        assert_eq!(property, "outline", "{at} {selector}");
+                        suppressions.push(selector.clone());
+                        continue;
+                    }
+                    // a rule that names a node of the drawing may not draw
+                    // one at all, whatever it is answering
+                    assert!(
+                        !names_drawing,
+                        "{at} {selector} draws an outline on a node of the drawing"
+                    );
+                    blanket.push(selector.clone());
+                }
+            }
+        }
+        assert!(read > 20, "only {read} rules of the drawing read");
+        // the site's ring really is in this tree, so the suppressions
+        // below are load-bearing and not a formality
+        assert!(
+            blanket
+                .iter()
+                .any(|selector| selector.contains(":focus-visible")),
+            "no rule reaching the whole tree sets an outline: {blanket:?}"
+        );
+        // and this is the reading that missed it: that rule names no class
+        // at all, so a scan that asked only about classes skipped it
+        // before it read a single declaration
+        for selector in &blanket {
+            assert!(
+                !emitted_classes()
+                    .iter()
+                    .any(|class| could_reach(selector, class)),
+                "`{selector}` is reached by a class after all"
+            );
+            assert!(reaches_everything(selector), "{selector}");
+        }
+
+        // and every focusable node of the drawing turns it off by name.
+        // The element's own stylesheet is what is read here: the film
+        // holds this markup in a shadow root of its own and answers for
+        // what reaches it there
+        let own: Vec<String> = rules_of(&shadow_css())
+            .into_iter()
+            .filter(|(_, selector, body)| {
+                suppressions.contains(selector) && !outlines(body).is_empty()
+            })
+            .map(|(_, selector, _)| selector)
+            .collect();
+        for head in &focusable {
+            assert!(
+                own.iter().any(|selector| could_reach_head(selector, head)),
+                "nothing turns the site's outline off on <{head}>; \
+                 the rules that turn one off are {own:?}"
+            );
+        }
+    }
+
+    /// Decision 17's one tab stop. The element attaches its own root with
+    /// `delegatesFocus`, so a click on the host or a `focus()` on it is a
+    /// focus meant for the control inside and not for the host; the
+    /// build's template says the same thing in markup, which is the only
+    /// way a declarative root can carry it, since `attachShadow` on an
+    /// element that already has one empties the root it found and ignores
+    /// the init it was handed.
+    ///
+    /// Where such a focus lands is the engine's choice and not this
+    /// attribute's, and the engine chooses the svg: what this pins is that
+    /// the markup leaves one tab stop for it to have been meant for, and
+    /// that the tab stop is the thumb. Moving it there is the element's
+    /// own work, in the test below.
+    #[test]
+    fn one_tab_stop_lands_on_the_thumb_and_both_paths_delegate_the_focus() {
+        let source = include_str!("chart.rs");
+        let body = source
+            .split_once("fn delegating_shadow_root(host: &HtmlElement)")
+            .expect("the attach")
+            .1;
+        let body = body.split_once("\n}").expect("it ends").0;
+        assert!(body.contains("delegatesFocus"), "{body}");
+        assert!(body.contains("from_bool(true)"), "{body}");
+        // an existing root is kept, never re-attached: attaching over a
+        // declarative root would throw the pre-render away
+        assert!(body.contains("host.shadow_root()"), "{body}");
+        // and it is the only root this element attaches, so no path skips
+        // the delegation. The needle is assembled, so these lines are not
+        // among the occurrences it counts
+        let attach = ["delegating_shadow_root(&self.", "host)"].concat();
+        let any = ["shadow_root(&self.", "host)"].concat();
+        assert_eq!(source.matches(&attach).count(), 2, "{source}");
+        assert_eq!(source.matches(&any).count(), 2, "{source}");
+
+        // the hydration path: the build wraps the same markup in a template
+        // that carries the attribute
+        let page = format!(
+            "<opt:body xmlns:opt=\"https://www.openpower.tools/ns/opt\">\
+             <opt:chart for=\"f\"><script type=\"application/json\">{BLOCK}</script>\
+             </opt:chart></opt:body>"
+        );
+        let html = op_pages::lower(&page).expect("the page lowers");
+        assert!(
+            html.contains("<template shadowrootmode=\"open\" shadowrootdelegatesfocus>"),
+            "{html}"
+        );
+        // and the one node such a focus is meant for is the thumb, because
+        // the svg is no longer a stop and the cue buttons are `-1`
+        let markup = one_chart();
+        let stops: Vec<&str> = heads(&markup, "g")
+            .into_iter()
+            .chain(heads(&markup, "svg"))
+            .filter(|head| attr(head, "tabindex") == "0")
+            .collect();
+        assert_eq!(stops.len(), 1, "{stops:?}");
+        assert_eq!(attr(stops[0], "class"), "playhead");
+        assert_eq!(attr(stops[0], "role"), "slider");
+        // the cues start at -1, which is the roving's rest state: the
+        // element moves the attribute when the reader steps into them
+        // (`the_tab_stop_is_an_attribute_that_moves_over_the_whole_set`)
+        let cues: Vec<&str> = heads(&markup, "g")
+            .into_iter()
+            .filter(|head| attr(head, "role") == "button")
+            .collect();
+        assert!(!cues.is_empty(), "{markup}");
+        for cue in &cues {
+            assert_eq!(attr(cue, "tabindex"), "-1", "{cue}");
+        }
+    }
+
+    /// What the element does with a focus that arrives on a node that is
+    /// not its stop.
+    ///
+    /// `delegatesFocus` is a request an engine answers its own way. Asked
+    /// to focus a host whose root holds this drawing, it puts the root's
+    /// active element on the outermost svg, which carries no `tabindex`
+    /// and answers no keys, and not on the `role="slider"` thumb inside
+    /// it, which is both. So the widget decides, and it decides for the
+    /// two nodes an engine can leave a focus on and for no others: a cue
+    /// the roving moved to and the data table's disclosure are where a
+    /// reader went on purpose.
+    #[test]
+    fn a_focus_the_engine_placed_is_moved_to_the_stop_and_one_the_reader_placed_is_not() {
+        let at = |inside, stop, svg| takes_the_stop(Arrival { inside, stop, svg });
+        // the svg, which is what the engine delegates to here
+        assert!(at(true, false, true));
+        // the host itself, which is where a focus stays when the engine
+        // finds nothing inside to delegate to: the root has no active
+        // element to name
+        assert!(at(false, false, false));
+        // a cue button during the roving, the data table's disclosure, or
+        // anything else the root holds
+        assert!(!at(true, false, false));
+        // and the stop keeps what it has, whichever node the stop is: a
+        // chart inside a film has the svg for a stop (decision 15) and
+        // must not be moved off itself for ever
+        assert!(!at(true, true, false));
+        assert!(!at(true, true, true));
+        // the three a root cannot report, since one with no active element
+        // names no node at all. Pinned so the rule is total, and so a
+        // change to it has to say what it means by them: the stop is asked
+        // about first, and a focus said to be on the stop is left alone
+        assert!(at(false, false, true));
+        assert!(!at(false, true, false));
+        assert!(!at(false, true, true));
+    }
+
+    /// The element hears a focus arrive on the host as well as inside its
+    /// root, and moves the ones the engine placed onto its stop.
+    ///
+    /// No native test can reach a shadow root's active element, dispatch a
+    /// focus, or ask an engine what it delegates to, so the wiring is read
+    /// off the source, as the other guards in this file are. What the rule
+    /// itself says is the test above; only a browser can show that the
+    /// rule is reached.
+    #[test]
+    fn the_element_hears_a_focus_arrive_on_the_host_and_moves_it_off_the_svg() {
+        let source = include_str!("chart.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        // the listener rides on the host, which is where a focus that
+        // never reached the root is heard at all, and comes off again with
+        // the rest of the wiring. rustfmt decides where a call of this
+        // length breaks and whether the last argument keeps a comma, so
+        // both are read with the whitespace taken out of the file and both
+        // needles stop at the callback
+        let tight: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+        for call in [
+            "self.host.add_event_listener_with_callback(\"focusin\",on_focus_in.as_ref().unchecked_ref()",
+            "self.host.remove_event_listener_with_callback(\"focusin\",wiring.on_focus_in.as_ref().unchecked_ref()",
+        ] {
+            assert!(tight.contains(call), "{call}");
+        }
+
+        // what it answers with: the rule, the one place that names the
+        // stop, and the one mover, which takes the tab stop along with it
+        let arrival = body_of("fn on_arrival(&self) {");
+        assert!(
+            arrival.contains("takes_the_stop(self.arrival())"),
+            "{arrival}"
+        );
+        assert!(arrival.contains("self.focus_target()"), "{arrival}");
+        assert!(arrival.contains("self.move_stop("), "{arrival}");
+        // and it cannot loop: the move raises the very event it answers,
+        // and raises it synchronously, so a move in flight is the end of
+        // the arrival it raised rather than the start of another
+        assert!(arrival.contains("self.moving_focus.get()"), "{arrival}");
+        assert!(arrival.contains("self.moving_focus.set(true)"), "{arrival}");
+        assert!(
+            arrival.contains("self.moving_focus.set(false)"),
+            "{arrival}"
+        );
+
+        // the facts it judges come from the tree and from the handles the
+        // element captured, never from a query of the root
+        let asked = body_of("fn arrival(&self) -> Arrival {");
+        assert!(asked.contains("self.root.active_element()"), "{asked}");
+        assert!(asked.contains("self.focus_target()"), "{asked}");
+        assert!(asked.contains("self.dom.borrow().svg"), "{asked}");
+        assert!(!asked.contains("query_selector"), "{asked}");
+
+        // which is what keeps the discarded half of a pre-render out of
+        // it. The build ships a wide drawing and a narrow one, with a
+        // thumb in each, and one of them is removed only when the element
+        // keeps the drawing the container query chose; every handle is
+        // read out of that one svg
+        assert_eq!(built().shadow.matches(THUMB_OPEN).count(), 2);
+        let capture = body_of("fn capture(&self, svg: Option<Element>, refocus: Option<Held>) {");
+        assert!(capture.contains("svg.as_ref()"), "{capture}");
+        assert!(capture.contains("find(\"g.playhead\")"), "{capture}");
+        // and the thumb is named in that one svg-scoped query and nowhere
+        // else. The needle is assembled, so this line is not the
+        // occurrence it counts
+        let names = ["g.play", "head\""].concat();
+        assert_eq!(source.matches(&names).count(), 1, "{source}");
     }
 
     #[test]
@@ -3575,7 +6818,8 @@ mod tests {
         assert_eq!(PEEKING_STATE, "peeking");
         assert_eq!(PENDING_STATE, "pending");
         assert_eq!(CANCELLING_STATE, "cancelling");
-        // they join the three phase 2 already writes, and all six differ
+        // they join the three the element already writes, and all six
+        // differ
         let states = std::collections::BTreeSet::from([
             PEEKING_STATE,
             PENDING_STATE,

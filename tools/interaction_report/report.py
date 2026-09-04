@@ -191,6 +191,34 @@ for _p, _q, _want in (((50.0, 2.6772, -79.7751), (50.0, 0.0, -82.7485), 2.0425),
     if abs(ciede2000(_p, _q) - _want) > 1e-3:
         raise SystemExit(f"ciede2000 port drifted: {ciede2000(_p, _q)} vs {_want}")
 
+
+def wcag_contrast(a, b_) -> float:
+    """WCAG 2.1's contrast ratio between two opaque sRGB colours, the same
+    formula op-colour's Wcag21RelativeContrast carries. A ratio is what
+    decision 20 states the focus ring's floor in, so it is computed here from
+    the paints a run measured rather than looked up from a token."""
+    def lum(rgb):
+        def lin(c):
+            c /= 255.0
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+        r, g, b = (lin(v) for v in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    la, lb = lum(a), lum(b_)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+# black on white is the ratio the criterion is written around; #767676 and
+# #949494 are the lightest greys the literature quotes as clearing 4.5:1 and
+# 3:1 on white, which is the floor these checks use
+for _a, _b, _want in (((0, 0, 0), (255, 255, 255), 21.0), ((118, 118, 118), (255, 255, 255), 4.5422), ((148, 148, 148), (255, 255, 255), 3.0335)):
+    if abs(wcag_contrast(_a, _b) - _want) > 1e-3:
+        raise SystemExit(f"wcag_contrast drifted: {wcag_contrast(_a, _b)} vs {_want}")
+
+
+def channels(css: str) -> tuple:
+    """The three channels of a computed paint, as the browser reports them."""
+    return tuple(int(v) for v in re.findall(r"\d+", css or "")[:3])
+
 # The film kind's screenshot matrix: an emulation name and how to enter it.
 MATRIX = [
     ("none", {"media": [], "vision": "none"}),
@@ -1604,7 +1632,7 @@ document.querySelectorAll('.film').forEach(f => {
     fr.addEventListener('pointerenter', () => { if (pending === null) showPeek(times[k]); });
     fr.addEventListener('pointerleave', () => { if (pending === null) hidePeek(); });
   });
-  const setPending = k => { pending = k; render(); showStage(k, 'pending \\u2014 release to seek, Esc to cancel'); stage.classList.add('pending'); showPeek(times[k]); };
+  const setPending = k => { pending = k; render(); showStage(k, 'pending, release to seek, Esc to cancel'); stage.classList.add('pending'); showPeek(times[k]); };
   reelbox.addEventListener('pointerdown', e => {
     const k = frameUnder(e); if (k === null) return;
     e.preventDefault(); pause(); reelbox.setPointerCapture(e.pointerId); setPending(k);
@@ -1648,15 +1676,15 @@ def render_control(rep: ControlReport, out: Path):
     d.mkdir(parents=True, exist_ok=True)  # a control that failed before its runner made it still gets a page
     total = len(rep.checks)
     passed = sum(1 for c in rep.checks if c.ok)
-    parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{rep.tag} — interaction report</title><style>{CSS}</style></head><body>",
-             f"<p><a href='../index.html'>All controls</a></p><h1>&lt;{rep.tag}&gt; — interaction report</h1>",
+    parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{rep.tag}: interaction report</title><style>{CSS}</style></head><body>",
+             f"<p><a href='../index.html'>All controls</a></p><h1>&lt;{rep.tag}&gt;: interaction report</h1>",
              f"<p class='note'>Kind: <code>{rep.kind}</code>. Page: <code>{rep.page}</code>. {clock_note(rep.clock)}. Every frame and sample below comes from real pointer and keyboard events in headless Chromium against the built site.</p>",
              f"<p class='summary'><span class='{'ok' if passed == total else 'fail'}'>{passed} of {total} checks pass</span></p>",
              "<h2>The machine</h2><div class='machine'>" + machine_svg(rep.nodes, rep.machine_edges, None) + "</div>",
              "<p class='note'>Nodes are flight states; loops are inputs that leave the flight alone. Below, each behaviour highlights the edge it exercises.</p>"]
     for i, e in enumerate(rep.edges, 1):
         parts.append(f"<h2>{i}. {e.title}</h2>")
-        parts.append(f"<h3>Machine annotated for {e.key[0]} —{e.key[1]}→ {e.key[2]}</h3><div class='machine'>{machine_svg(rep.nodes, rep.machine_edges, e.key)}</div>")
+        parts.append(f"<h3>Machine annotated for {e.key[0]} →{e.key[1]}→ {e.key[2]}</h3><div class='machine'>{machine_svg(rep.nodes, rep.machine_edges, e.key)}</div>")
         if e.narrative:
             parts.append(f"<p class='note'>{e.narrative}</p>")
         if e.note:
@@ -1709,7 +1737,7 @@ def render_index(reports: list[ControlReport], statics: list[str], out: Path):
         total, passed = len(r.checks), sum(1 for c in r.checks if c.ok)
         rows.append(f"<tr><td><a href='{r.tag}/index.html'>{r.tag}</a></td><td>{r.kind}</td><td class='{'ok' if passed == total else 'fail'}'>{passed}/{total}</td></tr>")
     html = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Interaction report</title><style>{CSS}</style></head><body>",
-            "<h1>Interaction report — every control, every machine edge, real input</h1>",
+            "<h1>Interaction report: every control, every machine edge, real input</h1>",
             f"<p class='note'>Generated by tools/interaction_report/report.py. {clock_note(CLOCK)}. The machine diagrams come from the code's own transition table; the frames and curves from CDP mouse and keyboard events with the pointer resting on the control. A failing check here fails the build.</p>",
             "<table><tr><th>control</th><th>kind</th><th>checks</th></tr>" + "".join(rows) + "</table>",
             "<h2>Declared static (no interaction)</h2><p class='note'>" + ", ".join(statics) + "</p>",
@@ -1759,7 +1787,7 @@ def integrated_page(rep: ControlReport, head: str, nav: str, prefix: str) -> str
     for i, e in enumerate(rep.edges, 1):
         film_id = f"film-{i}"
         m = {"nodes": rep.nodes, "edges": [list(x) for x in rep.machine_edges], "highlight": list(e.key), "trace": e.film["trace"] if e.film else []}
-        parts.append(f"<h2>{i}. {esc(e.title)}</h2>\n<h3>Machine annotated for {esc(e.key[0])} —{esc(e.key[1])}→ {esc(e.key[2])}</h3>\n"
+        parts.append(f"<h2>{i}. {esc(e.title)}</h2>\n<h3>Machine annotated for {esc(e.key[0])} →{esc(e.key[1])}→ {esc(e.key[2])}</h3>\n"
                      f"<opt-machine for=\"{film_id}\"><script type=\"application/json\">{json.dumps(m)}</script></opt-machine>\n")
         if e.narrative:
             parts.append(f"<p>{esc(e.narrative)}</p>\n")
@@ -1834,7 +1862,9 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
       const st = n => f.matches(':state(' + n + ')'); const tok = {M} && {M}.shadowRoot.querySelector('.token');
       return {{k: cur ? +cur.dataset.k : -1, pending: pend ? +pend.dataset.k : null, playing: st('playing'), pend_state: st('pending'), peeking: st('peeking'),
         t: sr.querySelector('.t').textContent, token: tok ? [+tok.getAttribute('cx'), +tok.getAttribute('cy')] : null,
-        other_k: +document.querySelectorAll('opt-film')[0].shadowRoot.querySelector('.fr.current').dataset.k, role: sr.querySelector('.chart').getAttribute('role')}}; }})()"""
+        other_k: +document.querySelectorAll('opt-film')[0].shadowRoot.querySelector('.fr.current').dataset.k, role: sr.querySelector('.chart').getAttribute('role'),
+        named: sr.querySelector('.chart').getAttribute('aria-labelledby'), sliders: sr.querySelectorAll('[role="slider"]').length,
+        input: !!sr.querySelector('input[type=range]'), thumb_hidden: sr.querySelector('.chart g.playhead').getAttribute('aria-hidden')}}; }})()"""
     loc = b.js(f"(() => {{ const el = {F}; el.scrollIntoView({{block: 'center'}}); const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }})()")
     rect = loc
     s0 = b.js(S)
@@ -1852,7 +1882,17 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   Check("playing exposed as a custom state", s1["playing"] and not s1b["playing"]),
                   Check("the linked machine's playhead moved", s0["token"] != s1["token"], f"{s0['token']} -> {s1['token']}"),
                   Check("a sibling film is unaffected", s1["other_k"] == s0["other_k"]),
-                  Check("chart is a slider", s0["role"] == "slider")]
+                  # one widget, one slider (decision 15): the chart the film draws is a
+                  # document named by the title above it, its thumb is the decoration this
+                  # film's own control bar makes it, and the range input is the slider. The
+                  # chart kind reads the same rule out of the accessibility tree, on the
+                  # film that shares the chart's page.
+                  Check("the film's chart is a named document and the film's one slider is its range input",
+                        s0["role"] == "graphics-document" and bool(s0["named"]) and s0["sliders"] == 0
+                        and s0["input"] and s0["thumb_hidden"] == "true",
+                        f"the chart's svg is role={s0['role']} labelled by '{s0['named']}' with its playhead "
+                        f"aria-hidden={s0['thumb_hidden']}; {s0['sliders']} slider roles in the shadow root and a native "
+                        f"range input present: {s0['input']}")]
     rep.edges.append(e1)
     # E2 keys
     e2 = Edge(("Paused", "Seek", "Paused"), "Seek by keys",
@@ -2245,6 +2285,93 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     e7.checks.append(Check("the emulations are reset afterwards", b.js(STROKE1) == baseline_stroke, f"first series stroke {b.js(STROKE1)} vs {baseline_stroke} before"))
     e7.matrix = files
     rep.edges.append(e7)
+    # E8 the cue buttons the film draws into its own root. The emitter gives
+    # every chapter after the first a role="button" over its own hit rect
+    # (crates/op-chart/src/render.rs) and the film draws that markup unchanged
+    # (chart_svg in crates/op-site/src/components/film.rs), so the film's
+    # shadow root holds buttons a reader's assistive technology can put the
+    # focus on. What one does when it is pressed is the element's to answer:
+    # <opt-chart> answers Enter and Space on a focused cue by seeking to the
+    # instant that cue's own rect names, before its key table sees the key
+    # (roving_key and roved in chart.rs). The film's host keydown knew nothing
+    # of what held the focus, so Space reached `" " | "k" | "K"` and played the
+    # film while a cue was focused, and Enter did nothing at all; it reads what
+    # holds the focus first now (cue_press in film.rs). Both keys are driven
+    # here, against the stamp read off the cue's own rect and not off the
+    # film's data block.
+    e8 = Edge(("Paused", "Seek", "Paused"), "A press on a cue in the film's chart",
+              "The film draws the chart's cue buttons into its own shadow root, so one of them can hold the focus. With "
+              "one focused, Enter and Space seek to the instant that cue names and leave the film paused, which is what "
+              "the same button does in <opt-chart>: one behaviour for one role across both elements.")
+    e8.note = ("The film's cue buttons carry tabindex=\"-1\" and the film has no gesture of its own that steps into "
+               "them, so the focus is put on one by script rather than by a key. That is honest here: it is what a "
+               "reader's assistive technology does when it moves the focus straight to a button it found in the tree, "
+               "and it is the only way in, because the roving entry that walks these buttons belongs to <opt-chart> and "
+               "not to the film.")
+    CUES = """(() => { const films = [...document.querySelectorAll('opt-film')];
+      for (let i = 0; i < films.length; i++) { const sr = films[i].shadowRoot;
+        const cues = sr ? [...sr.querySelectorAll('svg.chart .targets g[role="button"]')] : [];
+        if (cues.length) return {film: i, cues: cues.map(n => { const rect = n.querySelector('rect.target');
+          return {name: n.getAttribute('aria-label'), kind: n.dataset.cue, t: rect ? +rect.dataset.t : null}; })}; }
+      return {film: -1, cues: []}; })()"""
+    cued = b.js(CUES)
+    if cued["film"] < 0:
+        e8.checks.append(Check("a film on this page draws a cue button", False,
+                               "no film on this page has a second chapter, so the emitter drew no cue button in any "
+                               "film's chart and no press could be driven"))
+    else:
+        FC = f"document.querySelectorAll('opt-film')[{cued['film']}]"
+        PRESS = f"""(() => {{ const f = {FC}, sr = f.shadowRoot, svg = sr.querySelector('svg.chart');
+      const a = sr.activeElement, cues = [...svg.querySelectorAll('.targets g[role="button"]')];
+      return {{t: sr.querySelector('.t').textContent, playing: f.matches(':state(playing)'), at: cues.indexOf(a),
+        holds: a ? (a.getAttribute('aria-label') || a.getAttribute('class') || a.tagName) : 'nothing'}}; }})()"""
+
+        def press_cue(i: int, name: str, code: str) -> tuple:
+            """Pause the film, put its clock at zero so a cue's own time is
+            somewhere it is not already, put the focus on that cue, and send one
+            key. Answers what the film read before the key and after it."""
+            b.js(f"(() => {{ const f = {FC}; if (f.matches(':state(playing)')) f.shadowRoot.querySelector('button.play').click(); return 'ok'; }})()")
+            b.js(f"{FC}.focus(); 'ok'")
+            key("Home", "Home")
+            b.js(f"""(() => {{ const sr = {FC}.shadowRoot;
+              sr.querySelectorAll('svg.chart .targets g[role="button"]')[{i}].focus(); return 'ok'; }})()""")
+            b.wait(0.12)
+            before = b.js(PRESS)
+            key(name, code)
+            b.wait(0.25)
+            return before, b.js(PRESS)
+
+        cue = cued["cues"][0]
+        space_before, space_after = press_cue(0, " ", "Space")
+        enter_before, enter_after = press_cue(0, "Enter", "Enter")
+
+        def landed(state: dict) -> bool:
+            """Whether the film's readout is the cue's own stamp. The readout is
+            written to the hundredth of a second and the stamp to the
+            thousandth, so that is the tolerance."""
+            try:
+                return abs(float(str(state["t"]).replace("s", "").strip()) - cue["t"]) <= 0.011
+            except ValueError:
+                return False
+
+        e8.checks += [
+            Check("the focus goes onto a cue the film drew",
+                  space_before["at"] == 0 and enter_before["at"] == 0,
+                  f"opt-film[{cued['film']}] draws {len(cued['cues'])} cue button(s); the focus was put on "
+                  f"'{cue['name']}', the {cue['kind']} cue its own rect stamps {cue['t']:.3f}s, and the film's shadow "
+                  f"root reports the focus on {space_before['holds']} before Space and {enter_before['holds']} before "
+                  f"Enter"),
+            Check("Space on a focused cue seeks to that cue's own time and does not play the film",
+                  landed(space_after) and not space_after["playing"] and space_after["at"] == 0,
+                  f"the film went from {space_before['t']} to {space_after['t']}, expected the {cue['t']:.3f}s "
+                  f"'{cue['name']}' names; the film is playing: {space_after['playing']}, and the focus is on "
+                  f"{space_after['holds']}"),
+            Check("Enter on a focused cue seeks to that cue's own time as well",
+                  landed(enter_after) and not enter_after["playing"] and enter_after["at"] == 0,
+                  f"the film went from {enter_before['t']} to {enter_after['t']}, expected the {cue['t']:.3f}s "
+                  f"'{cue['name']}' names; the film is playing: {enter_after['playing']}, and the focus is on "
+                  f"{enter_after['holds']}")]
+    rep.edges.append(e8)
     return rep
 
 # ----------------------------------------------------------------------------
@@ -2259,6 +2386,81 @@ def fnv1a64_hex(text: str) -> str:
 
 
 assert fnv1a64_hex("") == "cbf29ce484222325" and fnv1a64_hex("a") == "af63dc4c8601ec8c"
+
+
+def in_words(t: float) -> str:
+    """A time as the element says it (`in_words` in chart.rs), so a check can
+    state the words it expects rather than accept whatever it is given:
+    minutes where there are any, then seconds carrying a tenth where they
+    have one. The rounding is away from zero, as Rust's own is."""
+    tenths = math.floor(max(0.0, t) * 10.0 + 0.5)
+    minutes, rest = divmod(tenths, 600)
+    said = []
+    if minutes > 0:
+        said.append(f"{minutes} minute" + ("" if minutes == 1 else "s"))
+    if rest > 0 or minutes == 0:
+        number = f"{rest // 10}" if rest % 10 == 0 else f"{rest // 10}.{rest % 10}"
+        said.append(number + (" second" if rest == 10 else " seconds"))
+    return " ".join(said)
+
+
+assert in_words(0.0) == "0 seconds" and in_words(1.89) == "1.9 seconds" and in_words(92.0) == "1 minute 32 seconds"
+
+
+def announced(v: float) -> str:
+    """A number as the renderer announces it (`announced` in op-chart): rounded
+    to a hundredth, away from zero as Rust's own rounding is, and written in the
+    shortest spelling that survives the round trip, so a range reads "0 to 100"
+    and a value the arithmetic left at 99.4371993585596 is said as "99.44"
+    rather than read out a digit at a time. A domain reaching exactly -0.0 is a
+    zero and is said as one."""
+    rounded = math.copysign(math.floor(abs(v) * 100.0 + 0.5), v) / 100.0
+    if rounded == 0.0:
+        return "0"
+    return f"{rounded:.0f}" if rounded == int(rounded) else repr(rounded)
+
+
+assert announced(99.4371993585596) == "99.44" and announced(-0.0) == "0" and announced(100.0) == "100"
+assert announced(0.30000000000000004) == "0.3" and announced(-0.005) == "-0.01"
+
+
+# ---- the accessibility tree -------------------------------------------------
+# Accessibility.getFullAXTree answers with a flat list of nodes, each naming its
+# children by id and the DOM node it stands for by backend id. These four turn
+# that list into the subtree under one element, which is how every check below
+# is derived from one read of the tree rather than from a call per assertion.
+def ax_index(nodes: list) -> dict:
+    return {n["nodeId"]: n for n in nodes}
+
+
+def ax_under(index: dict, node: dict | None) -> list:
+    """`node` and every node below it, in tree order."""
+    if node is None:
+        return []
+    out = [node]
+    for child in node.get("childIds", []):
+        if child in index:
+            out += ax_under(index, index[child])
+    return out
+
+
+def ax_field(node: dict, key: str):
+    """A node's role, name or value, each of which the protocol wraps in an AXValue."""
+    return (node.get(key) or {}).get("value")
+
+
+def ax_props(node: dict) -> dict:
+    """The node's properties by name, unwrapped the same way."""
+    return {p["name"]: p["value"].get("value") for p in node.get("properties", [])}
+
+
+def backend_of(b: Browser, expr: str):
+    """The backend node id of the element `expr` evaluates to, which is the name
+    an accessibility node calls the DOM node it stands for by."""
+    found = b.call("Runtime.evaluate", expression=expr).get("result", {})
+    if "objectId" not in found:
+        return None
+    return b.call("DOM.describeNode", objectId=found["objectId"])["node"]["backendNodeId"]
 
 
 def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
@@ -2298,6 +2500,7 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         svgs: svgs.length, by: vis ? vis.dataset.renderedBy : null, vbw: vb ? vb.width : null, cssw: r ? +r.width.toFixed(1) : null,
         ticks: vis ? eff('.tick-label') : [], ends: vis ? eff('.endlabel') : [], tick_px: vis ? px('.tick-label') : [],
         summary: summary ? summary.textContent.trim().length : 0, rows: table ? table.querySelectorAll('tbody tr').length : 0,
+        status: (n => n ? [n.getAttribute('aria-live'), n.textContent] : null)(sr.querySelector('[role="status"]')),
         hash: c.getAttribute('data-hash'), block: (c.querySelector('script[type="application/json"]') || {{}}).textContent || '',
         x: tx ? +tx[1] : null, readout: ht ? ht.textContent : null, bar: bar ? [+bar.getAttribute('x'), +bar.getAttribute('width')] : null,
         played: played ? +played.getAttribute('width') : null, film_t: ft ? ft.textContent : null,
@@ -2323,11 +2526,22 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
             labels = (p.get("ticks") or []) + (p.get("ends") or [])
             smallest = min(labels) if labels else 0
             block_hash = fnv1a64_hex(p.get("block", ""))
+            # P4-003 asks for the polite region from the first render rather
+            # than made when there is something to say, and the first render is
+            # this one: the build's, before any script has run. A region made on
+            # demand is announced late or not at all, because a reader's
+            # assistive technology has to have been watching it already.
+            status = p.get("status")
             # each viewport is served by the pre-render drawn for it: 640 by the wide one, 360 by the narrow
             e1.checks += [Check(f"{w} px: declarative root before any script", p.get("root") and not p.get("defined"), f"root={p.get('root')} defined={p.get('defined')}"),
                           Check(f"{w} px: the build's svg is shown", p.get("by") == "op-pages" and p.get("vbw") == w, f"rendered-by={p.get('by')} viewBox width={p.get('vbw')} css width={p.get('cssw')}"),
                           Check(f"{w} px: caption, summary and table present", p.get("summary", 0) > 40 and p.get("rows", 0) >= 8, f"summary {p.get('summary')} chars, {p.get('rows')} table rows"),
                           Check(f"{w} px: every label at least 10 px effective", labels and smallest >= 10, f"smallest {smallest} px of {len(labels)} labels"),
+                          Check(f"{w} px: the status region is there before any script runs, polite and empty",
+                                bool(status) and status[0] == "polite" and status[1] == "",
+                                f"{'one region' if status else 'no region'} with role status in the declarative root, "
+                                f"aria-live '{status[0] if status else ''}', holding "
+                                f"{len(status[1]) if status else 0} characters of text"),
                           Check(f"{w} px: data-hash matches the block", bool(p.get("hash")) and p.get("hash") == block_hash, f"{p.get('hash')} vs {block_hash}")]
     finally:
         b.call("Emulation.setScriptExecutionDisabled", value=False)
@@ -2465,7 +2679,11 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         touches: navigator.maxTouchPoints}}; }})()"""
     # what a gesture has done: the three custom states, the readout (the preview's
     # time while one is showing, the clock's otherwise), the playhead, the preview
-    # rule, the film's clock and its playing state, and whether the chart has the focus
+    # rule, the film's clock and its playing state, and whether the chart has the
+    # focus. That last is asked the way the element asks it, `svg.contains`, and
+    # not of one node: decision 17 gives the chart one stop and puts it on the
+    # thumb, so a press lands the focus there rather than on the svg around it,
+    # and it is the containment that decides whether a key is the chart's.
     GEST = f"""(() => {{ const c = {C}, f = {F}, sr = c.shadowRoot;
       const svg = {SHOWN % 'sr'};
       const head = svg && svg.querySelector('g.playhead'), ht = svg && svg.querySelector('.head-t');
@@ -2476,31 +2694,94 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         readout: ht ? ht.textContent : null, x: tx ? +tx[1] : null,
         rule: line && line.getAttribute('visibility') !== 'hidden' ? +line.getAttribute('x1') : null,
         film_t: f.shadowRoot.querySelector('.t').textContent, playing: f.matches(':state(playing)'),
-        focused: sr.activeElement === svg}}; }})()"""
+        focused: svg.contains(sr.activeElement),
+        holds: sr.activeElement ? sr.activeElement.tagName.toLowerCase() + '.' + (sr.activeElement.getAttribute('class') || '') : 'nothing'}}; }})()"""
     # Every event the page receives is recorded with its isTrusted, so a check can
     # say the gesture came from the browser's input pipeline: an element.click() and
     # a dispatched event are both untrusted, and a report that drove the chart that
     # way would say so here rather than pass. A key also carries where it went: the
     # svg on its composed path, and the element, whose own listener is the one the
-    # focus rule refuses a key at.
-    b.js("(() => { const c = " + C + ";\n"
-         "      const svg = " + SHOWN % "c.shadowRoot" + ";\n"
-         """      const rec = window.__opgest = {down: null, up: null, key: null};
+    # focus rule refuses a key at. It goes in through a function because the
+    # pointer repair below navigates, and a navigation throws the log away with
+    # the document it was written on.
+    def watch_gestures():
+        b.js("(() => { const c = " + C + ";\n"
+             "      const svg = " + SHOWN % "c.shadowRoot" + ";\n"
+             """      const rec = window.__opgest = {down: null, up: null, key: null};
       const seen = e => ({trusted: e.isTrusted, kind: e.pointerType || '', chart: e.composedPath().indexOf(svg) >= 0});
       document.addEventListener('pointerdown', e => { rec.down = seen(e); }, true);
       document.addEventListener('pointerup', e => { rec.up = seen(e); }, true);
       document.addEventListener('keydown', e => { rec.key = {trusted: e.isTrusted, key: e.key, chart: e.composedPath().indexOf(svg) >= 0,
         element: e.composedPath().indexOf(c) >= 0}; }, true);
       return true; })()""")
+
+    def from_geometry() -> tuple:
+        """The frame of reference a gesture is aimed in, from the geometry last
+        read: CSS px per chart unit, the track's own span, and the two rows the
+        gestures aim at."""
+        # one CSS px per chart unit, to within the pixel a kept pre-render may differ by
+        s = g["w"] / g["vbw"]
+        return s, g["bar"][0], g["bar"][1], g["y"] + g["track"] * s, g["y"] + g["vbh"] * 0.4 * s
+
+    def measure_chart():
+        """Bring the chart into view and read its geometry again. The closures
+        below that turn a time into a client x read these names when they are
+        called, so this is what moves every gesture onto the page as it then
+        stands: after a scroll, after a re-layout, after a navigation."""
+        nonlocal g, scale, bx, bw, y_track, y_plot
+        b.js(LOC)
+        b.wait(0.15)
+        g = b.js(GEOM)
+        scale, bx, bw, y_track, y_plot = from_geometry()
+
+    # The pointer the touch edges take away. Chrome does not put the launch
+    # flag's pointer back when touch emulation goes: the page is left answering
+    # (pointer: none) and (hover: none) where it began at fine and hover, and a
+    # pointer that is not there is not a coarse one either, so "coarse is gone"
+    # is true of a page with no pointer at all. Emulation.setEmulatedMedia will
+    # not mend it: the protocol overrides the media features a preference
+    # carries and not what the device is, and asking it for (pointer: fine)
+    # leaves the page answering none. A navigation does mend it, so that is the
+    # repair, and it is made here, where the pointer is lost, rather than
+    # several edges later: every edge after a touch edge then reads the page
+    # the product ships on rather than one with no pointer at all.
+    POINTERS = ("[matchMedia('(pointer: fine)').matches, matchMedia('(pointer: coarse)').matches, "
+                "matchMedia('(pointer: none)').matches, matchMedia('(hover: hover)').matches, "
+                "navigator.maxTouchPoints]")
+
+    def whole_pointer(state: list) -> bool:
+        """Whether that is the fine hovering pointer the launch flag gives, and
+        not a coarse one and not the absence of one."""
+        return bool(state[0]) and bool(state[3]) and not state[1] and not state[2] and not state[4]
+
+    def pointer_says(state: list) -> str:
+        return (f"pointer: fine {state[0]}, coarse {state[1]}, none {state[2]}, hover: hover {state[3]}, "
+                f"navigator.maxTouchPoints {state[4]}")
+
+    def pointer_back() -> tuple:
+        """Turn touch emulation off and give the page its pointer back, by
+        navigation where turning it off was not enough. Answers what emulation
+        left behind and what the page ends with, so a check can state the loss
+        as well as the mend rather than assume either."""
+        b.call("Emulation.setTouchEmulationEnabled", enabled=False)
+        b.frame()  # an emulation change reaches the page in the next frame
+        lost = b.js(POINTERS)
+        if whole_pointer(lost):
+            return lost, lost
+        b.goto(base + ctrl["page"], READY)
+        b.wait(0.4)
+        watch_gestures()
+        measure_chart()
+        return lost, b.js(POINTERS)
+
+    watch_gestures()
     g = b.js(GEOM)
     block = json.loads(g["block"])
     duration = float(block["duration"])
     times = [row[0] for row in block["rows"]]
     chapters = [ch["t"] for ch in block["chapters"]]
     gap = max(later - earlier for earlier, later in zip(times, times[1:]))
-    scale = g["w"] / g["vbw"]  # CSS px per chart unit: one, to within the pixel a kept pre-render may differ by
-    bx, bw = g["bar"]
-    y_track, y_plot = g["y"] + g["track"] * scale, g["y"] + g["vbh"] * 0.4 * scale
+    scale, bx, bw, y_track, y_plot = from_geometry()
 
     def unit(cx: float) -> float:
         """A client x in the chart's own units, as the element reads it."""
@@ -2558,7 +2839,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                         bool(down.get("trusted") and down.get("chart") and up.get("trusted") and up.get("chart")),
                         f"pointerdown trusted={down.get('trusted')} pointerType={down.get('kind')} on the chart={down.get('chart')}, "
                         f"pointerup trusted={up.get('trusted')}"),
-                  Check("the chart takes the focus from the press itself", tap_down["focused"], f"focused={tap_down['focused']} while the button is down"),
+                  Check("the chart takes the focus from the press itself", tap_down["focused"],
+                        f"focused={tap_down['focused']} while the button is down, on {tap_down['holds']}"),
                   Check("the press alone does not seek", tap_down["film_t"] == tap0["film_t"], f"film still at {tap_down['film_t']}"),
                   Check("the release moves the film's clock", tap1["film_t"] != tap0["film_t"], f"{tap0['film_t']} to {tap1['film_t']}"),
                   Check("the tap lands on the sample its position snaps to", lands(landed, t_tap),
@@ -2706,7 +2988,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
             ("l", "l", "KeyL", 0, "ten samples on, held at the last", lambda t: stepped(t, 10)),
             ("Home", "Home", "Home", 0, "the start", lambda t: 0.0)]
     at = seconds(start["film_t"]) or 0.0
-    e9.checks.append(Check("the press on the chart focused it", start["focused"], f"focused={start['focused']}, film at {start['film_t']}"))
+    e9.checks.append(Check("the press on the chart focused it", start["focused"],
+                           f"focused={start['focused']} on {start['holds']}, film at {start['film_t']}"))
     for label, name, code, mods, says, want in plan:
         target = want(at)
         key(name, code, mods)
@@ -2789,7 +3072,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                          f"playing={blur2['playing']}, and the disclosure the key belongs to is open={opened}"),
                    Check("the same arrow seeks once the chart has the focus back",
                          back["focused"] and lands(landed, want),
-                         f"focused={back['focused']} after the press; film {back['film_t']} to {keyed['film_t']}, expected {want:.2f}s, "
+                         f"focused={back['focused']} on {back['holds']} after the press; film {back['film_t']} to "
+                         f"{keyed['film_t']}, expected {want:.2f}s, "
                          f"five samples on from {t_back:.2f}s in the page's data"),
                    Check("the same Space plays once the chart has the focus back", played["playing"] and not keyed["playing"],
                          f"playing {keyed['playing']} then {played['playing']}, film {keyed['film_t']} to {played['film_t']}")]
@@ -2816,9 +3100,7 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
         touch3 = b.js(GEST)
         finger = b.js("window.__opgest.down") or {}
     finally:
-        b.call("Emulation.setTouchEmulationEnabled", enabled=False)
-        b.frame()
-        restored = b.js("[matchMedia('(pointer: coarse)').matches, navigator.maxTouchPoints]")
+        lost, mended = pointer_back()
     previewed, committed = seconds(touch2["readout"]), seconds(touch3["film_t"])
     e12.checks += [Check("touch emulation makes the pointer coarse", media == [True, False, 5],
                          f"pointer: coarse {media[0]}, fine {media[1]}, navigator.maxTouchPoints {media[2]}"),
@@ -2834,8 +3116,10 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                    Check("the clock waits for the release", touch2["film_t"] == touch0["film_t"], f"film still at {touch2['film_t']}"),
                    Check("the release commits the seek", lands(committed, t_touch) and not touch3["pending"],
                          f"film at {touch3['film_t']}, expected {t_touch:.2f}s, pending={touch3['pending']}"),
-                   Check("touch emulation is off again", restored == [False, 0],
-                         f"pointer: coarse {restored[0]}, navigator.maxTouchPoints {restored[1]}")]
+                   Check("the page has its own fine hovering pointer back, and not merely no coarse one",
+                         whole_pointer(mended),
+                         f"turning emulation off left the page answering {pointer_says(lost)}; the page the edges after "
+                         f"this one run on answers {pointer_says(mended)}")]
     rep.edges.append(e12)
 
     # E13 two fingers: a second point down before the first came up, which is the
@@ -2981,11 +3265,11 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                       f"pending={done['pending']}, peeking={done['peeking']}, preview rule {done['rule']}, captures {m['left']} for "
                       f"{m['ids']}; the chart's readout {done['readout']} on the film's {done['film_t']}")]
     finally:
-        b.call("Emulation.setTouchEmulationEnabled", enabled=False)
-        b.frame()
-        restored = b.js("[matchMedia('(pointer: coarse)').matches, navigator.maxTouchPoints]")
-    e13.checks.append(Check("touch emulation is off again", restored == [False, 0],
-                            f"pointer: coarse {restored[0]}, navigator.maxTouchPoints {restored[1]}"))
+        lost, mended = pointer_back()
+    e13.checks.append(Check("the page has its own fine hovering pointer back, and not merely no coarse one",
+                            whole_pointer(mended),
+                            f"turning emulation off left the page answering {pointer_says(lost)}; the page the edges "
+                            f"after this one run on answers {pointer_says(mended)}"))
     rep.edges.append(e13)
 
     # E14 the snap-back, the other way a drag is cancelled and the one nothing
@@ -3070,6 +3354,906 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                          f"preview rule {dropped['rule']}, the chart's readout {dropped['readout']} back on the film's "
                          f"{dropped['film_t']}")]
     rep.edges.append(e14)
+
+    # The pointer E12 and E13 took away was put back where it was lost, by
+    # `pointer_back`, and each of those edges says so in a check of its own. So
+    # the tree and the ring below are read on a page with the fine hovering
+    # pointer the product ships on, and not on one with no pointer at all.
+
+    # ---- what a reader is given, rather than what the markup says ----------
+    # Every check above reads the markup, and the markup is not the thing a
+    # screen reader meets: the browser builds an accessibility tree from it,
+    # dropping what is hidden, keeping what is not, and naming each node by
+    # whatever it computed. Accessibility.getFullAXTree is that tree.
+    # It is read once here and every check in this edge is derived from the one
+    # read, so what is proved is the structure the browser built and not a
+    # count of attributes. The pointer goes first, so no peek is showing while
+    # the tree, and the ring's pixels below, are read.
+    b.hover(2, 2)
+    b.wait(0.15)
+    b.call("Accessibility.enable")
+    e15 = Edge(("Static", "Upgrade", "Following"), "The accessibility tree the chart exposes",
+               "Decision 15's structure as the browser built it: the host is a group named by its caption, the svg is one "
+               "graphics-document, each series is a graphics-object named from its own samples, the thumb is the one slider, "
+               "the marks and the chapters are named groups of buttons, the status region is there, and nothing the drawing "
+               "hid reaches the tree at all. Every expected name below is computed from the page's own data block. The film "
+               "beside the chart is read from the same tree: one slider, its native range input, and a chart that is a "
+               "document whose playhead a reader never meets.")
+    data_rows = block["rows"]
+    marks = block.get("marks", [])
+    chapter_cues = block.get("chapters", [])[1:]  # the first chapter starts the timeline and carries no tick
+    # The thumb's own name, which is not the document's: the document is named
+    # by the caption's list of series, and a time control called "palette,
+    # solid thumb and progress ghost" says nothing about what it moves. The
+    # element writes this one as an aria-label, and the check states the word
+    # it expects rather than accepting whatever it is given.
+    THUMB_NAME = "Time"
+
+    def series_name(i: int, spec: dict) -> str:
+        """What the renderer computed for one series' graphics-object: decision
+        15's "Name, N samples, min to max unit, from t0 to t1", every number
+        read off the page's own block rather than off the chart."""
+        present = [(row[0], row[i + 1]) for row in data_rows if row[i + 1] is not None]
+        parts = [spec["label"]] if spec.get("label") else []
+        parts.append({0: "no samples", 1: "1 sample"}.get(len(present), f"{len(present)} samples"))
+        if present:
+            unit = spec.get("unit", "")
+            span = f"{announced(min(v for _, v in present))} to {announced(max(v for _, v in present))}"
+            parts.append(f"{span} {unit}" if unit else span)
+            parts.append(f"from {present[0][0]:.2f} s to {present[-1][0]:.2f} s")
+        return ", ".join(parts)
+
+    def cue_name(label: str, t: float) -> str:
+        """What one cue's button announces: its name and the instant it stands for."""
+        return f"{label}, {t:.2f} s" if label else f"{t:.2f} s"
+
+    def with_role(nodes: list, role: str) -> list:
+        return [n for n in nodes if ax_field(n, "role") == role]
+
+    tree = b.call("Accessibility.getFullAXTree")["nodes"]
+    index = ax_index(tree)
+    ids = {name: backend_of(b, expr) for name, expr in (
+        ("chart", C),
+        ("thumb", f"{SHOWN % f'{C}.shadowRoot'}.querySelector('g.playhead')"),
+        ("film", F),
+        ("film_slider", f"{F}.shadowRoot.querySelector('input[type=range]')"),
+        ("film_thumb", f"{SHOWN % f'{F}.shadowRoot'}.querySelector('g.playhead')"))}
+    chart_root = next((n for n in tree if n.get("backendDOMNodeId") == ids["chart"]), None)
+    under = ax_under(index, chart_root)
+    docs, sliders, live = with_role(under, "graphics-document"), with_role(under, "slider"), with_role(under, "status")
+    inside = ax_under(index, docs[0]) if docs else []
+    objects, buttons = with_role(inside, "graphics-object"), with_role(inside, "button")
+    thumb_ax = next((n for n in sliders if n.get("backendDOMNodeId") == ids["thumb"]), None)
+    title = b.js(f"{C}.shadowRoot.querySelector('figcaption .title').textContent")
+    host_role = ax_field(chart_root, "role") if chart_root else "no node for the host"
+    host_name = ax_field(chart_root, "name") if chart_root else ""
+    named = [ax_field(n, "name") for n in objects]
+    want_series = sorted(series_name(i, s) for i, s in enumerate(block["series"]))
+    got_series = sorted(n for n in named if n not in ("Marks", "Chapters"))
+    groups = {ax_field(n, "name"): [ax_field(c, "name") for c in ax_under(index, n)[1:] if ax_field(c, "role") == "button"]
+              for n in objects if ax_field(n, "name") in ("Marks", "Chapters")}
+    want_groups = {"Marks": sorted(cue_name(m.get("label", ""), m["t"]) for m in marks),
+                   "Chapters": sorted(cue_name(c.get("title", ""), c["t"]) for c in chapter_cues)}
+    thumb_props = ax_props(thumb_ax) if thumb_ax else {}
+    live_props = ax_props(live[0]) if live else {}
+    # Nothing the chart draws is text as far as a reader is concerned: the
+    # decoration is hidden, and so is the readout inside the thumb, whose words
+    # the slider says itself in its value. A node that is neither the structure
+    # decision 15 asks for nor a piece of that structure's own text is a stray.
+    TEXT_ROLES = ("StaticText", "InlineTextBox")
+    structural = {n["nodeId"] for n in objects + buttons + sliders}
+    stray = [ax_field(n, "role") for n in inside[1:] if n["nodeId"] not in structural]
+    exposed = sorted({ax_field(n, "name") for n in inside if ax_field(n, "role") in TEXT_ROLES})
+    slider_text = sorted({ax_field(n, "name") for n in ax_under(index, thumb_ax) if ax_field(n, "role") in TEXT_ROLES})
+    drawn_text = b.js(f"{SHOWN % f'{C}.shadowRoot'}.querySelectorAll('text').length")
+    readout_text = b.js(f"{SHOWN % f'{C}.shadowRoot'}.querySelector('.head-t').textContent")
+    thumb_says = b.js(f"{SHOWN % f'{C}.shadowRoot'}.querySelector('g.playhead').getAttribute('aria-valuetext')")
+    clock = seconds(b.js(f"{F}.shadowRoot.querySelector('.t').textContent")) or 0.0
+    e15.checks += [
+        Check("the host is a group named by the caption's heading",
+              host_role == "group" and host_name == title and bool(title),
+              f"role {host_role}, named '{host_name}' against the caption's '{title}'"),
+        Check("the chart's svg is one graphics-document, named by the same heading",
+              len(docs) == 1 and ax_field(docs[0], "name") == title,
+              f"{len(docs)} graphics-document(s) under the host, named "
+              f"'{ax_field(docs[0], 'name') if docs else ''}'"),
+        Check("one graphics-object per series, named as the element computed it",
+              got_series == want_series,
+              f"{len(got_series)} of {len(block['series'])} series named; the tree says {got_series}, the page's data asks "
+              f"for {want_series}"),
+        Check("the thumb is the one slider in the chart, named for the clock it moves, with a value",
+              len(sliders) == 1 and thumb_ax is not None and ax_field(thumb_ax, "name") == THUMB_NAME
+              and isinstance(ax_field(thumb_ax, "value"), (int, float))
+              and thumb_props.get("valuemin") == 0 and abs((thumb_props.get("valuemax") or 0) - duration) <= 0.01,
+              f"{len(sliders)} slider(s) under the host; the one on the thumb is named "
+              f"'{ax_field(thumb_ax, 'name') if thumb_ax else ''}', expected '{THUMB_NAME}' and not the document's own "
+              f"'{title}'; value "
+              f"{(ax_field(thumb_ax, 'value') if thumb_ax else 0):.2f}, from "
+              f"{(thumb_props.get('valuemin') or 0):.2f} to {(thumb_props.get('valuemax') or 0):.2f} against the block's "
+              f"{duration:.2f}s"),
+        Check("the Marks and Chapters groups hold one button per cue, each naming its own",
+              groups == want_groups and len(buttons) == len(marks) + len(chapter_cues),
+              f"{len(buttons)} buttons under the document; the tree says {groups}, the page's data asks for {want_groups}"),
+        # that it is there from the first render is E1's to say, off the
+        # declarative root the build wrote, before any script has run: this
+        # edge reads a page that has been seeked at, so the region is not empty
+        # by now and its emptiness here would mean nothing
+        Check("the status region is in the tree, polite and atomic",
+              len(live) == 1 and live_props.get("live") == "polite" and live_props.get("atomic") is True,
+              f"{len(live)} status region(s) under the host, live '{live_props.get('live')}', atomic {live_props.get('atomic')}"),
+        # `inside` is required to hold something: with no document under the
+        # host there are no nodes to walk, so nothing is exposed and nothing is
+        # stray, and this check would pass on a chart that reached the tree as
+        # nothing at all
+        Check("nothing the drawing hid reaches the tree",
+              bool(inside) and not stray and not exposed,
+              f"the svg draws {drawn_text} text nodes and the tree exposes {len(exposed)} of them; {len(inside)} nodes "
+              f"under the document, every one of them decision 15's structure"
+              + (f"; strays {sorted(stray)}" if stray else "")),
+        # The readout sits inside the thumb so that it is not read beside the
+        # slider as loose text; hidden, it is not read as the slider's content
+        # either, and the time is left to the one thing that says it in words.
+        # The thumb has to be in the tree for that to mean anything: a slider
+        # that is not there has no text under it either.
+        Check("the thumb's readout is not read a second time as the slider's own text",
+              thumb_ax is not None and bool(readout_text) and not slider_text and readout_text not in exposed
+              and in_words(clock) in (thumb_says or ""),
+              f"the thumb draws the readout '{readout_text}' and the tree exposes {len(slider_text)} text nodes under the "
+              f"{'slider' if thumb_ax else 'slider, which is not in the tree at all'}; the slider's own value says "
+              f"'{thumb_says}', which names the {in_words(clock)} the film's clock stands at")]
+    # the film on the same page, from the same read of the tree
+    film_root = next((n for n in tree if n.get("backendDOMNodeId") == ids["film"]), None)
+    film_under = ax_under(index, film_root)
+    film_sliders, film_docs = with_role(film_under, "slider"), with_role(film_under, "graphics-document")
+    film_inside = ax_under(index, film_docs[0]) if film_docs else []
+    film_slider_props = ax_props(film_sliders[0]) if film_sliders else {}
+    film_value = b.js(f"""(() => {{ const i = {F}.shadowRoot.querySelector('input[type=range]');
+      return {{text: i.getAttribute('aria-valuetext'), value: i.value}}; }})()""")
+    is_input = bool(film_sliders) and film_sliders[0].get("backendDOMNodeId") == ids["film_slider"]
+    # What the film's own slider says, computed here from the film's own data
+    # block rather than read back from the words under test: that input is the
+    # one slider a reader of this page meets, so its words are the ones that
+    # are actually spoken, and nothing else in either report kind reads them.
+    film_data = json.loads(b.js(f"""(() => {{ const s = {F}.querySelector('script[type="application/json"]');
+      return s ? s.textContent : '{{}}'; }})()""") or "{}")
+    film_times = [float(t) for t in film_data.get("times", [])]
+    film_chapters = [(float(c[0]), str(c[1])) for c in film_data.get("chapters", [])] or [(0.0, "start")]
+
+    def film_frame(t: float) -> int:
+        """The frame the film's clock stands in (`frame_at` in film.rs): the
+        last sample at or before it, and the first where none is."""
+        return max([j for j, s in enumerate(film_times) if s <= t + 1e-6] or [0])
+
+    def film_says(t: float) -> str:
+        """What the film's slider announces at `t` (`value_text` in film.rs):
+        the time, the frame index and the chapter it falls in.
+
+        The time is spelled by the chart's own `in_words` and not by a second
+        rounding of the film's, which is the element's own rule: the region and
+        the control name one instant one way, where the control used to call
+        1.55 seconds what the region called 1.6. So this mirrors the spelling
+        already mirrored above rather than keeping a third copy of it.
+
+        The clock is read off the film's readout, which writes it to a
+        hundredth, and spelled here to a tenth. A time within half a hundredth
+        of a tenth's boundary could therefore be rounded twice on this side and
+        once on the element's; at this edge the clock stands on a sample the
+        page's own block names, every one of which is exact to a hundredth, so
+        no such time arises."""
+        chapter = next((c for c in reversed(film_chapters) if c[0] <= t + 1e-6), film_chapters[0])
+        return f"{in_words(t)}, frame {film_frame(t) + 1} of {len(film_times)}, {chapter[1]}"
+
+    e15.checks += [
+        Check("the film exposes one slider, and it is its native range input",
+              len(film_sliders) == 1 and is_input and bool(ax_field(film_sliders[0], "name")),
+              f"{len(film_sliders)} slider(s) under the film, named "
+              f"'{ax_field(film_sliders[0], 'name') if film_sliders else ''}'; the slider is the range input itself: "
+              f"{is_input}"),
+        Check("the film's chart is a document with no slider in it, and its playhead is not in the tree",
+              len(film_docs) == 1 and not with_role(film_inside, "slider")
+              and not any(n.get("backendDOMNodeId") == ids["film_thumb"] for n in tree),
+              f"{len(film_docs)} graphics-document(s) under the film, named "
+              f"'{ax_field(film_docs[0], 'name') if film_docs else ''}', holding "
+              f"{len(with_role(film_inside, 'graphics-object'))} graphics-objects and "
+              f"{len(with_role(film_inside, 'slider'))} sliders; its playhead appears "
+              f"{sum(1 for n in tree if n.get('backendDOMNodeId') == ids['film_thumb'])} times in the whole tree"),
+        # The words are read from the attribute rather than from the tree
+        # because the protocol answers a slider's `valuetext` with the input's
+        # own value, which here is a frame index: what that costs is stated in
+        # the detail rather than made the thing this check measures, since a
+        # statement about CDP goes red on a browser upgrade with no defect in
+        # the page. What is measured is the page: the words the film wrote, and
+        # the frame index under them, both against a recomputation of the
+        # film's own data block.
+        Check("the film's slider says the time, the frame and the chapter, spelling the instant as the chart does",
+              bool(film_times) and film_value["text"] == film_says(clock)
+              and film_value["value"] == str(film_frame(clock)),
+              f"with the film reading {clock:.2f}s its slider carries aria-valuetext '{film_value['text']}', expected "
+              f"'{film_says(clock)}' from the film's own {len(film_times)} samples and "
+              f"{len(film_chapters)} chapter(s), over the value '{film_value['value']}', expected the frame index "
+              f"{film_frame(clock)}; the tree reports valuetext "
+              f"'{film_slider_props.get('valuetext')}', which is that value and not those words, so the words can only "
+              f"be read from the attribute")]
+    rep.edges.append(e15)
+
+    # E16 the focus ring, measured off the rendered pixels
+    # A pixel within this much of the ring's computed colour is the ring itself
+    # and not an edge blended with whatever is behind it; the floor is decision
+    # 20's 3:1 against the surface.
+    RING_MATCH, RING_CONTRAST = 2.0, 3.0
+    e16 = Edge(("Following", "Seek", "Following"), "The focus ring: Tab to the thumb, then read the pixels",
+               "The ring is shown on :focus-visible alone, so the focus has to arrive from the keyboard: Tab is pressed from "
+               "the page's first stop until the thumb has it. What is then measured is the drawing, not the stylesheet. The "
+               "ring's own colour is counted in the picture the browser drew, the same box is captured again with the focus "
+               "gone, and the surface behind the ring is whatever the unfocused picture holds under the pixels the ring "
+               "painted. The ratio is WCAG 2.1's, computed here from those two colours, and the distance beside it is "
+               "CIEDE2000: neither is looked up from a token name.")
+    from PIL import Image
+    RING = f"""(() => {{ const sr = {C}.shadowRoot, svg = {SHOWN % 'sr'};
+      const g = svg.querySelector('g.playhead'), ring = svg.querySelector('.head-ring'), target = svg.querySelector('g.playhead rect.target');
+      const cs = getComputedStyle(ring), rr = ring.getBoundingClientRect(), tr = target.getBoundingClientRect();
+      const box = r => [+r.x.toFixed(2), +r.y.toFixed(2), +r.width.toFixed(2), +r.height.toFixed(2)];
+      return {{stroke: cs.stroke, width: parseFloat(cs.strokeWidth), ring: box(rr), target: box(tr),
+        focus: sr.activeElement === g, visible: g.matches(':focus-visible')}}; }})()"""
+
+    def tab_to_thumb(limit: int = 60) -> int:
+        """Tab from the page's first stop until the thumb has the focus, and say
+        how many presses that took. The focus starts there rather than wherever
+        the last edge left it, because blurring an element leaves the sequential
+        navigation's starting point on it and the next Tab would carry on from
+        inside the chart. The browser moves the focus from the key's own virtual
+        code rather than from its name, so both are sent."""
+        b.js("""(() => { const a = document.activeElement; if (a && a.blur) a.blur();
+          const first = document.querySelector('a[href], button, input, select, textarea, [tabindex]');
+          if (first && first.focus) first.focus(); else document.body.focus(); return 'ok'; })()""")
+        for n in range(1, limit + 1):
+            for kind in ("keyDown", "keyUp"):
+                b.call("Input.dispatchKeyEvent", type=kind, key="Tab", code="Tab",
+                       windowsVirtualKeyCode=9, nativeVirtualKeyCode=9)
+            if b.js(f"{C}.shadowRoot.activeElement === {SHOWN % f'{C}.shadowRoot'}.querySelector('g.playhead')"):
+                return n
+        return 0
+
+    def blur_thumb():
+        """Take the focus off the thumb and put it on the body, which is what
+        the element treats as the focus leaving: the long form of the value
+        goes in on the blur, so the blur is driven rather than waited for."""
+        b.js(f"(() => {{ const g = {SHOWN % f'{C}.shadowRoot'}.querySelector('g.playhead'); g.blur(); document.body.focus(); return 'ok'; }})()")
+
+    def focus_host():
+        """Focus the host itself, from nothing, which is the delegation asked
+        for directly rather than reached by Tab."""
+        b.js(f"(() => {{ const a = document.activeElement; if (a && a.blur) a.blur(); {C}.focus(); return 'ok'; }})()")
+
+    def shot(box) -> "Image.Image":
+        return Image.open(io.BytesIO(b.frame_bytes(box, margin=0, scale=DPR))).convert("RGB")
+
+    def matching(img, lab) -> list:
+        return [(x, y) for y in range(img.height) for x in range(img.width)
+                if ciede2000(_srgb_to_lab(img.getpixel((x, y))), lab) <= RING_MATCH]
+
+    taken = tab_to_thumb()
+    ring_on = b.js(RING)
+    shot_box = (ring_on["ring"][0] - 3, ring_on["ring"][1] - 3, ring_on["ring"][2] + 6, ring_on["ring"][3] + 6)
+    lit = shot(shot_box)
+    blur_thumb()
+    b.wait(0.15)
+    ring_off = b.js(RING)
+    dark = shot(shot_box)
+    want_rgb = channels(ring_on["stroke"])
+    want_lab = _srgb_to_lab(want_rgb)
+    pixels_on = matching(lit, want_lab)
+    pixels_off = matching(dark, want_lab)
+    behind = {}
+    for spot in pixels_on:
+        behind[dark.getpixel(spot)] = behind.get(dark.getpixel(spot), 0) + 1
+    surface, share = max(behind.items(), key=lambda pair: pair[1]) if behind else ((0, 0, 0), 0)
+    ratio = wcag_contrast(want_rgb, surface) if behind else 0.0
+    apart = ciede2000(want_lab, _srgb_to_lab(surface)) if behind else 0.0
+    clear = sum(n for colour, n in behind.items() if wcag_contrast(want_rgb, colour) >= RING_CONTRAST)
+    rx, ry, rw, rh = ring_on["ring"]
+    tx, ty, tw, th = ring_on["target"]
+    gaps = (tx - rx, ty - ry, rx + rw - tx - tw, ry + rh - ty - th)
+    e16.checks += [
+        Check("Tab reaches the chart's thumb, and the browser calls that focus visible",
+              taken > 0 and ring_on["focus"] and ring_on["visible"],
+              f"the thumb took the focus on Tab {taken} of at most 60, and matches :focus-visible={ring_on['visible']}"),
+        Check("the ring is painted only while the thumb has that focus",
+              bool(pixels_on) and not pixels_off and ring_on["stroke"] != "none" and ring_off["stroke"] == "none"
+              and ring_off["ring"] == ring_on["ring"],
+              f"{len(pixels_on)} pixels of {ring_on['stroke']} in the ring's box with the focus and {len(pixels_off)} without "
+              f"it, from the same box; the computed stroke is {ring_on['stroke']} focused and {ring_off['stroke']} otherwise"),
+        Check("the ring's stroke is at least 2 px",
+              ring_on["width"] >= 2.0,
+              f"{ring_on['width']:.2f} px focused, {ring_off['width']:.2f} px and unpainted otherwise"),
+        Check("the ring stands outside the thumb's target on all four sides",
+              min(gaps) > 0,
+              f"the ring's {rw:.1f} by {rh:.1f} box clears the thumb's {tw:.1f} by {th:.1f} target by "
+              f"{gaps[0]:.1f} px left, {gaps[1]:.1f} px top, {gaps[2]:.1f} px right and {gaps[3]:.1f} px bottom"),
+        Check("the ring's colour is at least 3:1 against the surface behind it",
+              ratio >= RING_CONTRAST and share > len(pixels_on) / 2,
+              f"{ring_on['stroke']} on rgb{surface} at {ratio:.2f}:1, dE00 {apart:.1f}; that surface is under {share} of the "
+              f"ring's {len(pixels_on)} pixels and {clear} of them clear {RING_CONTRAST:.0f}:1, the other "
+              f"{len(pixels_on) - clear} lying over something the chart itself drew")]
+    rep.edges.append(e16)
+
+    # E17 the status region: the four things decision 18 says, and no fifth
+    e17 = Edge(("Following", "Toggle", "Following"), "The status region: what is said, and when",
+               "Decision 18 gives the polite region four messages: a seek that committed, play, pause, and a chapter entered "
+               "while the film plays. A peek and a seek still being aimed say nothing at all, so this edge drives a hover and "
+               "a pending drag first and reads the region after each, then releases, plays across a chapter boundary and "
+               "pauses. One last seek is committed while the film is still running, which is the case every other gesture "
+               "here misses and the case a reader seeks most. The words expected are the element's own, built here from the "
+               "page's data block and the same spelling-out of a time the element uses.")
+    SAID = f"""(() => {{ const c = {C}, f = {F}, sr = c.shadowRoot, live = sr.querySelector('[role="status"]');
+      return {{said: live ? live.textContent : null, film_t: f.shadowRoot.querySelector('.t').textContent,
+        playing: f.matches(':state(playing)'), mirrored: c.matches(':state(playing)'),
+        peeking: c.matches(':state(peeking)'), pending: c.matches(':state(pending)')}}; }})()"""
+
+    def chapter_of(t: float) -> str:
+        """The chapter a time falls in, as the element names it."""
+        return next((c.get("title", "") for c in reversed(block["chapters"]) if c["t"] <= t + 1e-9), "")
+
+    def says_seek(t: float) -> str:
+        return f"Seeked to {in_words(t)}, chapter {chapter_of(t)}" if chapter_of(t) else f"Seeked to {in_words(t)}"
+
+    # E16's Tab presses moved the focus through the film's own controls, and a
+    # focus scrolls what it lands on into view, so the chart is somewhere else
+    # on the screen now. It goes back into view and is measured again before
+    # any of these gestures is aimed.
+    measure_chart()
+    # a tap first, so the region is not empty when the hover and the drag are
+    # asked to leave it alone: a check that nothing changed is worth nothing
+    # against a region with nothing in it
+    x_first, x_peek, x_commit = at_x(times[1]), at_x(times[2]) + 0.5 * SNAP_RADIUS * scale, at_x(times[4])
+    t_first, t_commit = maps_to(x_first), maps_to(x_commit)
+    mouse(x_first, y_track)
+    mouse(x_first, y_track, "mouseReleased")
+    b.wait(0.15)
+    said0 = b.js(SAID)
+    b.hover(x_peek, y_plot)
+    b.wait(0.12)
+    hovered = b.js(SAID)
+    b.hover(4, 4)
+    b.wait(0.1)
+    mouse(x_first, y_plot)
+    drag_to(x_commit, y_plot)
+    b.wait(0.12)
+    aiming = b.js(SAID)
+    mouse(x_commit, y_plot, "mouseReleased")
+    b.wait(0.15)
+    committed = b.js(SAID)
+    key(" ", "Space")
+    playing = sample(b, SAID, 0.8, period=period)
+    key(" ", "Space")
+    b.wait(0.2)
+    stopped = b.js(SAID)
+    # Every seek above was committed on a film standing still, which is the one
+    # case this message cannot be lost in. A seek made while the film runs
+    # pauses it, the film's pause renders and dispatches a tick of its own with
+    # the play flag turned over, and the chart hears that tick inside its own
+    # emit: whichever message is written first is the one overwritten. So one
+    # seek is driven while the film plays, in the case a reader seeks most.
+    # The clock goes back to the start first, so the play below has the whole
+    # timeline to run in and is still running when the seek lands.
+    key("Home", "Home")
+    b.wait(0.12)
+    key(" ", "Space")
+    b.wait(0.3)
+    running = b.js(SAID)
+    key("End", "End")
+    b.wait(0.2)
+    sought = b.js(SAID)
+    spoken = [s["said"] for _, s in playing]
+    heard = [text for i, text in enumerate(spoken) if i == 0 or text != spoken[i - 1]]
+    crossed = next((c for c in chapter_cues if t_commit < c["t"]), None)
+    says_chapter = f"Chapter {crossed.get('title', '')}" if crossed else None
+    e17.checks += [
+        Check("the gestures here are aimed at a page with the fine hovering pointer the product ships on",
+              bool(g["fine"] and g["hover"] and not g["no_pointer"] and not g["coarse"] and not g["touches"]),
+              f"the chart is drawn on a page reporting pointer: fine {g['fine']}, coarse {g['coarse']}, none "
+              f"{g['no_pointer']}, hover: hover {g['hover']}, navigator.maxTouchPoints {g['touches']}; the touch edges "
+              f"took that pointer away and gave it back where they took it"),
+        Check("a committed tap says where the clock went",
+              said0["said"] == says_seek(t_first) and lands(seconds(said0["film_t"]), t_first),
+              f"the region says '{said0['said']}', expected '{says_seek(t_first)}' for a film at {said0['film_t']}"),
+        Check("a hover peeks and says nothing",
+              hovered["peeking"] and hovered["said"] == said0["said"],
+              f"peeking={hovered['peeking']} over the plot and the region still holds '{hovered['said']}'"),
+        Check("a seek still being aimed says nothing",
+              aiming["pending"] and aiming["said"] == said0["said"],
+              f"pending={aiming['pending']} with the film still at {aiming['film_t']} and the region still holding "
+              f"'{aiming['said']}'"),
+        Check("the release says where the clock went next",
+              committed["said"] == says_seek(t_commit) and lands(seconds(committed["film_t"]), t_commit),
+              f"the region says '{committed['said']}', expected '{says_seek(t_commit)}' for a film at "
+              f"{committed['film_t']}"),
+        Check("playing says so, crossing a chapter names it, and nothing else is said",
+              says_chapter is not None and heard[-2:] == ["Playing", says_chapter] and len(heard) <= 3
+              and heard[0] in (says_seek(t_commit), "Playing"),
+              f"over {len(playing)} samples from {committed['film_t']} the region said {heard}, expected "
+              f"'Playing' and then '{says_chapter}' as the clock crossed {crossed['t'] if crossed else 0:.2f}s"),
+        Check("pausing says so", stopped["said"] == "Paused" and stopped["playing"] is False,
+              f"the region says '{stopped['said']}' with the film at {stopped['film_t']}; the film's playing state is "
+              f"{stopped['playing']} and the chart's mirror of it is {stopped['mirrored']}"),
+        Check("a seek committed while the film plays says where the clock went, and not that the film paused",
+              running["playing"] is True and sought["said"] == says_seek(duration)
+              and lands(seconds(sought["film_t"]), duration),
+              f"the film was playing at {running['film_t']} with the region holding '{running['said']}'; the seek to the "
+              f"end left it saying '{sought['said']}', expected '{says_seek(duration)}' and not the 'Paused' the film's "
+              f"own pause writes as it answers that seek. The film ends at {sought['film_t']}, playing "
+              f"{sought['playing']}")]
+    rep.edges.append(e17)
+
+    # E18 the thumb's value text, which is what a listener hears the slider say
+    e18 = Edge(("Following", "Seek", "Following"), "The thumb's value: the whole timeline off focus, the time alone on it",
+               "Decision 18 puts the duration and the frame index into the thumb's value whenever the thumb has not got the "
+               "focus, so they are spoken once when it gains it, and leaves them out of every change while it has it. The "
+               "words are read from the attribute because the tree answers a slider's valuetext with its own number, as E15 "
+               "states; that number is read from the tree after the seek and held against the film's own clock. When the "
+               "words go in is measured from inside the page, by two listeners that stand where this tool cannot.")
+    VALUE = f"""(() => {{ const sr = {C}.shadowRoot, g = {SHOWN % 'sr'}.querySelector('g.playhead');
+      return {{text: g.getAttribute('aria-valuetext'), now: g.getAttribute('aria-valuenow'),
+        focused: sr.activeElement === g, film_t: {F}.shadowRoot.querySelector('.t').textContent}}; }})()"""
+
+    def short_form(t: float) -> str:
+        """The value while the thumb has the focus: the time and its chapter."""
+        return f"{in_words(t)}, chapter {chapter_of(t)}" if chapter_of(t) else in_words(t)
+
+    def long_form(t: float) -> str:
+        """The value off focus: the whole timeline and the frame index as well."""
+        return (f"{in_words(t)} of {in_words(duration)}, frame {index_at(t) + 1} of {len(times)}"
+                + (f", chapter {chapter_of(t)}" if chapter_of(t) else ""))
+
+    # the clock is put on a sample first, so every expected phrase below is the
+    # element's own words for a time the page's data names rather than for
+    # whatever instant the play above happened to stop at. The chart still has
+    # the focus from that play, and the thumb does not, so this seek writes the
+    # off-focus form.
+    key("End", "End")
+    b.wait(0.1)
+    t_end, t_left = duration, stepped(duration, -5)
+    # E17's press left the focus on the thumb, which is where decision 17 puts
+    # it, so that seek was written in the short form.
+    blur_thumb()
+    b.wait(0.1)
+    blurred = b.js(VALUE)
+    tabs = tab_to_thumb()
+    on_focus = b.js(VALUE)
+    # Whether the words go in in the frame the key was delivered in cannot be
+    # asked of the attribute afterwards: `call` pumps an animation frame for
+    # every Input method, so two frames have run by the time a check reads it,
+    # and a write made in the frame after the key is already there. These two
+    # listeners read the attribute from inside the page instead, each at a
+    # moment the harness cannot stand at. The first fires on the film's own
+    # clock event, which the element dispatches from the middle of the handler,
+    # so it says what the thumb read at the instant the film moved: the value
+    # from before the seek, because the element emits first and writes the time
+    # the film landed on rather than the time it asked for. The second fires on
+    # the keydown as it reaches the document, after the element's own handler on
+    # the host has returned and before any animation frame has run, so it says
+    # what the thumb read at the end of the key's own frame. A write deferred to
+    # the next frame is the old value in both, which is the defect this pins.
+    b.js(f"""(() => {{ const c = {C}, rec = window.__opsaid = {{tick: [], key: []}};
+      const said = () => {{ const g = {SHOWN % 'c.shadowRoot'}.querySelector('g.playhead');
+        return {{text: g.getAttribute('aria-valuetext'), now: g.getAttribute('aria-valuenow')}}; }};
+      document.addEventListener('opt-film-time', () => rec.tick.push(said()));
+      document.addEventListener('keydown', () => rec.key.push(said()));
+      return true; }})()""")
+    key("ArrowLeft", "ArrowLeft")
+    seeked = b.js(VALUE)
+    witness = b.js("window.__opsaid") or {"tick": [], "key": []}
+    at_tick = (witness["tick"] or [None])[-1]
+    at_key = (witness["key"] or [None])[-1]
+    again = b.call("Accessibility.getFullAXTree")["nodes"]
+    moved = next((n for n in again if n.get("backendDOMNodeId") == ids["thumb"]), None)
+    ax_value = ax_field(moved, "value") if moved else None
+    blur_thumb()
+    b.wait(0.12)
+    back = b.js(VALUE)
+    b.call("Accessibility.disable")
+    e18.checks += [
+        Check("with the thumb unfocused the value carries the whole timeline and the frame",
+              not blurred["focused"] and blurred["text"] == long_form(t_end) and lands(seconds(blurred["film_t"]), t_end),
+              f"with the film at {blurred['film_t']} and the thumb blurred the value reads '{blurred['text']}', expected "
+              f"'{long_form(t_end)}'"),
+        Check("a key seek on the focused thumb writes the time alone",
+              tabs > 0 and on_focus["text"] == blurred["text"] and seeked["text"] == short_form(t_left)
+              and lands(seconds(seeked["film_t"]), t_left),
+              f"taking the focus on Tab {tabs} left the value at '{on_focus['text']}'; the seek to {seeked['film_t']} wrote "
+              f"'{seeked['text']}', expected '{short_form(t_left)}' with neither the "
+              f"{in_words(duration)} of the timeline nor a frame index in it"),
+        Check("it writes it in the frame the key was delivered in, and not in the frame that draws it",
+              at_key is not None and at_key["text"] == short_form(t_left) and lands(seconds(at_key["now"]), t_left)
+              and at_tick is not None and at_tick["text"] == on_focus["text"],
+              f"at the film's own clock event, dispatched from inside the element's handler, the thumb still read "
+              f"'{at_tick['text'] if at_tick else 'nothing: no clock event arrived'}', which is the value from before "
+              f"the seek: the element emits first, so that the time it speaks is the one the film landed on. By the end "
+              f"of the key's own frame, before any animation frame had run, it read "
+              f"'{at_key['text'] if at_key else 'nothing: no key reached the document'}' and "
+              f"{at_key['now'] if at_key else 'no number'}, expected '{short_form(t_left)}' at {t_left:.2f}s. Reading "
+              f"the attribute after the key cannot tell the two apart, because every Input method pumps a frame"),
+        Check("the tree's own number for the slider is the film's clock",
+              isinstance(ax_value, (int, float)) and lands(ax_value, t_left) and lands(float(seeked["now"]), t_left),
+              f"the tree reads {(ax_value or 0):.2f} where the film reads {seeked['film_t']} and the attribute "
+              f"{seeked['now']}, expected {t_left:.2f}s"),
+        Check("losing the focus puts the whole timeline back at once",
+              not back["focused"] and back["text"] == long_form(t_left),
+              f"one frame after the blur the value reads '{back['text']}', expected '{long_form(t_left)}'")]
+    rep.edges.append(e18)
+
+    # E19 target sizes, decision 20's 24 by 24 with 2.5.8's spacing exception
+    e19 = Edge(("Following", "Seek", "Following"), "Target sizes: every cue, measured in CSS pixels",
+               "Decision 20 gives the thumb and every cue an invisible 24 by 24 CSS px hit rect, or, where two cues sit "
+               "closer than that, the spacing exception SC 2.5.8 allows: a 24 px circle centred on each target meeting no "
+               "other. Both are measured here off the boxes the browser laid out, and the closest pair is stated whether the "
+               "exception is needed or not, so it is never assumed.")
+    TARGETS = f"""(() => {{ const svg = {SHOWN % f'{C}.shadowRoot'};
+      const box = el => {{ const r = el.getBoundingClientRect(); return [+r.x.toFixed(2), +r.y.toFixed(2), +r.width.toFixed(2), +r.height.toFixed(2)]; }};
+      const cues = [...svg.querySelectorAll('g[role="button"]')].map(g => {{ const rect = g.querySelector('rect.target');
+        return {{name: g.getAttribute('aria-label'), cue: rect ? rect.dataset.cue : null, box: box(g)}}; }});
+      return {{cues, thumb: box(svg.querySelector('g.playhead rect.target'))}}; }})()"""
+    sizes = b.js(TARGETS)
+    cues = sorted(sizes["cues"], key=lambda c: c["box"][0])
+    small = [c for c in cues if min(c["box"][2], c["box"][3]) < 24.0 - 0.01]
+    centres = [(c["box"][0] + c["box"][2] / 2, c["box"][1] + c["box"][3] / 2) for c in cues]
+    pairs = [(math.dist(a, b_), i, j) for i, a in enumerate(centres) for j, b_ in enumerate(centres) if i < j]
+    closest, first, second = min(pairs) if pairs else (float("inf"), 0, 0)
+    smallest = min((min(c["box"][2], c["box"][3]) for c in cues), default=0.0)
+    e19.checks += [
+        Check("every cue's target is 24 by 24 CSS px, or the spacing exception is measured",
+              len(cues) == len(marks) + len(chapter_cues) and (not small or closest >= 24.0),
+              f"{len(cues)} cue targets for {len(marks)} marks and {len(chapter_cues)} chapters, the smallest "
+              f"{smallest:.1f} px on its shorter side; the closest pair, "
+              f"{cues[first]['name'] if pairs else 'none'} and {cues[second]['name'] if pairs else 'none'}, is "
+              f"{closest:.1f} px between centres, so the spacing exception is "
+              f"{'what carries the ' + str(len(small)) + ' target(s) under 24 px' if small else 'not leaned on'}"),
+        Check("the thumb carries a target of its own, 24 by 24",
+              min(sizes["thumb"][2], sizes["thumb"][3]) >= 24.0 - 0.01,
+              f"{sizes['thumb'][2]:.1f} by {sizes['thumb'][3]:.1f} CSS px")]
+    rep.edges.append(e19)
+
+    # E20 the roving set, the focus the host delegates and the step attribute,
+    # each of which was proved by a unit test and a source scan and by nothing
+    # that touched the built element. This project's own recorded lesson is
+    # that a scripted click and a source-map presence check both passed while
+    # the feature they stood for was broken, so every claim below is driven
+    # from the keyboard and read back off the tree the element left behind.
+    #
+    # The rule the checks hold it to is its own, read off
+    # crates/op-site/src/components/chart.rs: one tab stop over the thumb and
+    # the cues, Down from the thumb into the first cue along the timeline, the
+    # arrows between the cues, Enter or Space seeking to the one that has the
+    # focus, and Up or Escape back to the thumb. The order the arrows walk is
+    # computed here from the cues' own stamps, because the markup carries every
+    # mark before every chapter tick and document order stops being time order
+    # the moment a chart has both kinds.
+    e20 = Edge(("Following", "Seek", "Following"), "The roving set: the host's focus, the cues, and the step attribute",
+               "The host is focused, and the thumb inside it takes that focus, which is what delegating it means. From the "
+               "thumb Down steps into the cues and the tab stop goes with the focus, so the set keeps one stop between them; "
+               "the arrows walk the cues in the order their own stamps put them in; a focused cue shows an indicator the "
+               "drawing paints rather than an outline the browser draws around a group in the svg's own user space, which "
+               "scales with the viewBox and is clipped by the viewport; Space on one seeks to "
+               "its time instead of playing the film; and Escape comes back. Last, the step attribute is set on the element "
+               "after it has upgraded and a sample key is pressed, which lands on the step and not on the next sample.")
+    STEP = 0.25
+    ROVING = f"""(() => {{ const c = {C}, sr = c.shadowRoot, svg = {SHOWN % 'sr'};
+      const thumb = svg.querySelector('g.playhead'), a = sr.activeElement;
+      const box = r => [+r.x.toFixed(2), +r.y.toFixed(2), +r.width.toFixed(2), +r.height.toFixed(2)];
+      const cues = [...svg.querySelectorAll('.targets g[role="button"]')].map(n => {{
+        const rect = n.querySelector('rect.target'), cs = rect ? getComputedStyle(rect) : null;
+        return {{name: n.getAttribute('aria-label'), t: rect ? +rect.dataset.t : null,
+          tabindex: n.getAttribute('tabindex'), focused: a === n, visible: n.matches(':focus-visible'),
+          outline: getComputedStyle(n).outlineStyle, stroke: cs ? cs.stroke : null,
+          colour: getComputedStyle(n).color, width: cs ? parseFloat(cs.strokeWidth) : 0,
+          box: rect ? box(rect.getBoundingClientRect()) : null}}; }});
+      return {{cues, host: document.activeElement === c,
+        thumb: {{tabindex: thumb.getAttribute('tabindex'), focused: a === thumb}},
+        holds: a ? (a.getAttribute('aria-label') || a.getAttribute('class') || a.tagName) : 'nothing',
+        film_t: {F}.shadowRoot.querySelector('.t').textContent, playing: {F}.matches(':state(playing)')}}; }})()"""
+
+    def holds_cue(state: dict, i: int | None) -> bool:
+        """Whether the tree says that one member of the set has the focus and
+        no other does: `None` for the thumb."""
+        held = [j for j, cue in enumerate(state["cues"]) if cue["focused"]]
+        return held == ([] if i is None else [i]) and state["thumb"]["focused"] == (i is None)
+
+    def one_stop(state: dict, i: int | None) -> bool:
+        """Whether the tab stop is where the focus is. A roving tabindex is one
+        attribute that moves: exactly one member of the set is at 0 and every
+        other is at -1, so Tab leaves the chart from wherever the reader stands
+        in it rather than walking the cues one key at a time."""
+        want = ["-1"] * len(state["cues"]) + ["-1" if i is not None else "0"]
+        if i is not None:
+            want[i] = "0"
+        return [cue["tabindex"] for cue in state["cues"]] + [state["thumb"]["tabindex"]] == want
+
+    def stops_of(state: dict) -> list:
+        return [cue["tabindex"] for cue in state["cues"]] + [state["thumb"]["tabindex"]]
+
+    measure_chart()
+    at_rest = b.js(ROVING)
+    order = sorted(range(len(at_rest["cues"])), key=lambda i: at_rest["cues"][i]["t"])
+    entry = order[0] if order else None
+    along = order[1] if len(order) > 1 else None
+    named = [at_rest["cues"][i]["name"] for i in order]
+
+    def cue_name_of(i: int | None) -> str:
+        return at_rest["cues"][i]["name"] if i is not None else "no cue of that position"
+
+    # the host's own focus first, before anything has been tabbed to
+    focus_host()
+    b.wait(0.12)
+    delegated = b.js(ROVING)
+    # then in from the keyboard, so the focus the cues take is one the browser
+    # calls visible: a focus moved by script off a pointer gesture is not
+    tabbed = tab_to_thumb()
+    key("ArrowDown", "ArrowDown")
+    entered = b.js(ROVING)
+    lit_cue = next((cue for cue in entered["cues"] if cue["focused"]), None)
+    cue_box, cue_lit = None, None
+    if lit_cue and lit_cue["box"]:
+        x0, y0, w0, h0 = lit_cue["box"]
+        cue_box = (x0 - 3, y0 - 3, w0 + 6, h0 + 6)
+        cue_lit = shot(cue_box)
+    key("ArrowRight", "ArrowRight")
+    stepped_on = b.js(ROVING)
+    key("ArrowLeft", "ArrowLeft")
+    stepped_back = b.js(ROVING)
+    key("Escape", "Escape")
+    b.wait(0.12)
+    left = b.js(ROVING)
+    # the same box with the focus gone, and nothing else moved between the two
+    # pictures: the clock has not run and no arrow has reached the key table,
+    # so what differs is the indicator alone. What the indicator painted is the
+    # difference of the two rather than the count in the lit one, because a
+    # mark's own rule is drawn in --op-accent, which in the light theme is the
+    # colour --op-focus is: some of the cue's box is already that colour before
+    # the focus arrives, and a count would say so on both sides.
+    cue_dark = shot(cue_box) if cue_box else None
+    # the paint the indicator is drawn in, as the browser reports it: the
+    # target's own stroke, or the colour it inherits where the stroke is left
+    # as the keyword that names it
+    cue_paint = next((paint for paint in ((lit_cue or {}).get("stroke"), (lit_cue or {}).get("colour"))
+                      if paint and len(channels(paint)) == 3), None)
+    cue_rgb = channels(cue_paint) if cue_paint else None
+    on_pixels, off_pixels, painted, surface, share, ratio = [], set(), [], (0, 0, 0), 0, 0.0
+    if cue_rgb and cue_dark is not None:
+        cue_lab = _srgb_to_lab(cue_rgb)
+        on_pixels, off_pixels = matching(cue_lit, cue_lab), set(matching(cue_dark, cue_lab))
+        painted = [spot for spot in on_pixels if spot not in off_pixels]
+        under = {}
+        for spot in painted:
+            under[cue_dark.getpixel(spot)] = under.get(cue_dark.getpixel(spot), 0) + 1
+        surface, share = max(under.items(), key=lambda pair: pair[1]) if under else ((0, 0, 0), 0)
+        ratio = wcag_contrast(cue_rgb, surface) if under else 0.0
+    # and the press, which is the whole point of a role="button": back in, then
+    # Space, which reached the key table and played the film before
+    key("ArrowDown", "ArrowDown")
+    on_cue = b.js(ROVING)
+    key(" ", "Space")
+    b.wait(0.25)
+    pressed = b.js(ROVING)
+    key("Escape", "Escape")
+    b.wait(0.12)
+    # the step, set after the upgrade so that what is measured is an attribute
+    # read at the key rather than one read once and remembered
+    b.js(f"(() => {{ {C}.setAttribute('step', '{STEP}'); return 'ok'; }})()")
+    before_step = b.js(ROVING)
+    key(".", "Period")
+    b.wait(0.12)
+    by_step = b.js(ROVING)
+    b.js(f"(() => {{ {C}.removeAttribute('step'); return 'ok'; }})()")
+    at_step = seconds(before_step["film_t"]) or 0.0
+    want_step = min(duration, at_step + STEP)
+    want_sample = stepped(at_step, 1)
+    e20.checks += [
+        Check("focusing the host puts the focus on the thumb, which is what delegating it means",
+              bool(delegated["host"]) and delegated["thumb"]["focused"],
+              f"document.activeElement is the element itself: {delegated['host']}; inside its shadow root the focus is "
+              f"on {delegated['holds']}, and the thumb has it: {delegated['thumb']['focused']}"),
+        Check("Down from the thumb reaches the first cue along the timeline, and the tab stop goes with it",
+              tabbed > 0 and entry is not None and holds_cue(entered, entry) and one_stop(entered, entry)
+              and entered["film_t"] == delegated["film_t"],
+              f"the thumb took the focus on Tab {tabbed} of at most 60; Down left it on {entered['holds']}, expected "
+              f"'{cue_name_of(entry)}', the first of {len(order)} cues in time order {named}; the tab stops read "
+              f"{stops_of(entered)} for the cues and the thumb, and the film's clock stayed at {entered['film_t']}"),
+        Check("an arrow steps to the next cue along the timeline and moves no clock",
+              along is not None and holds_cue(stepped_on, along) and one_stop(stepped_on, along)
+              and stepped_on["film_t"] == entered["film_t"],
+              f"Right left the focus on {stepped_on['holds']}, expected '{cue_name_of(along)}'; the tab stops read "
+              f"{stops_of(stepped_on)} and the film's clock stayed at {stepped_on['film_t']}"),
+        Check("the other arrow steps back to the cue before it",
+              entry is not None and holds_cue(stepped_back, entry) and one_stop(stepped_back, entry)
+              and stepped_back["film_t"] == entered["film_t"],
+              f"Left left the focus on {stepped_back['holds']}, expected '{cue_name_of(entry)}'; the tab stops read "
+              f"{stops_of(stepped_back)} and the film's clock stayed at {stepped_back['film_t']}"),
+        Check("Escape takes the focus and the tab stop back to the thumb",
+              holds_cue(left, None) and one_stop(left, None),
+              f"Escape left the focus on {left['holds']}, and the tab stops read {stops_of(left)} for the cues and the "
+              f"thumb"),
+        Check("a focused cue is shown by an indicator the drawing paints, and by no outline the browser draws",
+              lit_cue is not None and lit_cue["outline"] == "none" and lit_cue["visible"]
+              and lit_cue["width"] >= 2.0 and bool(painted),
+              f"the focused cue's computed outline-style is "
+              f"'{lit_cue['outline'] if lit_cue else 'no cue took the focus'}' and the browser calls that focus visible: "
+              f"{lit_cue['visible'] if lit_cue else False}; its own target is stroked "
+              f"{cue_paint or 'nothing'} at {(lit_cue['width'] if lit_cue else 0):.2f} px, and its "
+              f"box holds {len(on_pixels)} pixels of that colour with the focus and {len(off_pixels)} without it, so "
+              f"the focus painted {len(painted)} of them"),
+        Check("that indicator is at least 3:1 against what is behind it",
+              ratio >= RING_CONTRAST and share > len(painted) / 2,
+              f"{cue_paint or 'nothing'} on rgb{surface} at {ratio:.2f}:1, dE00 "
+              f"{ciede2000(_srgb_to_lab(cue_rgb), _srgb_to_lab(surface)) if cue_rgb else 0.0:.1f}; that surface is "
+              f"under {share} of the indicator's {len(painted)} pixels, the rest lying over something the chart itself "
+              f"drew"),
+        Check("Space on a cue seeks to that cue's own time, and does not play the film",
+              entry is not None and lands(seconds(pressed["film_t"]), at_rest["cues"][entry]["t"])
+              and not pressed["playing"] and holds_cue(pressed, entry),
+              f"the film went from {on_cue['film_t']} to {pressed['film_t']}, expected the "
+              f"{(at_rest['cues'][entry]['t'] if entry is not None else 0):.2f}s '{cue_name_of(entry)}' names; the film "
+              f"is playing: {pressed['playing']}, and the focus is still on {pressed['holds']}"),
+        Check("a step the element states is what a sample key is worth",
+              lands(seconds(by_step["film_t"]), want_step) and abs(want_step - want_sample) > 0.011,
+              f"with step='{STEP}' set on the element after it upgraded, a full stop took the film from "
+              f"{before_step['film_t']} to {by_step['film_t']}, expected {want_step:.2f}s, which is the step on from "
+              f"{at_step:.2f}s and not the {want_sample:.2f}s of the next sample")]
+    rep.edges.append(e20)
+
+    # E21 the roving at the width that drops the chapter cues. The element
+    # hides `.chart .targets g[data-cue="chapter"]` under a container query at
+    # DROP_AT (crates/op-site/src/components/chart.rs), so at a container width
+    # of 480 px or less a chapter's button is laid out nowhere and can take no
+    # focus. The roving read its set out of the markup with no filter (`cues`)
+    # and wrote the tab stop across the set before it moved the focus
+    # (`move_stop`), and a focus on a node with display:none is a no-op
+    # (`give_focus`), so the one stop could be left on a node no reader can
+    # reach and Tab would then pass the widget by. That is the reflow case SC
+    # 1.4.10 is written for, where a keyboard is certainly in use, and every
+    # other edge here runs wide.
+    #
+    # The width is set on the viewport, but it is the element's own container
+    # width that the query asks about and that is measured, and the check that
+    # the chapter cue really is not drawn comes first: without it every
+    # assertion below would be about a width that dropped nothing.
+    e21 = Edge(("Following", "Resize", "Following"), "The roving where the chapter cues are dropped",
+               "Narrowed until the container query drops the chapter ticks, the roving must walk what is drawn and "
+               "leave the widget reachable: the tab stop stays on a node that is laid out, whether the reader steps in "
+               "from the thumb, walks the cues from there, or narrows the window while a cue that is about to be "
+               "dropped holds the focus. What is measured is the drawing, so a cue counts as drawn only where the "
+               "browser gives it a box and neither display nor visibility has taken it away.")
+    e21.note = ("The resize below is a guard and not a witness, which was measured here rather than assumed: a node the "
+                "container query stops drawing is blurred by the browser itself, so by the time the element re-lays "
+                "out nothing inside it holds the focus, and the markup it then draws carries the set at rest with the "
+                "stop on the thumb. What that resize costs the reader is their place, which no check here asserts "
+                "either way. The arrow is the witness: it is what moves the stop onto a cue the query dropped, with "
+                "the focus left where it was.")
+    # the element's own constants, from chart.rs: the container width below
+    # which the chapter cues go, and a viewport narrow enough to cross it
+    DROP_AT, NARROW_VIEW, WIDE_VIEW = 480.0, 360, 900
+    STOPS = f"""(() => {{ const c = {C}, sr = c.shadowRoot, svg = {SHOWN % 'sr'};
+      const drawn = n => {{ const r = n.getBoundingClientRect(), cs = getComputedStyle(n);
+        return r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden'; }};
+      const name = n => n ? (n.getAttribute('aria-label') || n.getAttribute('class') || n.tagName) : 'nothing';
+      const a = sr.activeElement, thumb = svg ? svg.querySelector('g.playhead') : null;
+      const cues = [...(svg ? svg.querySelectorAll('.targets g[role="button"]') : [])].map(n => {{
+        const rect = n.querySelector('rect.target');
+        return {{name: n.getAttribute('aria-label'), kind: n.dataset.cue, t: rect ? +rect.dataset.t : null,
+          tabindex: n.getAttribute('tabindex'), focused: a === n, drawn: drawn(n)}}; }});
+      return {{width: +c.getBoundingClientRect().width.toFixed(1), inline: parseFloat(getComputedStyle(c).width), cues,
+        bars: [...(svg ? svg.querySelectorAll('g.chapters') : [])].map(drawn),
+        stops: [...sr.querySelectorAll('[tabindex="0"]')].map(n => ({{what: name(n), drawn: drawn(n), thumb: n === thumb}})),
+        thumb: {{tabindex: thumb ? thumb.getAttribute('tabindex') : null, focused: a === thumb,
+          drawn: !!thumb && drawn(thumb)}},
+        holds: name(a), held_drawn: a ? drawn(a) : null}}; }})()"""
+
+    def one_reachable_stop(state: dict) -> bool:
+        """Whether one node in the whole element carries tabindex="0" and that
+        node is drawn. A stop on a node the container query dropped is a widget
+        Tab passes by, which is what this edge exists to catch."""
+        return len(state["stops"]) == 1 and state["stops"][0]["drawn"]
+
+    def focus_is_drawn(state: dict) -> bool:
+        """Whether the focus stands somewhere a reader can see: on a node of
+        this element that is drawn, or outside the element altogether. `None`
+        is the second of those, and never a hidden node."""
+        return state["held_drawn"] is not False
+
+    def stop_says(state: dict) -> str:
+        return ", ".join(f"{s['what']} ({'drawn' if s['drawn'] else 'not drawn'})" for s in state["stops"]) or "none"
+
+    def cues_say(state: dict) -> str:
+        return ", ".join(f"{c['kind']} '{c['name']}' {'drawn' if c['drawn'] else 'not drawn'}"
+                         f"{', focused' if c['focused'] else ''} at tabindex {c['tabindex']}" for c in state["cues"])
+
+    def stand_on_thumb() -> int:
+        """The thumb, by Tab where the page's own tab order reaches it inside
+        sixty presses and by the host's delegated focus where it does not.
+        Answers the presses it took, and 0 where the delegation was used."""
+        n = tab_to_thumb()
+        if not n:
+            focus_host()
+            b.wait(0.12)
+        return n
+
+    try:
+        b.call("Emulation.setDeviceMetricsOverride", width=NARROW_VIEW, height=1000, deviceScaleFactor=0, mobile=False)
+        b.wait(0.6)
+        measure_chart()
+        narrowed = b.js(STOPS)
+        tabbed_narrow = stand_on_thumb()
+        at_thumb = b.js(STOPS)
+        key("ArrowDown", "ArrowDown")
+        b.wait(0.12)
+        walked = [("ArrowDown", b.js(STOPS))]
+        # and along the timeline: the cue the entry gesture lands on may be one
+        # the query kept, and the one after it the one it dropped
+        for _ in range(max(0, len(narrowed["cues"]) - 1)):
+            key("ArrowRight", "ArrowRight")
+            b.wait(0.12)
+            walked.append(("ArrowRight", b.js(STOPS)))
+        key("Escape", "Escape")
+        b.wait(0.12)
+        came_back = b.js(STOPS)
+        # then the resize itself, which is the path that loses the stop without
+        # a key being pressed at all: the element remembers the cue that held
+        # the focus by the kind and stamp its rect carries and puts the stop
+        # back on it in the new markup (`capture` in chart.rs), where the query
+        # has since dropped it
+        b.call("Emulation.setDeviceMetricsOverride", width=WIDE_VIEW, height=1000, deviceScaleFactor=0, mobile=False)
+        b.wait(0.6)
+        measure_chart()
+        stand_on_thumb()
+        key("ArrowDown", "ArrowDown")
+        b.wait(0.12)
+        wide = b.js(STOPS)
+        for _ in range(len(wide["cues"])):
+            if any(c["focused"] and c["kind"] == "chapter" for c in wide["cues"]):
+                break
+            key("ArrowRight", "ArrowRight")
+            b.wait(0.12)
+            wide = b.js(STOPS)
+        b.call("Emulation.setDeviceMetricsOverride", width=NARROW_VIEW, height=1000, deviceScaleFactor=0, mobile=False)
+        b.wait(0.6)
+        resized = b.js(STOPS)
+    finally:
+        b.call("Emulation.clearDeviceMetricsOverride")
+        b.wait(0.3)
+    chapters_here = [c for c in narrowed["cues"] if c["kind"] == "chapter"]
+    marks_here = [c for c in narrowed["cues"] if c["kind"] == "mark"]
+    entered = walked[0][1] if walked else at_thumb
+    on_a_cue = [c for c in entered["cues"] if c["focused"]]
+    held_wide = next((c for c in wide["cues"] if c["focused"] and c["kind"] == "chapter"), None)
+    held_says = f"the {held_wide['kind']} cue '{held_wide['name']}'" if held_wide else f"{wide['holds']}, which is no chapter cue"
+    e21.checks += [
+        Check("at this width the chapter cues and their ticks are not drawn, and the marks still are",
+              narrowed["inline"] <= DROP_AT and bool(chapters_here) and not any(c["drawn"] for c in chapters_here)
+              and not any(narrowed["bars"]) and bool(marks_here) and all(c["drawn"] for c in marks_here),
+              f"a {NARROW_VIEW} px viewport puts the element's own container at {narrowed['inline']:.1f} px of inline "
+              f"size ({narrowed['width']} px of border box), under the {DROP_AT:.0f} px the container query drops at; "
+              f"the markup still carries {len(narrowed['cues'])} cue button(s), {cues_say(narrowed)}, and "
+              f"{sum(1 for shown in narrowed['bars'] if shown)} of {len(narrowed['bars'])} chapter groups are drawn"),
+        Check("Down from the thumb lands on a cue that is drawn, or leaves the focus on the thumb",
+              at_thumb["thumb"]["focused"] and (entered["thumb"]["focused"] or
+                                                (len(on_a_cue) == 1 and on_a_cue[0]["drawn"])),
+              f"the thumb took the focus on Tab {tabbed_narrow} of at most 60 (0 means the host's own delegated focus "
+              f"was used instead); Down left it on {entered['holds']}, and the cues read {cues_say(entered)}"),
+        Check("no arrow at this width moves the tab stop off a node a reader can reach",
+              all(one_reachable_stop(state) and focus_is_drawn(state)
+                  for state in [at_thumb] + [state for _, state in walked]),
+              "; ".join([f"standing on the thumb the stop is {stop_says(at_thumb)}"] +
+                        [f"after {pressed} the focus is on {state['holds']} and the stop is {stop_says(state)}"
+                         for pressed, state in walked])),
+        Check("Escape brings the focus and the tab stop back to the thumb",
+              came_back["thumb"]["focused"] and one_reachable_stop(came_back) and came_back["stops"][0]["thumb"],
+              f"Escape left the focus on {came_back['holds']} and the stop on {stop_says(came_back)}"),
+        Check("narrowing the window while a chapter cue holds the focus leaves the stop where a reader can reach it",
+              held_wide is not None and one_reachable_stop(resized) and focus_is_drawn(resized),
+              f"at {WIDE_VIEW} px the focus was on {held_says}, which the element remembers by the kind and stamp its "
+              f"rect carries; narrowed to {NARROW_VIEW} px the element's container is {resized['inline']:.1f} px, the "
+              f"focus is on {resized['holds']}, the cues read {cues_say(resized)}, and the stop is "
+              f"{stop_says(resized)}")]
+    rep.edges.append(e21)
     b.hover(2, 2)
     return rep
 

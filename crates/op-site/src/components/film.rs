@@ -16,15 +16,23 @@
 //! cancels. Keys while focused: Space/K, `,` `.` frame step, arrows five
 //! frames, J/L ten, Shift+arrow one second, PageUp/PageDown by chapter
 //! (Ctrl or Alt with an arrow as an alias), 0-9 tenths, Home/End, `<` `>`
-//! speed, Escape.
+//! speed, Escape. Enter or Space on a cue button in the chart, which is
+//! where a screen reader can put the focus, seeks to that cue instead.
 //!
 //! Internal state is exposed as custom states - `playing`, `pending`,
 //! `peeking` - so a page can style or test against them; every render
 //! dispatches a composed `opt-film-time` event whose detail is
 //! `{ time, duration, playing }` (an `opt-machine for="..."` follows it,
-//! reading `time`); the chart is a
-//! `role=slider` with value text naming the frame and chapter, and a
-//! polite live region announces seeks.
+//! reading `time`); the control bar's range input is this widget's one
+//! slider and carries the value text naming the time, the frame and the
+//! chapter, written at once for a seek, a play, a pause and the focus
+//! arriving, and on a clock tick only while that input has the focus and
+//! no oftener than the debounce (decision 18); the chart beside it is a
+//! titled `graphics-document` whose series are named groups and whose
+//! playhead is decoration (decision 15); a polite live region says what
+//! happened in the chart's own words, a seek, a play and a pause. A
+//! scrub is said once, when it settles, on the control and in the region
+//! alike, and the time both of them name is spelt the chart's way.
 //!
 //! The traffic runs the other way as well: an `opt-chart for="<film id>"`
 //! sends `opt-chart-seek`, `opt-chart-peek` and `opt-chart-toggle`, and
@@ -32,14 +40,17 @@
 //! bubbling, so one listener on the document hears every chart on the
 //! page and `intent_for` decides which of them address this film.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement, KeyboardEvent, MouseEvent, PointerEvent};
 
-use super::chart::{PEEK_EVENT, SEEK_EVENT, TIME_FIELD, TOGGLE_EVENT};
+use super::chart::{
+    CUE_BUTTONS, PEEK_EVENT, Roved, Roving, SEEK_EVENT, Said, TIME_FIELD, TOGGLE_EVENT,
+    cue_indicator_css, in_words, message, now, readout, roving_key, valuetext_due,
+};
 use super::chart_style::{CHART_CUE_CSS, CHART_SHAPE_CSS, SERIES_TOKENS, chart_rules};
 use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
@@ -291,6 +302,275 @@ fn spec_of(d: &Data) -> op_chart::Spec {
     }
 }
 
+/// The id of the visible chart title in the film's shadow tree, which the
+/// chart's svg is named by. The film has no heading of its own - the host's
+/// `title` names the whole player, not the plot - so decision 15's visible
+/// title is written here and pointed at from the markup the emitter draws.
+const CHART_TITLE_ID: &str = "charttitle";
+
+/// The chart's visible title: what is plotted, against what. The value
+/// label the block carries is the chart's own name for its y axis, so the
+/// title reads from the data rather than from a string invented here.
+fn chart_title(d: &Data) -> String {
+    format!(
+        "<div class=\"charttitle\" id=\"{CHART_TITLE_ID}\">{} over time</div>",
+        escape(&d.ylabel)
+    )
+}
+
+/// What the emitter cannot know about the film's chart (decision 15): the
+/// id of the title above it, the unit its series are measured in, and that
+/// its thumb is not this widget's slider. The film's control bar holds a
+/// native range input, and one widget has one slider, so the chart's
+/// playhead announces nothing and takes no tab stop of its own.
+///
+/// Every film series is a percentage, which is why [`spec_of`] keeps the
+/// chart on the percent scale, so each of them is announced in per cent.
+fn chart_aria(d: &Data) -> op_chart::Aria {
+    op_chart::Aria {
+        title: CHART_TITLE_ID.to_owned(),
+        units: vec!["%".to_owned(); d.series.len()],
+        slider: false,
+    }
+}
+
+/// The thumb's opening tag, as the emitter writes it for a chart that owns
+/// no slider. Whether that thumb is decoration is the consumer's fact and
+/// not the drawing's: `Aria::slider` says only that the role and the values
+/// are not to be written, and here the film's own readout and its slider
+/// say the time already, so the group is hidden as well. The tag is named
+/// so a test can hold it to what the emitter writes, since a string that
+/// stopped matching would hide nothing and say nothing about it.
+const THUMB_TAG: &str = "<g class=\"playhead\" part=\"playhead\"";
+
+/// The film's chart: the emitter's markup, named by the title above it and
+/// with its thumb marked as the decoration it is here.
+///
+/// The drawing carries the emitter's cue buttons, one to a chapter. In the
+/// film they are reached by a pointer, by a screen reader walking the
+/// drawing, and by nothing else: this element has no entry gesture of its
+/// own and is deliberately not given one. `<opt-chart>` roves into its
+/// cues with Down from its thumb, and the film's chart has no thumb to
+/// leave, its playhead being decoration ([`chart_aria`]) with no role and
+/// no tab stop; the film's one slider is the bar's native range input,
+/// where Down is that control's own key and steps the frame back. So the
+/// element's entry gesture cannot be borrowed here without taking a key
+/// off a native control, and what it would lead to is a second set of
+/// chapter controls beside the two named buttons the bar already carries
+/// ([`CHAPTER_CONTROLS`]), which are in the tab order and are the keyboard
+/// route to a chapter, along with Page Up and Page Down and the Ctrl or
+/// Alt arrow alias. The buttons stay what they are, then: named targets,
+/// which answer Enter and Space the element's own way when something does
+/// put the focus on one ([`cue_press`]).
+fn chart_svg(d: &Data, l: op_chart::Layout) -> String {
+    let svg = op_chart::render_with(&spec_of(d), l, &chart_aria(d)).svg;
+    svg.replace(THUMB_TAG, &format!("{THUMB_TAG} aria-hidden=\"true\""))
+}
+
+/// What a key does while a cue button in the film's chart holds the focus:
+/// the instant to seek to, and [`None`] for every key that is the film's
+/// own. `stamp` is the `data-t` the focused cue's hit rect carries and
+/// [`None`] where the focus is anywhere else, so a key pressed on the
+/// strip, on the bar or on the host is answered by nothing here and the
+/// film's key table behaves exactly as it did.
+///
+/// The keys are not a table of the film's own: they are the element's
+/// ([`roving_key`]), asked as a reader standing on a cue, and only the
+/// press is taken from it. A `role="button"` answers Enter and Space or it
+/// is not a button, and Space on a cue reached the film's key table before
+/// this and played the film, which is the one thing a press on a chapter
+/// must not do. The count is one because the film asks only about the cue
+/// that has the focus: the moves the element's roving answers are left to
+/// the film's own table, there being no roving here to move (see
+/// [`chart_svg`]), so Escape on a cue still drops a pending seek.
+///
+/// A cue whose rect says nothing reads as [`f64::INFINITY`], as it does in
+/// the element, and [`Player::seek_to`] clamps it to the end of the film:
+/// a press that lands somewhere, rather than a key falling through to the
+/// arm that plays.
+fn cue_press(stamp: Option<&str>, key: &str) -> Option<f64> {
+    let stamp = stamp?;
+    matches!(roving_key(Roving::Cue(0), 1, key), Some(Roved::Press))
+        .then(|| stamp.parse::<f64>().unwrap_or(f64::INFINITY))
+}
+
+/// What the film's slider announces beside its own value, which is a frame
+/// index: the clock in seconds, the frame and the chapter it is in. It sits
+/// on the range input because that is this widget's slider, and a value
+/// written on the chart, which is a document, is a value nothing announces.
+///
+/// The time is the chart's own spelling of one ([`in_words`]) and not a
+/// second rounding beside it: the region says "1.6 seconds" for the
+/// instant the control used to call "1.55 seconds", and a reader who
+/// heard both heard one position given two times. The frame index keeps
+/// the film's own wording, because it is what this slider's value, its
+/// minimum and its maximum are counted in; the chart's thumb counts in
+/// seconds and names its total, which on a control whose scale is frames
+/// would be a total of nothing it carries.
+fn value_text(d: &Data, t: f64) -> String {
+    format!(
+        "{}, frame {} of {}, {}",
+        in_words(t),
+        d.frame_at(t) + 1,
+        d.times.len(),
+        d.chapter_at(t).1
+    )
+}
+
+/// Why the film is about to say that value (decision 18).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Say {
+    /// The reader asked for the clock to move and the asking is over: a
+    /// seek that is no part of a gesture, a play, a pause, the release
+    /// that ends a scrub. The first render says it this way as well, and
+    /// so does the focus arriving, so the words are on the input before
+    /// anything can tab to it and are the clock's own when something
+    /// does.
+    AtOnce,
+    /// The clock moved under a pointer gesture still in flight, which
+    /// here is a scrub across the chart or a drag of the film's own
+    /// slider. Both seek on every step the pointer takes, so the words
+    /// wait for the end of the gesture, which says them once
+    /// ([`says_now`]); the number does not wait, the thumb being drawn
+    /// from it.
+    InFlight,
+    /// The clock ran on by itself, once an animation frame.
+    OnTheClock,
+}
+
+/// Whether that write happens now. A gesture that is over is said at
+/// once; a clock tick waits for the focus and for the wait, which is the
+/// chart's rule and not a second copy of it ([`valuetext_due`]). A film
+/// plays at the frame rate, and a reader who has tabbed to the slider
+/// would otherwise be interrupted about sixty times a second by a phrase
+/// none of which is ever finished.
+///
+/// A gesture still in flight says nothing at all, rather than waiting.
+/// The debounce would let a phrase through three times a second for as
+/// long as a drag lasts, and a drag is one gesture with one thing to say:
+/// the release says it, which is the rule the region already keeps
+/// ([`says_now`]).
+fn value_due(say: Say, last: f64, now: f64, focused: bool) -> bool {
+    match say {
+        Say::AtOnce => true,
+        Say::InFlight => false,
+        Say::OnTheClock => valuetext_due(last, now, focused),
+    }
+}
+
+/// Whether the frame index goes onto the slider now.
+///
+/// The number and the words are on different clocks. The number is what
+/// the thumb is drawn from, so a tick writes it whenever nothing has
+/// tabbed to the control: a value nobody is listening to is announced to
+/// nobody, and the thumb has to keep up with the film. While the control
+/// does have the focus a native slider's value is spoken as surely as its
+/// words are, so there the number waits with them, on the same rule
+/// ([`valuetext_due`]) and the same clock. A gesture writes at once
+/// either way, one still in flight included: the thumb has to stay under
+/// the pointer dragging it, and a thumb that stops while the pointer
+/// moves is the drag not working. Only the clock waits.
+fn index_due(say: Say, last: f64, now: f64, focused: bool) -> bool {
+    say != Say::OnTheClock || !focused || valuetext_due(last, now, focused)
+}
+
+/// The three moments the live region's rule is asked about.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Moment {
+    /// A gesture opening: a press on the chart, or an `input` from the
+    /// native slider, which is a thumb somebody has hold of.
+    Press,
+    /// A seek, from wherever it came.
+    Seek,
+    /// The end of that gesture: a release, a cancel, or the slider's own
+    /// `change`.
+    Settle,
+}
+
+/// What that moment leaves behind: whether a scrub is in flight after it,
+/// and whether the film says its piece now, in that order.
+///
+/// A scrub seeks on every `pointermove`, and a sentence per move is the
+/// same flood on the region that the debounce keeps off the value
+/// (decision 18). So a gesture says nothing while it moves and says the
+/// one thing it had to say when it settles, naming where it landed. A
+/// seek that is no part of a gesture, a key, a chapter button or a bound
+/// chart, is not held up by any of this and speaks at once.
+///
+/// Both voices are on this one answer ([`Player::moment`]): the sentence
+/// in the region, and the words on the control. The control used to write
+/// its words on every seek there was, so the drag the region sat quiet
+/// through rewrote the control about as often as the pointer moved.
+fn says_now(moment: Moment, scrubbing: bool) -> (bool, bool) {
+    match moment {
+        Moment::Press => (true, false),
+        Moment::Seek => (scrubbing, !scrubbing),
+        Moment::Settle => (false, scrubbing),
+    }
+}
+
+/// Which of the film's own slider's events is which moment. A native
+/// range input fires `input` for every pixel of a thumb dragged with the
+/// pointer and one `change` when the reader lets go of it, so a drag of
+/// that thumb is the gesture a scrub across the chart is, and takes the
+/// same rule: the drag seeks and stays quiet, the end of it says the one
+/// thing the gesture had to say. There is no other seam to tell the two
+/// apart, an `input` saying nothing about the device that sent it. A key
+/// on the same control fires both in the one press, which is how a key
+/// still speaks at once.
+const SLIDER_MOMENTS: [(&str, Moment); 2] = [("input", Moment::Press), ("change", Moment::Settle)];
+
+/// What a pointer move over the chart is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Moved {
+    /// A move inside a scrub this chart opened, which drags the clock.
+    Scrub,
+    /// A move with nothing held down, which shows the peek.
+    Hover,
+    /// A move with the primary button down that this chart never saw
+    /// pressed: a drag begun somewhere else, passing through.
+    Stray,
+}
+
+/// Which of the three a move is, from the buttons it carries and whether
+/// a press here opened a scrub.
+///
+/// A button being down is not by itself a scrub. A drag begun anywhere
+/// else on the page and dragged over the chart arrives with the same
+/// buttons and no press of this chart's behind it, and the film answers
+/// it with neither a seek nor a peek: nothing opened the gesture, so
+/// nothing is coming to settle it, and every move of it would speak on
+/// its own account ([`says_now`]). A scrub of the film's own is captured
+/// to the chart at the press, so the moves belonging to one arrive here
+/// whether the pointer is still over the chart or not.
+fn moved(buttons: u16, scrubbing: bool) -> Moved {
+    match (buttons & 1 == 1, scrubbing) {
+        (true, true) => Moved::Scrub,
+        (true, false) => Moved::Stray,
+        (false, _) => Moved::Hover,
+    }
+}
+
+/// What the region says when a pending seek on the strip is let go: the
+/// film's own sentence, the chart's [`message`] having no word for a
+/// gesture the element does not have. It opens with a capital because
+/// every sentence in that region does, and it goes through the film's one
+/// voice like the rest of them.
+const CANCELLED: &str = "Seek cancelled";
+
+/// What a change of the play state has to say, and nothing at all where it
+/// did not change: a frame step, a chapter and a digit all pause the film
+/// on their way, and a film already paused has not been paused again. The
+/// chart announces the two on the same terms, when they change and never
+/// once a frame (decision 18).
+fn toggled(was: bool, now: bool) -> Option<Said> {
+    match (was, now) {
+        (false, true) => Some(Said::Playing),
+        (true, false) => Some(Said::Paused),
+        _ => None,
+    }
+}
+
 // ---- state and DOM ---------------------------------------------------
 struct State {
     tc: f64,
@@ -337,10 +617,6 @@ impl Dom {
     }
 }
 
-fn fmt(t: f64) -> String {
-    format!("{t:.2}s")
-}
-
 fn show_stage(dom: &Dom, d: &Data, k: usize, tag: &str) {
     let _ = dom.stage.style().set_property(
         "background-position",
@@ -348,7 +624,7 @@ fn show_stage(dom: &Dom, d: &Data, k: usize, tag: &str) {
     );
     dom.stage_label.set_text_content(Some(&format!(
         "{} · frame {} of {}{}{}",
-        fmt(d.times[k]),
+        readout(d.times[k]),
         k + 1,
         d.times.len(),
         if tag.is_empty() { "" } else { " · " },
@@ -421,43 +697,29 @@ fn render(dom: &Dom, d: &Data, st: &State) {
     if let Ok(event) = web_sys::CustomEvent::new_with_event_init_dict("opt-film-time", &init) {
         let _ = dom.host.dispatch_event(&event);
     }
-    let _ = dom.slider.set_attribute("value", &k.to_string());
-    let _ = js_sys::Reflect::set(
-        &dom.slider,
-        &JsValue::from_str("value"),
-        &JsValue::from_f64(k as f64),
-    );
-    dom.time_label.set_text_content(Some(&fmt(st.tc)));
+    // the slider's own number and words are announcements and not a
+    // paint: both are written where the gesture is known
+    // ([`Player::say_value`]), on the clocks decision 18 gives them
+    dom.time_label.set_text_content(Some(&readout(st.tc)));
     // the clock has moved, so a chapter step may have run out of chapters
     for (dir, button) in &dom.chapters {
         let _ = button
             .toggle_attribute_with_force("disabled", chapter_target(d, st.tc, *dir).is_none());
     }
     sync_video(dom, st);
-    if let Some(chart) = &dom.chart {
+    if dom.chart.is_some() {
         let x = dom.layout.x_of(st.tc);
         // one transform carries the line, the dot and the readout together
         if let Some(playhead) = dom.q(".playhead") {
             let _ = playhead.set_attribute("transform", &format!("translate({x:.1} 0)"));
         }
         if let Some(label) = dom.q(".head-t") {
-            label.set_text_content(Some(&fmt(st.tc)));
+            label.set_text_content(Some(&readout(st.tc)));
         }
         if let Some(played) = dom.q(".bar-played") {
             let _ =
                 played.set_attribute("width", &format!("{:.1}", (x - dom.layout.left).max(0.0)));
         }
-        let _ = chart.set_attribute("aria-valuenow", &format!("{:.2}", st.tc));
-        let _ = chart.set_attribute(
-            "aria-valuetext",
-            &format!(
-                "{:.2} seconds, frame {} of {}, {}",
-                st.tc,
-                k + 1,
-                n,
-                d.chapter_at(st.tc).1
-            ),
-        );
     }
 }
 
@@ -519,7 +781,7 @@ fn show_peek(dom: &Dom, d: &Data, t: f64, anchor_x: Option<f64>) {
         "background-position",
         &format!("{}px 0", -(k as f64) * dom.cell_w),
     );
-    ptime.set_text_content(Some(&format!("{} · {}", fmt(d.times[k]), c.1)));
+    ptime.set_text_content(Some(&format!("{} · {}", readout(d.times[k]), c.1)));
     peek.set_hidden(false);
     let rect = chart.get_bounding_client_rect();
     let px = anchor_x.unwrap_or_else(|| x * (rect.width() / dom.layout.width));
@@ -550,6 +812,15 @@ struct Player {
     data: Rc<Data>,
     state: Rc<RefCell<State>>,
     tick: Tick,
+    /// When the slider's value was last said, on the page's own clock:
+    /// what a clock tick waits behind (decision 18).
+    value_written: Cell<f64>,
+    /// Whether a pointer gesture is in flight: a scrub across the chart,
+    /// or a drag of the slider's own thumb. It is the whole of what
+    /// [`says_now`] needs to keep one from saying a sentence per move,
+    /// and what tells a move over the chart from somebody else's drag
+    /// passing across it ([`moved`]).
+    scrub: Cell<bool>,
 }
 
 impl Player {
@@ -559,22 +830,139 @@ impl Player {
             st.tc = t.clamp(0.0, self.data.end());
         }
         self.render();
-        let st = self.state.borrow();
-        let k = self.data.frame_at(st.tc);
-        self.dom.live.set_text_content(Some(&format!(
-            "{}, frame {} of {}",
-            fmt(st.tc),
-            k + 1,
-            self.data.times.len()
-        )));
+        // a seek is a gesture, and a seek inside a scrub is a gesture
+        // still in flight: what this one has to say is the moment's to
+        // say, once, when the gesture settles
+        self.moment(Moment::Seek);
     }
 
     fn render(&self) {
         render(&self.dom, &self.data, &self.state.borrow());
     }
 
+    /// Whether the film's slider is the focused thing, asked of the tree
+    /// rather than remembered: nothing here ever moves the focus, so the
+    /// shadow root's own answer is the whole of it. The document's active
+    /// element is only ever the host, the slider being inside that root.
+    fn slider_focused(&self) -> bool {
+        self.dom
+            .host
+            .shadow_root()
+            .and_then(|root| root.active_element())
+            .is_some_and(|active| active == self.dom.slider)
+    }
+
+    /// The `data-t` the focused cue button in the film's chart carries, and
+    /// [`None`] where the focus is anywhere else: the strip, the bar, the
+    /// host, or nothing at all. Asked of the tree, as [`slider_focused`]
+    /// is, because nothing in the film moves the focus and the shadow
+    /// root's own answer is the whole of it.
+    ///
+    /// The buttons are named as the element names them ([`CUE_BUTTONS`])
+    /// and the instant is read off the hit rect inside the one that has
+    /// the focus, which is where the emitter writes it, so both elements
+    /// read one markup one way.
+    fn focused_cue(&self) -> Option<String> {
+        let active = self.dom.host.shadow_root()?.active_element()?;
+        let ours = self
+            .dom
+            .chart
+            .as_ref()
+            .is_some_and(|chart| chart.contains(Some(active.as_ref())));
+        if !ours || !active.matches(CUE_BUTTONS).unwrap_or(false) {
+            return None;
+        }
+        active
+            .query_selector("[data-t]")
+            .ok()
+            .flatten()?
+            .get_attribute("data-t")
+    }
+
+    /// Put the clock on the film's one slider: the frame index it carries
+    /// as a value, and the words that say what that index means. Each on
+    /// the clock decision 18 gives it ([`index_due`], [`value_due`]).
+    ///
+    /// Both sit here and not in [`render`] because they are announcements
+    /// and not a paint: the paint runs on every animation frame and has no
+    /// business knowing why it was called, while every gesture the film
+    /// answers is a method on this player and the clock's own tick is the
+    /// one caller that is not one. That is the whole of the difference
+    /// between a phrase a reader asked for and a phrase per frame.
+    ///
+    /// Only a write of the words moves the wait on. A number written
+    /// while nothing has the focus is spoken to nobody, so it costs a
+    /// listener arriving later none of their first phrase.
+    fn say_value(&self, say: Say) {
+        let now = now();
+        let focused = self.slider_focused();
+        let last = self.value_written.get();
+        if index_due(say, last, now, focused) {
+            let k = self.data.frame_at(self.state.borrow().tc);
+            let _ = self.dom.slider.set_attribute("value", &k.to_string());
+            let _ = js_sys::Reflect::set(
+                &self.dom.slider,
+                &JsValue::from_str("value"),
+                &JsValue::from_f64(k as f64),
+            );
+        }
+        if !value_due(say, last, now, focused) {
+            return;
+        }
+        let text = value_text(&self.data, self.state.borrow().tc);
+        let _ = self.dom.slider.set_attribute("aria-valuetext", &text);
+        self.value_written.set(now);
+    }
+
+    /// What the region says: one sentence naming what happened, in the
+    /// chart's own words ([`message`]), so the two halves of a page say
+    /// the same thing the same way. Where the clock now stands is the
+    /// slider's own value and is not repeated here, which is decision
+    /// 18's rule against saying one thing twice.
+    fn announce(&self, said: Said) {
+        let t = self.state.borrow().tc;
+        let chapter = self.data.chapter_at(t).1.clone();
+        self.say(&message(said, t, &chapter));
+    }
+
+    /// Put one short message in the region, which is the film's one voice
+    /// and the only thing that writes there. The element keeps a voice of
+    /// its own for the same reason: a message written straight onto the
+    /// node is a message no rule about the region reaches, and the two
+    /// the film says in its own words, a cancelled seek and a speed, went
+    /// in that way and opened in lower case while every sentence beside
+    /// them opened with a capital.
+    fn say(&self, text: &str) {
+        self.dom.live.set_text_content(Some(text));
+    }
+
+    /// What the film says at a moment in a pointer gesture, and the
+    /// scrub the rule turns on ([`says_now`]). The press, the release and
+    /// the cancel hand it their moment; every seek asks before it speaks.
+    ///
+    /// Both voices are answered here, off the one answer, because a scrub
+    /// floods them both alike: the region takes one sentence naming what
+    /// happened, in the chart's own words, and the control takes the
+    /// words for where the clock now stands. While the gesture is still
+    /// in flight neither speaks and the frame index goes on by itself,
+    /// so the thumb keeps up with the pointer with no phrase per move
+    /// behind it ([`index_due`]).
+    fn moment(&self, moment: Moment) {
+        let (scrubbing, says) = says_now(moment, self.scrub.get());
+        self.scrub.set(scrubbing);
+        if says {
+            self.say_value(Say::AtOnce);
+            self.announce(Said::Seeked);
+        } else {
+            // the number goes on by itself, so the thumb keeps up with a
+            // pointer that is still dragging it
+            self.say_value(Say::InFlight);
+        }
+    }
+
     fn pause(&self) {
         let mut st = self.state.borrow_mut();
+        let was_playing = st.playing;
         st.playing = false;
         st.last = None;
         if let (Some(id), Some(window)) = (st.raf.take(), web_sys::window()) {
@@ -583,20 +971,36 @@ impl Player {
         self.dom.play.set_text_content(Some("Play"));
         set_state(&self.dom.host, "playing", false);
         drop(st);
-        sync_video(&self.dom, &self.state.borrow());
+        // the clock stopping is news: without a broadcast a follower keeps
+        // the last tick's playing flag, so a chart cannot announce the pause
+        // it just answered
+        self.render();
+        self.say_value(Say::AtOnce);
+        // the stop is news for a listener as well, and only when it
+        // happened ([`toggled`])
+        if let Some(said) = toggled(was_playing, false) {
+            self.announce(said);
+        }
     }
 
     fn play(&self) {
-        {
+        let was_playing = {
             let mut st = self.state.borrow_mut();
             if st.tc >= self.data.end() {
                 st.tc = 0.0;
             }
+            let was_playing = st.playing;
             st.playing = true;
             st.last = None;
-        }
+            was_playing
+        };
         self.dom.play.set_text_content(Some("Pause"));
         set_state(&self.dom.host, "playing", true);
+        // the last word before the ticks take over and begin to wait
+        self.say_value(Say::AtOnce);
+        if let Some(said) = toggled(was_playing, true) {
+            self.announce(said);
+        }
         self.request_frame();
     }
 
@@ -644,7 +1048,7 @@ impl Player {
             &self.dom,
             &self.data,
             k,
-            "pending — release to seek, Esc to cancel",
+            "pending, release to seek, Esc to cancel",
         );
         let _ = self.dom.stage.class_list().add_1("pending");
         show_peek(&self.dom, &self.data, self.data.times[k], None);
@@ -665,7 +1069,7 @@ impl Player {
             hide_peek(&self.dom);
             set_state(&self.dom.host, "pending", false);
             self.render();
-            self.dom.live.set_text_content(Some("seek cancelled"));
+            self.say(CANCELLED);
         }
     }
 
@@ -769,16 +1173,29 @@ pub(crate) const PEEK_BAND: &str = ".peek-band";
 /// pointer, takes its wash here; the edge that belongs to the annotation
 /// band alone is in [`CHART_SHAPE_CSS`]. [`chart_rules`] comes last, for
 /// the reason given there.
+///
+/// The chart's text is 12 px and so is the title above it, decision 24's
+/// floor: no text in a chart is drawn smaller, which is also the size the
+/// emitter estimates its label widths at, so the labels are placed for the
+/// size they are drawn at.
+///
+/// The cue buttons take decision 20's indicator and not the site's ring,
+/// in the element's own words ([`cue_indicator_css`]). The playhead needs
+/// none of this: the film's thumb is decoration ([`chart_aria`]), with no
+/// role, no tab stop and nothing to focus.
 pub(crate) fn chart_css() -> String {
     let rules = chart_rules();
+    let cues = cue_indicator_css();
     format!(
-        ".chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 11px; }}
+        ".chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 12px; }}
+.charttitle {{ font-size: 12px; color: var(--op-text); margin-bottom: 0.25rem; }}
 {CHART_SHAPE_CSS}
 .chart .band, .chart .peek-band {{ fill: var(--op-accent); fill-opacity: 0.08; }}
 .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
 {CHART_CUE_CSS}
 .chart .head {{ stroke: var(--op-accent); stroke-width: 1.5; }} .chart .head-dot {{ fill: var(--op-accent); }}
 .chart .head-t {{ fill: var(--op-accent); font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+{cues}
 {rules}"
     )
 }
@@ -834,11 +1251,11 @@ impl CustomElement for Film {
             .map(|(k, t)| {
                 let delta = data.deltas.get(k).copied().unwrap_or(0.0);
                 let caption = if k == 0 {
-                    fmt(*t)
+                    readout(*t)
                 } else if delta > 0.001 {
-                    format!("{} · {:.0}%", fmt(*t), delta * 100.0)
+                    format!("{} · {:.0}%", readout(*t), delta * 100.0)
                 } else {
-                    format!("{} · same", fmt(*t))
+                    format!("{} · same", readout(*t))
                 };
                 format!(
                     "<figure class=\"fr\" data-k=\"{k}\"><div class=\"cell\" style=\"width:{cell_w}px;height:{cell_h}px;background-image:url('{}');background-size:{}px {cell_h}px;background-position:{}px 0\"></div><figcaption>{caption}</figcaption></figure>",
@@ -850,10 +1267,13 @@ impl CustomElement for Film {
             .collect();
         let chart_css = chart_css();
         let layout = op_chart::Layout::film(data.t_max);
+        // the chart, under the visible title its svg is named by (decision
+        // 15); a film with nothing sampled draws neither, and then it has
+        // no peek to show either
         let chart = if data.series.is_empty() {
             String::new()
         } else {
-            op_chart::render(&spec_of(&data), layout).svg
+            format!("{}{}", chart_title(&data), chart_svg(&data, layout))
         };
         let peek = if chart.is_empty() {
             String::new()
@@ -992,6 +1412,8 @@ impl CustomElement for Film {
             data: data.clone(),
             state: state.clone(),
             tick: Rc::new(RefCell::new(None)),
+            value_written: Cell::new(f64::NEG_INFINITY),
+            scrub: Cell::new(false),
         });
         // the animation-frame loop: advances the clock on real time
         {
@@ -1014,6 +1436,9 @@ impl CustomElement for Film {
                 };
                 if playing {
                     p.render();
+                    // the clock's own write: onto a slider that has the
+                    // focus, and no oftener than the wait (decision 18)
+                    p.say_value(Say::OnTheClock);
                     p.request_frame();
                 }
             }));
@@ -1042,20 +1467,50 @@ impl CustomElement for Film {
             let dir = *dir;
             listen(button, "click", Closure::new(move |_| p.chapter(dir)));
         }
+        // The slider's own gesture, in the two events it tells it with
+        // ([`SLIDER_MOMENTS`]): the drag moves the clock and says nothing,
+        // and the change that ends it says where the drag landed.
+        for (name, moment) in SLIDER_MOMENTS {
+            let p = player.clone();
+            listen(
+                &dom.slider,
+                name,
+                Closure::new(move |e: Event| match moment {
+                    Moment::Press => {
+                        if let Some(target) = e.target()
+                            && let Ok(v) =
+                                js_sys::Reflect::get(&target, &JsValue::from_str("value"))
+                            && let Some(k) = v.as_string().and_then(|s| s.parse::<usize>().ok())
+                        {
+                            // the film stops on the first step of the drag
+                            // and is not stopped again on the rest of them:
+                            // a pause speaks at once, so pausing per pixel
+                            // is the flood by another door
+                            if p.state.borrow().playing {
+                                p.pause();
+                            }
+                            p.moment(Moment::Press);
+                            p.seek_to(p.data.times[k.min(p.data.times.len() - 1)]);
+                        }
+                    }
+                    _ => p.moment(moment),
+                }),
+            );
+        }
         {
             let p = player.clone();
             listen(
                 &dom.slider,
-                "input",
-                Closure::new(move |e: Event| {
-                    if let Some(target) = e.target()
-                        && let Ok(v) = js_sys::Reflect::get(&target, &JsValue::from_str("value"))
-                        && let Some(k) = v.as_string().and_then(|s| s.parse::<usize>().ok())
-                    {
-                        p.pause();
-                        p.seek_to(p.data.times[k.min(p.data.times.len() - 1)]);
-                    }
-                }),
+                "focus",
+                // what a reader hears on arrival is written on arrival.
+                // The clock's own writes stop while nothing has the focus
+                // (decision 18), so the words on the control are as old
+                // as the last gesture, and a film played through with the
+                // focus elsewhere left them at the time it started from.
+                // The element keeps its thumb current from the other end,
+                // writing as the focus leaves; either way what is spoken
+                // on arrival is where the clock now stands.
+                Closure::new(move |_| p.say_value(Say::AtOnce)),
             );
         }
         {
@@ -1082,14 +1537,27 @@ impl CustomElement for Film {
                     let Ok(m) = e.dyn_into::<MouseEvent>() else {
                         return;
                     };
-                    if m.buttons() & 1 == 1 {
-                        let t = p.t_at_pointer(&m);
-                        p.seek_to(t);
-                        hide_peek(&p.dom);
-                    } else if let Some(chart) = &p.dom.chart {
-                        let r = chart.get_bounding_client_rect();
-                        let t = p.t_at_pointer(&m);
-                        show_peek(&p.dom, &p.data, t, Some(f64::from(m.client_x()) - r.left()));
+                    match moved(m.buttons(), p.scrub.get()) {
+                        Moved::Scrub => {
+                            let t = p.t_at_pointer(&m);
+                            p.seek_to(t);
+                            hide_peek(&p.dom);
+                        }
+                        Moved::Hover => {
+                            if let Some(chart) = &p.dom.chart {
+                                let r = chart.get_bounding_client_rect();
+                                let t = p.t_at_pointer(&m);
+                                show_peek(
+                                    &p.dom,
+                                    &p.data,
+                                    t,
+                                    Some(f64::from(m.client_x()) - r.left()),
+                                );
+                            }
+                        }
+                        // somebody else's drag, passing over the chart:
+                        // the film has nothing to answer it with
+                        Moved::Stray => {}
                     }
                 }),
             );
@@ -1113,10 +1581,21 @@ impl CustomElement for Film {
                     if let Some(chart) = &p.dom.chart {
                         let _ = chart.set_pointer_capture(pe.pointer_id());
                     }
+                    // the press begins a scrub: what it and every move
+                    // after it have to say is said once, at the release
+                    p.moment(Moment::Press);
                     let t = p.t_at_pointer(&pe);
                     p.seek_to(t);
                 }),
             );
+            for name in ["pointerup", "pointercancel"] {
+                let p = player.clone();
+                listen(
+                    &chart,
+                    name,
+                    Closure::new(move |_| p.moment(Moment::Settle)),
+                );
+            }
         }
         for (k, fr) in dom.frames.iter().enumerate() {
             let p = player.clone();
@@ -1201,7 +1680,16 @@ impl CustomElement for Film {
                     // Ctrl or Alt with an arrow aliases the chapter keys, as
                     // YouTube does; Shift with an arrow is the larger jump.
                     let chapter_alias = ke.ctrl_key() || ke.alt_key();
-                    let handled = if let Some(dir) = chapter_key(&key, chapter_alias) {
+                    // What holds the focus is read before the table, so a
+                    // press on one of the chart's cue buttons is answered
+                    // as the element answers it and the table never sees
+                    // the key: Space on a chapter seeks to the chapter,
+                    // where before it played the film ([`cue_press`]).
+                    let handled = if let Some(t) = cue_press(p.focused_cue().as_deref(), &key) {
+                        p.pause();
+                        p.seek_to(t);
+                        true
+                    } else if let Some(dir) = chapter_key(&key, chapter_alias) {
                         p.chapter(dir);
                         true
                     } else {
@@ -1273,7 +1761,7 @@ impl CustomElement for Film {
                                     &JsValue::from_str("value"),
                                     &JsValue::from_str(&format!("{r}")),
                                 );
-                                p.dom.live.set_text_content(Some(&format!("speed {r}x")));
+                                p.say(&format!("Speed {r}x"));
                                 true
                             }
                             k if k.len() == 1 && k.as_bytes()[0].is_ascii_digit() => {
@@ -1381,6 +1869,8 @@ impl CustomElement for Film {
             closures.push(closure);
         }
         player.render();
+        // the words go on the slider before anything can tab to it
+        player.say_value(Say::AtOnce);
         self.wiring = Some(Wiring {
             _player: player,
             _closures: closures,
@@ -1392,8 +1882,45 @@ impl CustomElement for Film {
 mod chart_reference {
     //! Fixtures shaped like the films the report tool emits, and the
     //! film-side rules over them.
+    use super::super::chart::{CUE_RULE, VALUETEXT_WAIT};
     use super::super::chart_style::{FORCED_COLOURS_CSS, PRINT_CSS, SERIES_CSS};
     use super::*;
+
+    /// The opening tag of every `<tag>` in `svg`: what stands between the
+    /// name and the `>` that ends it.
+    fn heads<'a>(svg: &'a str, tag: &str) -> Vec<&'a str> {
+        svg.split(&format!("<{tag}"))
+            .skip(1)
+            .filter_map(|rest| rest.split_once('>').map(|(head, _)| head))
+            .collect()
+    }
+
+    /// Every `<text>` in `svg` as its opening tag and the words it draws.
+    fn texts(svg: &str) -> Vec<(&str, &str)> {
+        svg.split("<text")
+            .skip(1)
+            .filter_map(|rest| {
+                let (head, rest) = rest.split_once('>')?;
+                Some((head, rest.split_once("</text>")?.0))
+            })
+            .collect()
+    }
+
+    /// The attribute a slider role is written as, assembled so that a test
+    /// asserting the film writes it nowhere is never one of its own
+    /// matches when it reads this file's source.
+    fn slider_role() -> String {
+        ["role=", "\"slider\""].concat()
+    }
+
+    /// One attribute of an opening tag, empty where the tag has none. The
+    /// space before the name is part of the needle, so `x` cannot be found
+    /// inside another attribute's name or value.
+    fn attr(head: &str, name: &str) -> String {
+        head.split_once(&format!(" {name}=\""))
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .map_or(String::new(), |(value, _)| value.to_owned())
+    }
 
     fn series(label: &str, index: usize, t: &[f64], y: &[f64], lw: f64) -> Series {
         Series {
@@ -1736,5 +2263,1205 @@ mod chart_reference {
         // to be taken for it
         assert!(!svg.contains("class=\"band\""), "{svg}");
         assert!(d.chapters.len() > 1, "a film with no chapter to peek at");
+    }
+
+    /// Decision 15 in the embedded case: the film's chart is a document
+    /// with a name and its thumb is decoration, because the film's own
+    /// control bar holds the slider. The svg was a focusable
+    /// `role="slider"` whose value the film wrote and nothing announced,
+    /// which is a control with no words in a widget that already has one.
+    #[test]
+    fn the_films_chart_is_a_named_document_and_its_thumb_is_decoration() {
+        let d = flight();
+        let l = op_chart::Layout::film(d.t_max);
+        let svg = chart_svg(&d, l);
+        assert!(
+            svg.starts_with(&format!(
+                "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 900 268\" tabindex=\"0\" role=\"graphics-document\" aria-labelledby=\"{CHART_TITLE_ID}\">"
+            )),
+            "{}",
+            svg.split_once('>').map_or("", |(head, _)| head)
+        );
+        // the name it points at is visible markup in the same shadow tree,
+        // and it says what the chart draws
+        let title = chart_title(&d);
+        assert!(
+            title.contains(&format!("id=\"{CHART_TITLE_ID}\"")) && title.contains(&d.ylabel),
+            "{title}"
+        );
+        assert!(!title.contains("hidden"), "{title}");
+        assert!(
+            chart_css().contains(".charttitle {"),
+            "the title is unpainted"
+        );
+        // the chart claims no control and announces no value: the film's
+        // own slider does both
+        for never in [slider_role().as_str(), "aria-valu"] {
+            assert!(!svg.contains(never), "{never} in the film's chart");
+        }
+        // the thumb is hidden, and there is nothing focusable inside it to
+        // be hidden away from a keyboard
+        let after = svg.split_once(THUMB_TAG).expect("the thumb").1;
+        let head = after.split_once('>').expect("the tag ends").0;
+        assert!(
+            head.starts_with(" aria-hidden=\"true\""),
+            "the thumb is not hidden: {head}"
+        );
+        let group = after.split_once("</g>").expect("the group ends").0;
+        for never in ["tabindex", "role="] {
+            assert!(!group.contains(never), "{never} inside the thumb: {group}");
+        }
+        // and the emitter writes the tag this hangs on, so the day it
+        // changes the film fails here rather than quietly exposing the
+        // readout and the ring to a reader again
+        let bare = op_chart::render_with(&spec_of(&d), l, &chart_aria(&d)).svg;
+        assert_eq!(bare.matches(THUMB_TAG).count(), 1, "{bare}");
+        assert!(
+            !bare.contains(&format!("{THUMB_TAG} aria-hidden")),
+            "{bare}"
+        );
+        // one tab stop in the chart, and it is the svg the film listens on
+        assert_eq!(svg.matches("tabindex=\"0\"").count(), 1, "{svg}");
+    }
+
+    /// One widget, one slider (decision 15): the film's is the native range
+    /// input in its control bar, which keeps its own name and its own
+    /// value, and nothing else in the film's markup takes the role.
+    #[test]
+    fn the_film_has_one_slider_and_it_is_the_native_range_input() {
+        let d = flight();
+        let n = d.times.len();
+        let markup = format!(
+            "{}{}{}",
+            control_bar(n),
+            chart_title(&d),
+            chart_svg(&d, op_chart::Layout::film(d.t_max))
+        );
+        assert!(
+            markup.contains(&format!(
+                "<input type=\"range\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"frame\">",
+                n - 1
+            )),
+            "{markup}"
+        );
+        // the role is assembled, so neither this test nor the source scan
+        // below is one of its own matches
+        assert!(
+            !markup.contains(&slider_role()),
+            "a second slider in {markup}"
+        );
+        let source = include_str!("film.rs");
+        let in_source = ["role=", "\\\"", "slider"].concat();
+        assert!(!source.contains(&in_source), "the film writes that role");
+        // every aria value the film writes goes to that slider: one written
+        // on the chart is a value nothing announces, which is what the
+        // chart carried while its role was a graphics one
+        let value = ["aria-", "value"].concat();
+        let mut written = 0;
+        for (at, _) in source.match_indices(&value) {
+            let before = &source[at.saturating_sub(80)..at];
+            assert!(
+                before.contains("slider"),
+                "a value off the slider: {before}"
+            );
+            written += 1;
+        }
+        assert_eq!(written, 1, "the film's slider must announce its value");
+        // and what it announces is the clock, the frame and the chapter,
+        // which the frame index it carries cannot say
+        assert_eq!(value_text(&d, 0.0), "0 seconds, frame 1 of 38, flight");
+        // the frame is the one showing at that instant, counted from one,
+        // and the chapter is the one it is in
+        assert_eq!(d.frame_at(1.55), 15, "the film's frames are 0.1 s apart");
+        assert_eq!(
+            value_text(&d, 1.55),
+            "1.6 seconds, frame 16 of 38, abort <early>"
+        );
+    }
+
+    /// The structure the emitter draws, named from the film's own data
+    /// (decision 15): one object per series with its samples, its range in
+    /// per cent and its span, and every chapter a button on the rect a
+    /// pointer already hits.
+    #[test]
+    fn the_charts_series_and_chapters_are_named_from_the_films_own_data() {
+        let d = flight();
+        let svg = chart_svg(&d, op_chart::Layout::film(d.t_max));
+        let named = |role: &str| -> Vec<String> {
+            heads(&svg, "g")
+                .iter()
+                .filter(|head| attr(head, "role") == role)
+                .map(|head| attr(head, "aria-label"))
+                .collect()
+        };
+        let want: Vec<String> = d
+            .series
+            .iter()
+            .map(|s| {
+                let lo = s.y.iter().copied().fold(f64::INFINITY, f64::min);
+                let hi = s.y.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                // the range is spoken in the emitter's own rounding
+                // ([`op_chart::announced`]), which is exported for exactly
+                // this: a recomputation that restated it would pass while
+                // the two drifted apart
+                format!(
+                    "{}, {} samples, {} to {} %, from {:.2} s to {:.2} s",
+                    s.label,
+                    s.t.len().min(s.y.len()),
+                    op_chart::announced(lo),
+                    op_chart::announced(hi),
+                    s.t[0],
+                    s.t[s.t.len() - 1]
+                )
+            })
+            .collect();
+        assert_eq!(
+            named("graphics-object"),
+            [want, vec!["Chapters".to_owned()]].concat()
+        );
+        // the unit is the film's own reading of its data: every series it
+        // draws is a percentage, which is why the chart stays on that scale
+        assert_eq!(chart_aria(&d).units, vec!["%".to_owned(); d.series.len()]);
+        assert!(!chart_aria(&d).slider, "the film's chart owns no slider");
+        // one button per chapter after the first, named and timed, on the
+        // hit rect that was there for the pointer already
+        assert_eq!(
+            named("button"),
+            d.chapters
+                .iter()
+                .skip(1)
+                .map(|(t, label)| op_chart::escape(&format!("{label}, {t:.2} s")))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(svg.matches("role=\"button\"").count(), d.chapters.len() - 1);
+    }
+
+    /// Decision 24's floor: no text in a chart is under 12 px. The film drew
+    /// 11 px into a layout whose label widths the emitter estimates for a
+    /// 12 px face, so the two agree now, as the film and the element do.
+    /// At that size the labels still fit the film's fixed 900 by 268 box.
+    #[test]
+    fn the_chart_text_is_twelve_px_and_the_labels_still_fit_the_film_box() {
+        /// The room a character takes at 12 px, the emitter's own estimate.
+        const ADVANCE: f64 = 6.5;
+        let sizes = |css: &str| -> Vec<f64> {
+            css.split("font-size: ")
+                .skip(1)
+                .filter_map(|rest| rest.split("px").next()?.parse::<f64>().ok())
+                .collect()
+        };
+        let ours = sizes(&chart_css());
+        assert!(
+            ours.contains(&12.0) && ours.iter().all(|px| *px >= 12.0),
+            "{ours:?}"
+        );
+        // and the element's chart is drawn at that same size, so a reader
+        // who meets both meets one size of text
+        let theirs = sizes(include_str!("chart.rs"));
+        assert!(
+            theirs.contains(&12.0) && theirs.iter().all(|px| *px >= 12.0),
+            "{theirs:?}"
+        );
+        for d in [demo(), flight()] {
+            let l = op_chart::Layout::film(d.t_max);
+            let svg = chart_svg(&d, l);
+            // (baseline, left, right, the words) of every label drawn flat;
+            // the value axis' own name runs down the margin turned on its
+            // side, where a width along x means nothing
+            let mut rows: Vec<(f64, f64, f64, String)> = Vec::new();
+            for (head, body) in texts(&svg) {
+                if !attr(head, "transform").is_empty() {
+                    continue;
+                }
+                let x: f64 = attr(head, "x").parse().expect("a number");
+                // the readout travels with the playhead, whose group
+                // carries the offset it is written at
+                let x = x + if attr(head, "class") == "head-t" {
+                    l.x_of(0.0)
+                } else {
+                    0.0
+                };
+                let w = body.chars().count() as f64 * ADVANCE;
+                let (left, right) = match attr(head, "text-anchor").as_str() {
+                    "end" => (x - w, x),
+                    "middle" => (x - w / 2.0, x + w / 2.0),
+                    _ => (x, x + w),
+                };
+                assert!(
+                    left >= 0.0 && right <= l.width,
+                    "`{body}` runs from {left} to {right}, outside the {} px box",
+                    l.width
+                );
+                rows.push((
+                    attr(head, "y").parse().expect("a number"),
+                    left,
+                    right,
+                    body.to_owned(),
+                ));
+            }
+            assert!(rows.len() > 8, "only {} labels read", rows.len());
+            rows.sort_by(|a, b| a.partial_cmp(b).expect("no label is at NaN"));
+            for pair in rows.windows(2) {
+                let ((y, _, right, first), (next_y, left, _, second)) = (&pair[0], &pair[1]);
+                assert!(
+                    (y - next_y).abs() > 0.5 || left >= right,
+                    "`{first}` and `{second}` overlap on the row at {y}"
+                );
+            }
+        }
+    }
+
+    /// The names the interaction report reads out of the film's shadow
+    /// tree. It queries them as strings from another language, so a rename
+    /// here is a broken report there and neither build would say so.
+    #[test]
+    fn the_names_the_interaction_report_reads_are_still_in_the_markup() {
+        let d = demo();
+        let svg = chart_svg(&d, op_chart::Layout::film(d.t_max));
+        for class in [
+            "chart",
+            "playhead",
+            "head",
+            "head-dot",
+            "head-t",
+            "bar-bg",
+            "bar-played",
+            "peek-line",
+        ] {
+            assert!(
+                svg.contains(&format!("class=\"{class}\"")),
+                "the report reads .{class} and the chart draws it no longer"
+            );
+        }
+        let bar = control_bar(d.times.len());
+        for piece in [
+            "class=\"play\"",
+            "class=\"chapter-prev\"",
+            "class=\"chapter-next\"",
+            "class=\"t\"",
+            "<input type=\"range\"",
+        ] {
+            assert!(bar.contains(piece), "the report reads {piece}: {bar}");
+        }
+        // and the pieces the film writes straight into its shadow markup,
+        // where no helper returns them to a test
+        let source = include_str!("film.rs");
+        for class in ["fr", "chartbox", "peek", "sr"] {
+            assert!(
+                source.contains(&["class=", "\\\"", class, "\\\""].concat()),
+                "the report reads .{class} and the film writes it no longer"
+            );
+        }
+    }
+
+    /// The animation frame's timestamps over `span` seconds of play, as a
+    /// sixty hertz loop delivers them.
+    fn ticks(span: f64) -> Vec<f64> {
+        let frames = (span * 60.0) as usize;
+        (0..frames).map(|k| k as f64 / 60.0).collect()
+    }
+
+    /// What a run of clock ticks put on the slider, and when.
+    struct Heard {
+        /// The times the frame index went on.
+        numbers: Vec<f64>,
+        /// The times the words for it did.
+        words: Vec<f64>,
+    }
+
+    /// The times a run of clock ticks writes the slider's number and its
+    /// words at, behind a write at `last`. The loop is
+    /// [`Player::say_value`]'s own, stamp and all: only a write of the
+    /// words moves the wait on, and a tick that says nothing leaves it
+    /// where it was.
+    fn written_at(last: f64, times: &[f64], focused: bool) -> Heard {
+        let mut last = last;
+        let mut heard = Heard {
+            numbers: Vec::new(),
+            words: Vec::new(),
+        };
+        for now in times {
+            if index_due(Say::OnTheClock, last, *now, focused) {
+                heard.numbers.push(*now);
+            }
+            if value_due(Say::OnTheClock, last, *now, focused) {
+                heard.words.push(*now);
+                last = *now;
+            }
+        }
+        heard
+    }
+
+    /// Decision 18's clock rule is the chart's, reused rather than copied:
+    /// for every clock and either focus the film's answer for a tick is
+    /// exactly [`valuetext_due`]'s, and the film asks it rather than
+    /// restating it, so the two cannot drift apart.
+    #[test]
+    fn the_films_clock_rule_is_the_charts_own_and_not_a_second_copy() {
+        for before in [f64::NEG_INFINITY, 0.0, 1.0, 12.5] {
+            for step in [0.0, 0.05, VALUETEXT_WAIT - 0.001, VALUETEXT_WAIT, 5.0] {
+                let at = if before.is_finite() {
+                    before + step
+                } else {
+                    step
+                };
+                for focus in [true, false] {
+                    assert_eq!(
+                        value_due(Say::OnTheClock, before, at, focus),
+                        valuetext_due(before, at, focus),
+                        "a tick at {at} behind {before}, focused {focus}"
+                    );
+                }
+                // the number's rule is that same one once the control has
+                // the focus, and no rule at all before that
+                assert_eq!(
+                    index_due(Say::OnTheClock, before, at, true),
+                    valuetext_due(before, at, true),
+                    "a number at {at} behind {before}"
+                );
+                assert!(index_due(Say::OnTheClock, before, at, false));
+            }
+        }
+        // and both rules ask that one rather than restating it, the
+        // words' and the number's. The needle is assembled, so this test
+        // is never one of its own matches.
+        let source = include_str!("film.rs");
+        let asks = ["valuetext_due(", "last, now, focused)"].concat();
+        for rule in [
+            "fn value_due(say: Say, last: f64, now: f64, focused: bool) -> bool {",
+            "fn index_due(say: Say, last: f64, now: f64, focused: bool) -> bool {",
+        ] {
+            let body = source
+                .split_once(rule)
+                .unwrap_or_else(|| panic!("{rule}"))
+                .1
+                .split_once("\n}")
+                .expect("it ends")
+                .0;
+            assert!(body.contains(&asks), "{rule} answers for itself: {body}");
+        }
+        assert_eq!(
+            source.matches(&asks).count(),
+            2,
+            "the chart's rule is asked twice and answered nowhere else"
+        );
+    }
+
+    /// A clock tick onto a slider nothing has tabbed to says nothing at
+    /// all: an unfocused value is not being spoken, so a playing film
+    /// writes no words onto it (decision 18).
+    #[test]
+    fn a_clock_tick_with_the_slider_unfocused_writes_nothing() {
+        // a minute of play at the frame rate, and not one write
+        assert!(
+            written_at(f64::NEG_INFINITY, &ticks(60.0), false)
+                .words
+                .is_empty()
+        );
+        // however long ago the last one was
+        assert!(!value_due(Say::OnTheClock, 0.0, 1.0e6, false));
+        // the same ticks onto a slider that does have the focus do speak,
+        // so it is the focus that decides here and not the loop
+        assert!(
+            !written_at(f64::NEG_INFINITY, &ticks(60.0), true)
+                .words
+                .is_empty()
+        );
+    }
+
+    /// A seek says the new time at once: neither the wait nor the focus
+    /// holds a gesture up, because a reader who has just moved the clock
+    /// is owed the answer to the thing they asked (decision 18).
+    #[test]
+    fn a_seek_writes_at_once() {
+        // the write before was a millisecond ago and nothing has the
+        // focus, so both of the clock's conditions fail
+        assert!(!value_due(Say::OnTheClock, 1.0, 1.001, false));
+        // and the gesture speaks anyway, focus or no focus
+        assert!(value_due(Say::AtOnce, 1.0, 1.001, false));
+        assert!(value_due(Say::AtOnce, 1.0, 1.001, true));
+        // a seek, a play and a pause are the three that ask for it, the
+        // seek through the moment that knows whether its gesture is over
+        // ([`says_now`]), and the animation frame is the one caller that
+        // waits. No native test can reach a shadow root, so the wiring is
+        // read off the source, as the other guards in this file are.
+        let source = include_str!("film.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let at_once = ["say_value(Say::", "AtOnce)"].concat();
+        for gesture in [
+            "fn moment(&self, moment: Moment) {",
+            "fn play(&self) {",
+            "fn pause(&self) {",
+        ] {
+            let body = body_of(gesture);
+            assert!(body.contains(&at_once), "{gesture} says nothing: {body}");
+        }
+        let seek = body_of("fn seek_to(&self, t: f64) {");
+        assert!(
+            seek.contains(&["self.moment(Moment::", "Seek)"].concat()),
+            "the seek hands its moment to nothing: {seek}"
+        );
+        let on_the_clock = ["say_value(Say::", "OnTheClock)"].concat();
+        assert_eq!(
+            source.matches(&on_the_clock).count(),
+            1,
+            "one caller waits, and it is the animation frame"
+        );
+        // and the paint says nothing on its own account, whoever called it
+        let render = source
+            .split_once("fn render(dom: &Dom, d: &Data, st: &State) {")
+            .expect("the render")
+            .1
+            .split_once("\n}")
+            .expect("it ends")
+            .0;
+        let number = ["set_attribute(\"", "value\""].concat();
+        for said in [
+            at_once.as_str(),
+            on_the_clock.as_str(),
+            "value_text(",
+            number.as_str(),
+        ] {
+            assert!(!render.contains(said), "the paint speaks: {render}");
+        }
+    }
+
+    /// Two ticks inside the wait are one phrase. This is what stands
+    /// between a reader who has tabbed to the slider and sixty
+    /// interruptions a second (decision 18).
+    #[test]
+    fn two_ticks_inside_the_window_write_once() {
+        // two animation frames, 16 ms apart, on a focused slider with
+        // no write behind them
+        let pair = written_at(f64::NEG_INFINITY, &[0.0, 1.0 / 60.0], true).words;
+        assert_eq!(pair.len(), 1, "{pair:?}");
+        // and with a seek's write just behind them, neither says a word
+        assert!(
+            written_at(0.0, &[1.0 / 60.0, 2.0 / 60.0], true)
+                .words
+                .is_empty()
+        );
+        // a second of play is sixty ticks, and the wait paces what is
+        // heard: never two phrases inside one wait
+        let said = written_at(f64::NEG_INFINITY, &ticks(1.0), true).words;
+        assert!(
+            said.len() <= 1 + (1.0 / VALUETEXT_WAIT) as usize,
+            "{} phrases in a second of play: {said:?}",
+            said.len()
+        );
+        assert!(said.len() >= 2, "the clock stopped speaking: {said:?}");
+        for pair in said.windows(2) {
+            assert!(pair[1] - pair[0] >= VALUETEXT_WAIT, "{pair:?}");
+        }
+    }
+
+    /// The number waits only for a listener. It is what the thumb is
+    /// drawn from, so an unfocused slider takes it on every tick and
+    /// keeps up with the film; a focused one is spoken, so there it waits
+    /// with the words (decision 18).
+    #[test]
+    fn the_frame_index_follows_every_tick_until_the_slider_is_focused() {
+        let second = ticks(1.0);
+        // unfocused: sixty ticks, sixty numbers, and no words at all
+        let heard = written_at(f64::NEG_INFINITY, &second, false);
+        assert_eq!(heard.numbers.len(), second.len());
+        assert!(heard.words.is_empty());
+        // focused: the number keeps the words' pace exactly, so a reader
+        // on the control is not read a value sixty times a second
+        let heard = written_at(f64::NEG_INFINITY, &second, true);
+        assert_eq!(heard.numbers, heard.words);
+        assert!(
+            heard.numbers.len() <= 1 + (1.0 / VALUETEXT_WAIT) as usize,
+            "{} numbers in a second of play",
+            heard.numbers.len()
+        );
+        // a gesture writes it at once, focus or no focus
+        assert!(index_due(Say::AtOnce, 1.0, 1.001, true));
+        assert!(index_due(Say::AtOnce, 1.0, 1.001, false));
+        // and whenever it is written it is the frame the clock is on, so
+        // a debounced write is late and never stale
+        let source = include_str!("film.rs");
+        let say = source
+            .split_once("fn say_value(&self, say: Say) {")
+            .expect("the write")
+            .1
+            .split_once("\n    }")
+            .expect("it ends")
+            .0;
+        assert!(
+            say.contains("self.data.frame_at(self.state.borrow().tc)"),
+            "{say}"
+        );
+    }
+
+    /// A scrub says one sentence, and says it when it settles. A press on
+    /// the chart seeks on every move under it, and a sentence per move is
+    /// the flood the debounce keeps off the value, on the region instead
+    /// (decision 18).
+    #[test]
+    fn a_scrub_says_one_sentence_and_says_it_when_it_settles() {
+        // where a run of moments speaks, run through the element's own
+        // rule and its own flag
+        let says = |moments: &[Moment]| -> Vec<usize> {
+            let mut scrubbing = false;
+            let mut spoke = Vec::new();
+            for (i, moment) in moments.iter().enumerate() {
+                let (in_flight, says) = says_now(*moment, scrubbing);
+                scrubbing = in_flight;
+                if says {
+                    spoke.push(i);
+                }
+            }
+            spoke
+        };
+        // a press, its own seek, two moves and the release: one sentence,
+        // and it is the release that says it
+        assert_eq!(
+            says(&[
+                Moment::Press,
+                Moment::Seek,
+                Moment::Seek,
+                Moment::Seek,
+                Moment::Settle,
+            ]),
+            vec![4]
+        );
+        // a seek that is no part of a gesture speaks at once, every time
+        assert_eq!(says(&[Moment::Seek, Moment::Seek]), vec![0, 1]);
+        // a release with no press behind it says nothing
+        assert_eq!(says(&[Moment::Settle]), Vec::<usize>::new());
+        // and the gesture is over when it settles: the next key seek
+        // speaks again
+        assert_eq!(
+            says(&[Moment::Press, Moment::Seek, Moment::Settle, Moment::Seek]),
+            vec![2, 3]
+        );
+        // the wiring: the chart's own listeners hand it the press and the
+        // settle, and the seek asks from the one place a seek happens
+        let source = include_str!("film.rs");
+        let chart = source
+            .split_once("if let Some(chart) = dom.chart.clone() {")
+            .expect("the chart's listeners")
+            .1
+            .split_once("\n        }")
+            .expect("they end")
+            .0;
+        for (event, moment) in [("pointerdown", "Press"), ("pointerup", "Settle")] {
+            assert!(chart.contains(event), "no {event} listener: {chart}");
+            assert!(
+                chart.contains(&["moment(Moment::", moment, ")"].concat()),
+                "{event} asks for nothing: {chart}"
+            );
+        }
+        assert!(chart.contains("pointercancel"), "{chart}");
+        let seek = source
+            .split_once("fn seek_to(&self, t: f64) {")
+            .expect("the seek")
+            .1
+            .split_once("\n    }")
+            .expect("it ends")
+            .0;
+        assert!(
+            seek.contains(&["self.moment(Moment::", "Seek)"].concat()),
+            "{seek}"
+        );
+    }
+
+    /// The region says what happened and the slider says what it reads
+    /// (decision 18). The sentence is the chart's own [`message`], so a
+    /// page whose chart and film both speak says one thing one way, and
+    /// the film keeps no second wording of its own.
+    #[test]
+    fn the_region_says_what_happened_in_the_charts_own_words() {
+        // a sentence naming the event and the time; the frame index is
+        // the slider's own value and is not said twice
+        let said = message(Said::Seeked, 1.55, "abort <early>");
+        assert_eq!(said, "Seeked to 1.6 seconds, chapter abort <early>");
+        assert!(!said.contains("frame"), "{said}");
+        assert_eq!(message(Said::Playing, 1.55, "flight"), "Playing");
+        assert_eq!(message(Said::Paused, 1.55, "flight"), "Paused");
+        let source = include_str!("film.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        // the seek says its sentence through the region's own rule
+        let seek = body_of("fn seek_to(&self, t: f64) {");
+        assert!(
+            seek.contains(&["self.moment(Moment::", "Seek)"].concat()),
+            "{seek}"
+        );
+        // play and pause say what changed, and nothing where nothing did:
+        // a frame step pauses a film already paused, and that is no event
+        assert_eq!(toggled(false, true), Some(Said::Playing));
+        assert_eq!(toggled(true, false), Some(Said::Paused));
+        assert_eq!(toggled(true, true), None);
+        assert_eq!(toggled(false, false), None);
+        for (toggle, call) in [
+            ("fn play(&self) {", "toggled(was_playing, true)"),
+            ("fn pause(&self) {", "toggled(was_playing, false)"),
+        ] {
+            let body = body_of(toggle);
+            assert!(body.contains(call), "{toggle} asks nothing: {body}");
+            assert!(body.contains("self.announce(said)"), "{toggle}: {body}");
+        }
+        // the region has one voice, and it is the chart's
+        let announce = body_of("fn announce(&self, said: Said) {");
+        assert!(
+            announce.contains("message(said, t, &chapter)"),
+            "{announce}"
+        );
+        // and the seek writes no wording of its own beside it
+        let seek = body_of("fn seek_to(&self, t: f64) {");
+        assert!(
+            !seek.contains("live"),
+            "a second wording in the seek: {seek}"
+        );
+    }
+
+    /// A scrub writes the control's words once, when the gesture
+    /// settles, and its number all the way along the drag. A press on the
+    /// chart seeks on every move under it, so a phrase per move is the
+    /// flood the debounce keeps off a playing film arriving by the other
+    /// door (decision 18); the number is not held back with them, because
+    /// the slider's thumb is drawn from it and has to stay under the
+    /// pointer that is dragging it.
+    #[test]
+    fn a_scrub_writes_the_controls_words_once_and_its_number_all_along() {
+        // a drag through the element's own rules and its own flag: which
+        // moments put the number on the control, and which put the words
+        // on it. The moves are a frame apart, which is as often as a
+        // scrub seeks.
+        let heard = |moments: &[Moment], focused: bool| -> Heard {
+            let mut scrubbing = false;
+            let mut last = f64::NEG_INFINITY;
+            let mut heard = Heard {
+                numbers: Vec::new(),
+                words: Vec::new(),
+            };
+            for (i, moment) in moments.iter().enumerate() {
+                let (in_flight, says) = says_now(*moment, scrubbing);
+                scrubbing = in_flight;
+                let say = if says { Say::AtOnce } else { Say::InFlight };
+                let now = i as f64 / 60.0;
+                if index_due(say, last, now, focused) {
+                    heard.numbers.push(now);
+                }
+                if value_due(say, last, now, focused) {
+                    heard.words.push(now);
+                    last = now;
+                }
+            }
+            heard
+        };
+        // the press, its own seek, two moves and the release
+        let drag = [
+            Moment::Press,
+            Moment::Seek,
+            Moment::Seek,
+            Moment::Seek,
+            Moment::Settle,
+        ];
+        for focused in [false, true] {
+            let heard = heard(&drag, focused);
+            assert_eq!(
+                heard.words,
+                vec![4.0 / 60.0],
+                "focused {focused}: {:?}",
+                heard.words
+            );
+            assert_eq!(
+                heard.numbers.len(),
+                drag.len(),
+                "the thumb stopped under the pointer, focused {focused}: {:?}",
+                heard.numbers
+            );
+        }
+        // a seek that is no part of a gesture says its words at once,
+        // every time: the drag is what waits, not the seeking
+        let heard = heard(&[Moment::Seek, Moment::Seek, Moment::Seek], false);
+        assert_eq!(heard.words.len(), 3, "{:?}", heard.words);
+        // a gesture in flight says nothing, however long it has been
+        // going and whoever is listening
+        for focused in [false, true] {
+            assert!(!value_due(Say::InFlight, f64::NEG_INFINITY, 1.0e6, focused));
+            // while the number it leaves out goes on every time
+            assert!(index_due(Say::InFlight, 1.0, 1.001, focused));
+        }
+        // the wiring: one moment answers for both voices, and the seek
+        // hands it every seek there is
+        let source = include_str!("film.rs");
+        let body_of = |signature: &str| {
+            source
+                .split_once(signature)
+                .unwrap_or_else(|| panic!("{signature}"))
+                .1
+                .split_once("\n    }")
+                .expect("it ends")
+                .0
+        };
+        let moment = body_of("fn moment(&self, moment: Moment) {");
+        assert!(
+            moment.contains("says_now(moment, self.scrub.get())"),
+            "{moment}"
+        );
+        assert!(
+            moment.contains("say_value("),
+            "the control is left out of it: {moment}"
+        );
+        assert!(moment.contains("announce(Said::Seeked)"), "{moment}");
+        // and the seek says nothing on its own account beside it, which
+        // is what wrote the control once a pointer move
+        let seek = body_of("fn seek_to(&self, t: f64) {");
+        assert!(
+            seek.contains(&["self.moment(Moment::", "Seek)"].concat()),
+            "{seek}"
+        );
+        assert!(
+            !seek.contains("say_value("),
+            "a second voice in the seek: {seek}"
+        );
+    }
+
+    /// The film's own slider is a native range input, and a thumb dragged
+    /// across it fires `input` for every pixel it crosses and one
+    /// `change` when the reader lets go of it. That is the gesture a
+    /// scrub across the chart is, and it takes the same rule: the drag
+    /// says nothing and the end of it says the one thing the gesture had
+    /// to say (decision 18). The input used to seek on its own account,
+    /// each one a settled seek, so a thumb dragged the width of the bar
+    /// said a sentence a pixel. A key on the same control fires both
+    /// events in the one press, so a key still speaks at once.
+    #[test]
+    fn a_drag_of_the_slider_speaks_once_and_a_key_on_it_speaks_at_once() {
+        let moment_of = |kind: &str| -> Moment {
+            SLIDER_MOMENTS
+                .iter()
+                .find(|(name, _)| *name == kind)
+                .unwrap_or_else(|| panic!("the slider answers no {kind}"))
+                .1
+        };
+        // where a run of the slider's own events speaks, through the
+        // element's own rule and its own flag
+        let says = |events: &[&str]| -> Vec<usize> {
+            let mut scrubbing = false;
+            let mut spoke = Vec::new();
+            for (i, kind) in events.iter().enumerate() {
+                let opening = moment_of(kind);
+                let mut moments = vec![opening];
+                // an input moves the clock as well, and the seek it makes
+                // asks this same rule ([`Player::seek_to`])
+                if opening == Moment::Press {
+                    moments.push(Moment::Seek);
+                }
+                for moment in moments {
+                    let (in_flight, said) = says_now(moment, scrubbing);
+                    scrubbing = in_flight;
+                    if said {
+                        spoke.push(i);
+                    }
+                }
+            }
+            spoke
+        };
+        // a thumb dragged across twelve pixels and let go: one sentence,
+        // and it is the letting go that says it
+        let mut drag = vec!["input"; 12];
+        drag.push("change");
+        assert_eq!(says(&drag), vec![12], "a sentence a pixel");
+        // a key press on the slider is one input and its own change, both
+        // in the one press: the film speaks, and waits for nothing
+        assert_eq!(says(&["input", "change"]), vec![1]);
+        // and the gesture is over when it ends: the next one speaks for
+        // itself rather than being swallowed by the last
+        assert_eq!(says(&["input", "change", "input", "change"]), vec![1, 3]);
+        // the wiring: both of the slider's events are listened for, from
+        // that one table, and the drag opens the gesture rather than
+        // seeking on its own account
+        let source = include_str!("film.rs");
+        let slider = source
+            .split_once("for (name, moment) in SLIDER_MOMENTS {")
+            .expect("the slider's listeners")
+            .1
+            .split_once("\n        }")
+            .expect("they end")
+            .0;
+        assert!(
+            slider.contains("&dom.slider,"),
+            "not the film's slider: {slider}"
+        );
+        assert!(
+            slider.contains(&["p.moment(Moment::", "Press)"].concat()),
+            "the drag opens no gesture: {slider}"
+        );
+        // and it stops a film that is running once, on its first step: a
+        // pause speaks at once, so pausing on every pixel of a drag is
+        // the same flood arriving by another door
+        assert!(
+            slider.contains("if p.state.borrow().playing {"),
+            "the drag pauses on every pixel of itself: {slider}"
+        );
+    }
+
+    /// A drag begun somewhere else and dragged over the chart is not the
+    /// film's gesture to answer. It arrives with the primary button down
+    /// and no press of this chart's behind it, so nothing opened a scrub
+    /// and nothing is coming to settle one, and the film seeks for none
+    /// of it: a seek outside a gesture is a settled seek and says so,
+    /// which was a sentence for every move somebody else's drag made
+    /// across the chart ([`says_now`]). A hover is still a hover, and the
+    /// film's own scrub still drags the clock.
+    #[test]
+    fn a_drag_the_chart_never_saw_open_neither_seeks_nor_peeks() {
+        // the film's own scrub: the press set the flag, and the moves
+        // under it carry the clock with them
+        assert_eq!(moved(1, true), Moved::Scrub);
+        // the same button with no press of this chart's behind it
+        assert_eq!(moved(1, false), Moved::Stray);
+        // nothing held down is a hover, whatever the flag says
+        for scrubbing in [false, true] {
+            assert_eq!(moved(0, scrubbing), Moved::Hover, "scrubbing {scrubbing}");
+        }
+        // the primary button is the one that scrubs: the others carry a
+        // menu or a page's own gesture, and drag nothing here
+        for buttons in [2, 4, 16] {
+            assert_eq!(moved(buttons, true), Moved::Hover, "buttons {buttons}");
+            // held with the primary one, the primary one still scrubs
+            assert_eq!(moved(buttons | 1, true), Moved::Scrub, "buttons {buttons}");
+        }
+        // what a stray move is kept away from: the seek it would have
+        // made speaks on its own account, once for every move
+        assert_eq!(says_now(Moment::Seek, false), (false, true));
+        // the wiring: the chart's move asks that rule and keeps no second
+        // copy of the button test. The needle is assembled, so this test
+        // is never one of its own matches.
+        let source = include_str!("film.rs");
+        let chart = source
+            .split_once("if let Some(chart) = dom.chart.clone() {")
+            .expect("the chart's listeners")
+            .1
+            .split_once("\n        }")
+            .expect("they end")
+            .0;
+        assert!(
+            chart.contains("moved(m.buttons(), p.scrub.get())"),
+            "the move answers for itself: {chart}"
+        );
+        let button_test = ["m.buttons()", " & 1"].concat();
+        assert!(
+            !chart.contains(&button_test),
+            "a second copy of the rule: {chart}"
+        );
+    }
+
+    /// The control and the region name one instant one way. The region
+    /// says the time in the chart's own words and the control gave the
+    /// same position two decimals of its own, so a reader who heard both
+    /// heard "1.6 seconds" and "1.55 seconds" for one place on the track.
+    #[test]
+    fn the_control_and_the_region_say_one_time_for_one_instant() {
+        let d = flight();
+        let said = in_words(1.55);
+        assert_eq!(said, "1.6 seconds");
+        assert_eq!(
+            value_text(&d, 1.55),
+            "1.6 seconds, frame 16 of 38, abort <early>"
+        );
+        assert_eq!(
+            message(Said::Seeked, 1.55, &d.chapter_at(1.55).1),
+            "Seeked to 1.6 seconds, chapter abort <early>"
+        );
+        // and everywhere else on the track, not only there: whatever the
+        // instant, the words on the control open with the time the
+        // sentence in the region names
+        for k in 0..=200 {
+            let t = d.end() * f64::from(k) / 200.0;
+            let said = in_words(t);
+            let words = value_text(&d, t);
+            let sentence = message(Said::Seeked, t, &d.chapter_at(t).1);
+            assert!(words.starts_with(&said), "the control says {words} at {t}");
+            assert!(
+                sentence.contains(&said),
+                "the region says {sentence} at {t}"
+            );
+        }
+    }
+
+    /// What the control says is written when the focus arrives, so a
+    /// reader who tabs to it in the middle of a film hears where the film
+    /// is and not where it was. The clock's own writes stop while nothing
+    /// has the focus (decision 18), which is what leaves the words stale;
+    /// the element keeps its thumb current from the other end, writing
+    /// the long form as the focus leaves.
+    #[test]
+    fn the_control_says_the_clock_it_stands_on_when_the_focus_arrives() {
+        // a minute of play with the focus elsewhere writes no words at
+        // all, so nothing but the arrival can make them current
+        assert!(
+            written_at(f64::NEG_INFINITY, &ticks(60.0), false)
+                .words
+                .is_empty()
+        );
+        // and the arrival does not wait behind the debounce: it is a
+        // gesture like the rest
+        assert!(value_due(Say::AtOnce, 0.0, 0.0, true));
+        // the wiring: the control's own listeners, one of them the focus
+        // arriving and saying at once. The needle is assembled, so this
+        // test is never one of its own matches.
+        let source = include_str!("film.rs");
+        let at_once = ["say_value(Say::", "AtOnce)"].concat();
+        let control = ["&dom.", "slider,"].concat();
+        let blocks: Vec<&str> = source
+            .split(&control)
+            .skip(1)
+            .filter_map(|rest| rest.split_once("\n        }").map(|(block, _)| block))
+            .collect();
+        assert!(
+            blocks
+                .iter()
+                .any(|block| block.contains("\"focus\"") && block.contains(&at_once)),
+            "nothing writes the control's words when the focus arrives: {blocks:?}"
+        );
+    }
+
+    /// The region has one voice, and every sentence in it opens with a
+    /// capital. Two are the film's own, a cancelled seek and a speed, the
+    /// chart's [`message`] having no word for either; they went straight
+    /// onto the node in lower case while every sentence beside them went
+    /// through the helper and opened with a capital.
+    #[test]
+    fn every_sentence_in_the_region_opens_with_a_capital_in_the_one_voice() {
+        for said in [Said::Seeked, Said::Playing, Said::Paused, Said::Chapter] {
+            let text = message(said, 1.55, "flight");
+            assert!(text.starts_with(char::is_uppercase), "{text}");
+        }
+        assert!(CANCELLED.starts_with(char::is_uppercase), "{CANCELLED}");
+        // one place writes the region, and everything that speaks goes
+        // through it. The needles are assembled, so this test is never
+        // one of its own matches.
+        let source = include_str!("film.rs");
+        let node = ["live.set_text_", "content("].concat();
+        assert_eq!(
+            source.matches(&node).count(),
+            1,
+            "a second voice writes the region"
+        );
+        let voice = [".", "say("].concat();
+        let mut own: Vec<&str> = Vec::new();
+        for call in source.split(&voice).skip(1) {
+            let statement = call.split(");").next().expect("the call ends");
+            // a sentence the chart words, or one behind a name, carries no
+            // literal here and is held to its capital where it is written
+            let Some((_, rest)) = statement.split_once('"') else {
+                continue;
+            };
+            own.push(rest.split('"').next().expect("a literal"));
+        }
+        for text in &own {
+            assert!(
+                text.starts_with(char::is_uppercase),
+                "the region says `{text}`"
+            );
+        }
+        assert!(
+            own.iter().any(|text| text.starts_with("Speed ")),
+            "the speed is said in some other voice: {own:?}"
+        );
+        // and the cancel goes through the voice rather than around it
+        let cancel = source
+            .split_once("fn cancel(&self) {")
+            .expect("the cancel")
+            .1
+            .split_once("\n    }")
+            .expect("it ends")
+            .0;
+        assert!(
+            cancel.contains(&[voice.as_str(), "CANCELLED)"].concat()),
+            "{cancel}"
+        );
+    }
+
+    /// The project writes no em dashes, and the film has two voices that
+    /// could carry one: the stage's label and the region.
+    #[test]
+    fn the_film_writes_no_em_dash_anywhere() {
+        let source = include_str!("film.rs");
+        for dash in ['\u{2014}', '\u{2013}'] {
+            assert!(
+                !source.contains(dash),
+                "{dash:?} at byte {:?}",
+                source.find(dash)
+            );
+        }
+    }
+
+    /// Decision 20 inside the film: a cue a reader can focus takes the
+    /// element's own in-SVG indicator and not the site's ring. The
+    /// emitter draws the same cue buttons here as it does for
+    /// `<opt-chart>`, [`BASE_CSS`] is inlined above them, and its
+    /// `:focus-visible` would put an outline around a `<g>` in user
+    /// space: a hairline that scales with the viewBox and is clipped at
+    /// either end of the track. The rules are read out of the element's
+    /// own stylesheet, so the day it paints a cue differently this fails
+    /// rather than letting the two looks drift apart.
+    #[test]
+    fn a_focused_cue_in_the_films_chart_takes_the_elements_own_indicator() {
+        // the buttons the rules address are really drawn here, and the
+        // site's ring really does reach them
+        let d = flight();
+        let svg = chart_svg(&d, op_chart::Layout::film(d.t_max));
+        assert_eq!(
+            svg.matches("<g role=\"button\"").count(),
+            d.chapters.len() - 1,
+            "{svg}"
+        );
+        assert!(
+            BASE_CSS.contains(":focus-visible { outline: 2px solid"),
+            "{BASE_CSS}"
+        );
+        // the element's own cue rules, included whole
+        let css = chart_css();
+        let theirs = cue_indicator_css();
+        assert!(css.contains(&theirs), "the film is missing `{theirs}`");
+        // the opt-out is one of them, and it is what keeps the ring off
+        assert!(
+            theirs.contains(&format!("{CUE_RULE}:focus {{ outline: none; }}")),
+            "{theirs}"
+        );
+        // and no rule of the film's own puts an outline on a node of the
+        // drawing: every outline written here turns one off
+        assert_eq!(
+            css.matches("outline").count(),
+            css.matches("outline: none;").count(),
+            "an outline on a node of the drawing: {css}"
+        );
+    }
+
+    /// A press on a cue button in the film's chart seeks to that cue, and
+    /// never reaches the film's own key table, where Space plays the film.
+    ///
+    /// The emitter draws the same buttons here as it draws for
+    /// `<opt-chart>` and the test above asserts they are drawn, so the
+    /// defect the element was fixed for stood in this file too: a reader
+    /// whose screen reader put the focus on a chapter and pressed Space
+    /// played the film rather than going to the chapter, and Enter did
+    /// nothing at all. One role, one behaviour, in both elements.
+    #[test]
+    fn a_press_on_a_focused_cue_in_the_film_seeks_to_it_rather_than_playing() {
+        // the press is the element's own answer to the same role, so a
+        // reader who learnt it on a chart keeps it in a film
+        assert_eq!(cue_press(Some("1.500"), " "), Some(1.5));
+        assert_eq!(cue_press(Some("1.500"), "Enter"), Some(1.5));
+        // and the press is the only thing taken from a focused cue: every
+        // other key is still the film's own, the arrows and Escape among
+        // them, there being no roving here for them to move
+        for key in [
+            "k",
+            "K",
+            "j",
+            "J",
+            "l",
+            "L",
+            ",",
+            ".",
+            "0",
+            "9",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+            "ArrowRight",
+            "ArrowLeft",
+            "ArrowUp",
+            "ArrowDown",
+            "Escape",
+            "<",
+            ">",
+            "Tab",
+        ] {
+            assert_eq!(cue_press(Some("1.500"), key), None, "{key} on a cue");
+        }
+        // with the focus anywhere else the film keeps every key it has,
+        // Space at the head of them
+        for key in ["Enter", " ", "k", "Escape", "PageDown"] {
+            assert_eq!(cue_press(None, key), None, "{key} off a cue");
+        }
+        // a cue whose rect says nothing still lands somewhere, as the
+        // element's press does, rather than falling through to the arm
+        // that plays: the seek clamps it to the end of the film
+        assert_eq!(cue_press(Some(""), "Enter"), Some(f64::INFINITY));
+
+        // No native test can reach a shadow root, so the wiring is read
+        // off the source, as the other guards in this file are. What holds
+        // the focus is asked about before the key table, and the answer
+        // seeks and marks the key handled, so the arm that plays the film
+        // never sees a press on a cue.
+        let source = include_str!("film.rs");
+        let keys = source
+            .split_once("let handled = if let")
+            .expect("the film's key handler")
+            .1
+            .split_once("if handled {")
+            .expect("it ends")
+            .0;
+        let press = keys
+            .find("cue_press(p.focused_cue()")
+            .unwrap_or_else(|| panic!("the key table never asks what holds the focus: {keys}"));
+        let plays = keys
+            .find(&["\" \" | \"k\"", " | \"K\" =>"].concat())
+            .unwrap_or_else(|| panic!("the film's play arm is spelt some other way: {keys}"));
+        assert!(
+            press < plays,
+            "the arm that plays the film sees Space first: {keys}"
+        );
+        let arm = keys
+            .split_once("cue_press(")
+            .expect("the press")
+            .1
+            .split_once("} else if")
+            .expect("the table after it")
+            .0;
+        // it pauses, it seeks to the cue's own time, and the `true` at the
+        // end of it is the claim that keeps the key off the table
+        for call in ["p.pause()", "p.seek_to(t)", "true"] {
+            assert!(
+                arm.contains(call),
+                "the answer to a press is missing `{call}`: {arm}"
+            );
+        }
+        // and what it asks about is what the tree says has the focus, not
+        // something the film remembered, read off the same markup the
+        // element reads
+        let focused = source
+            .split_once("fn focused_cue(&self) -> Option<String> {")
+            .expect("the focus read")
+            .1
+            .split_once("\n    }")
+            .expect("it ends")
+            .0;
+        for read in [
+            "shadow_root()",
+            "active_element()",
+            "CUE_BUTTONS",
+            "[data-t]",
+        ] {
+            assert!(
+                focused.contains(read),
+                "the focus read is missing {read}: {focused}"
+            );
+        }
     }
 }

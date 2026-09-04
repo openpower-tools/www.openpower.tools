@@ -4,14 +4,128 @@
 //! `transform` carries its line, dot and readout. The targets are last,
 //! invisible and hittable, so a pointer meets a cue's target before
 //! anything drawn under it.
+//!
+//! The same emission carries decision 15's accessible structure, because
+//! the structure is the markup: the svg is a `graphics-document`, the
+//! drawing that only decorates it sits inside `aria-hidden` groups, each
+//! series is a `graphics-object` named from its own samples, each cue's
+//! hit rect sits inside a button that names the cue, and the playhead is
+//! the thumb a slider role and the aria values belong on. What the
+//! geometry cannot know - the id of the consumer's own visible title, the
+//! unit a series is measured in, and whether this chart's thumb is the
+//! widget's slider or the decoration a film's control bar leaves it -
+//! arrives in [`Aria`].
 
-use crate::{Layout, Mark, Spec};
+use crate::{Layout, Mark, Series, Spec};
 
 /// The emitted markup and the geometry it was drawn with.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Rendered {
     pub svg: String,
     pub layout: Layout,
+}
+
+/// What decision 15's structure has to be told, because the drawing does
+/// not know it.
+///
+/// The default is a chart that names nothing and owns no control, which is
+/// what a chart embedded in another element's shadow tree wants: the film's
+/// own chart, whose range input is the one slider, and the palette
+/// specimen's figures, which are images of a chart rather than charts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Aria {
+    /// The id of the visible title in the shadow tree this markup lands in,
+    /// which the svg and the thumb are named by; empty where the consumer
+    /// has none, and then neither is named here.
+    pub title: String,
+    /// The unit each series is measured in, in the spec's order. A series
+    /// with none, or past the end of the list, has its range announced
+    /// as a bare pair of numbers.
+    pub units: Vec<String>,
+    /// Whether this chart's thumb is the widget's slider: the role, the
+    /// tab stop and the aria values go on it only then. One slider per
+    /// widget is the rule (decision 15), so a chart inside a film says no
+    /// and leaves the announcing to the film's own control.
+    pub slider: bool,
+}
+
+impl Aria {
+    /// ` aria-labelledby="..."` naming the consumer's title, and nothing at
+    /// all where there is no title to name.
+    fn labelled_by(&self) -> String {
+        if self.title.is_empty() {
+            String::new()
+        } else {
+            format!(" aria-labelledby=\"{}\"", escape(&self.title))
+        }
+    }
+
+    /// The unit of the series at `i`.
+    fn unit(&self, i: usize) -> &str {
+        self.units.get(i).map_or("", String::as_str)
+    }
+}
+
+/// A value as a name carries it: rounded to a hundredth and written at the
+/// shortest spelling that survives the round trip, so a range reads
+/// "0 to 100" and a block whose arithmetic left `0.30000000000000004`
+/// behind is announced as "0.3" rather than read out in full. Every other
+/// number the emitter writes is fixed-precision, and a name is the one
+/// place a raw `f64` would be spoken a digit at a time.
+pub fn announced(v: f64) -> String {
+    let rounded = (v * 100.0).round() / 100.0;
+    // a domain reaching exactly -0.0 is a zero and is said as one: the
+    // comparison is true for both zeros, which is what picks this branch
+    if rounded == 0.0 {
+        "0".to_owned()
+    } else {
+        rounded.to_string()
+    }
+}
+
+/// What a series announces: decision 15's "Name, N samples, min to max
+/// unit, from t0 to t1". Every number is read off the samples the block
+/// carried, not off the path, which is thinned per pixel column and would
+/// otherwise make the count a fact about the box the chart was drawn in. A
+/// series with no name of its own is announced by its numbers alone rather
+/// than by an invented one.
+fn series_label(s: &Series, unit: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !s.label.is_empty() {
+        parts.push(s.label.clone());
+    }
+    let present: Vec<(f64, f64)> = s.points.iter().flatten().copied().collect();
+    parts.push(match present.len() {
+        0 => "no samples".to_owned(),
+        1 => "1 sample".to_owned(),
+        n => format!("{n} samples"),
+    });
+    if let (Some((t0, _)), Some((t1, _))) = (present.first(), present.last()) {
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for (_, v) in &present {
+            lo = lo.min(*v);
+            hi = hi.max(*v);
+        }
+        let (lo, hi) = (announced(lo), announced(hi));
+        parts.push(if unit.is_empty() {
+            format!("{lo} to {hi}")
+        } else {
+            format!("{lo} to {hi} {unit}")
+        });
+        parts.push(format!("from {t0:.2} s to {t1:.2} s"));
+    }
+    parts.join(", ")
+}
+
+/// What one cue's button announces: its name and the instant it stands
+/// for. A cue the block left nameless is announced by its time alone.
+fn cue_label(label: &str, t: f64) -> String {
+    if label.is_empty() {
+        format!("{t:.2} s")
+    } else {
+        format!("{label}, {t:.2} s")
+    }
 }
 
 /// Escape text for an attribute or a text node.
@@ -62,6 +176,24 @@ const LABEL_GAP: f64 = 14.0;
 /// The side of a pointer target in CSS px: the 24 by 24 minimum SC 2.5.8
 /// asks of every target a pointer must hit.
 const TARGET: f64 = 24.0;
+/// How far outside the thumb's target its focus ring is drawn. Outward,
+/// because a ring inset into the thing it rings fails 2.4.13 (decision 20).
+const RING_OFFSET: f64 = 2.0;
+/// What the thumb announces as its name.
+///
+/// The document above it is named by the consumer's visible title, which
+/// is the list of series the chart draws; a slider named by that list
+/// reads its whole legend out before its own value on every step along the
+/// track. What this control moves is the clock, so that is what it is
+/// called, and x is time in every chart this renderer draws. A deviation
+/// from decision 15's letter, which names the thumb from the title too.
+const THUMB_NAME: &str = "Time";
+/// The ring's own stroke, which the consumer's stylesheet paints at this
+/// width. The geometry leaves room for half of it beyond the ring's path,
+/// since a stroke is drawn either side of the line it follows and what
+/// hangs past the viewport is clipped: a ring that lost its lower half
+/// would be the focus indicator drawn at 1 px.
+const RING_WIDTH: f64 = 2.0;
 /// Room a label takes per character. A static emitter has no font
 /// metrics, so the width is estimated: 6.5 px is generous for the 12 px
 /// face the stylesheet sets, which is the safe direction when the estimate
@@ -285,16 +417,41 @@ fn place_row(boxes: &[Option<(f64, f64)>], edge: f64) -> Vec<bool> {
     drawn
 }
 
+/// Draw `spec` in the box and scales `l` describes, naming nothing beyond
+/// the data: the structure of [`render_with`] with [`Aria::default`].
+pub fn render(spec: &Spec, l: Layout) -> Rendered {
+    render_with(spec, l, &Aria::default())
+}
+
 /// Draw `spec` in the box and scales `l` describes. The caller chooses the
 /// layout (the film uses [`Layout::film`]) so the element and the page
-/// build can size a chart without the renderer knowing about either.
-pub fn render(spec: &Spec, l: Layout) -> Rendered {
+/// build can size a chart without the renderer knowing about either, and
+/// `aria` says what the accessible structure is to name.
+pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
     // the box says how big the chart is, the spec says what it is a chart
     // of: the value domain travels with the data, not with the box
     let l = l.with_y(spec.y.0, spec.y.1);
+    // The svg is a graphics-document and never a slider or an image
+    // (decision 15): a slider role would make every element under it
+    // presentational, and `role="img"` collapses the subtree, and the
+    // chart's series are worth exposing. The value belongs on the thumb
+    // below, which is the operable thing.
+    //
+    // One tab stop into a chart, and where the thumb is the slider it is
+    // the thumb (decision 17). The svg gives up its own stop there: it is
+    // the first focusable area inside the shadow tree, so a host with
+    // `delegatesFocus` would land on the document rather than on the
+    // control, and Tab would pass through two stops where the decision
+    // asks for one. Where the widget's slider is somewhere else - the film
+    // draws this markup into its own tree, and its range input is the
+    // control - the thumb is decoration with no role and no value, and the
+    // svg keeps the stop as the only thing a keyboard can reach here.
+    let stop = if aria.slider { "" } else { " tabindex=\"0\"" };
     let mut out = format!(
-        "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 {} {}\" tabindex=\"0\" role=\"slider\" aria-label=\"playhead\" aria-valuemin=\"0\" aria-valuemax=\"{:.2}\" aria-valuenow=\"0\" aria-valuetext=\"0.00 seconds\">",
-        l.width, l.height, spec.duration
+        "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 {} {}\"{stop} role=\"graphics-document\"{}>",
+        l.width,
+        l.height,
+        aria.labelled_by()
     );
     // in a box measured in CSS px a stylesheet may still scale the svg, so
     // every stroked shape holds its width; the film's fixed box does not
@@ -304,6 +461,14 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
         ""
     };
 
+    // The grid, the axes, the ticks, the band and the marks are the
+    // chart's decoration: they say again, in a shape, what the summary and
+    // the table say in words, so one group hides the lot from a reader who
+    // is being told rather than shown (decision 15). It carries no class:
+    // it is there for the accessibility tree alone, and a class would
+    // invite a stylesheet to hang paint on a wrapper the z-order does not
+    // know about.
+    out.push_str("<g aria-hidden=\"true\">");
     out.push_str("<g class=\"axes\">");
     let values = value_ticks(&l);
     // the step the labels are written to; a lone gridline needs none
@@ -459,7 +624,9 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
             ));
         }
     }
-    out.push_str("</g></g>");
+    // the chapters, the marks, and with them the decoration the axes and
+    // the band opened
+    out.push_str("</g></g></g>");
 
     out.push_str("<g class=\"series\">");
     // end labels first, so their vertical placement can be settled together
@@ -472,11 +639,19 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
         .collect();
     let mut placed =
         crate::labels::spread(&wanted, LABEL_GAP, l.top + 10.0, l.plot_bottom() - 3.0).into_iter();
-    for (s, dr) in spec.series.iter().zip(&drawn) {
-        // the class names the palette slot and the part exports it, so a
-        // page can restyle one series through the element's boundary
+    for (i, (s, dr)) in spec.series.iter().zip(&drawn).enumerate() {
+        // one graphics-object per series, named from the samples the block
+        // carried, so a reader is told what each line holds without being
+        // read the line itself (decision 15)
         out.push_str(&format!(
-            "<path class=\"series-{}\" part=\"series-{}\" d=\"{}\" fill=\"none\" stroke-width=\"{}\" stroke-linejoin=\"round\"{ns}/>",
+            "<g role=\"graphics-object\" aria-label=\"{}\">",
+            escape(&series_label(s, aria.unit(i)))
+        ));
+        // the class names the palette slot and the part exports it, so a
+        // page can restyle one series through the element's boundary. The
+        // path is hidden: the group above already says what it draws.
+        out.push_str(&format!(
+            "<path class=\"series-{}\" part=\"series-{}\" d=\"{}\" fill=\"none\" stroke-width=\"{}\" stroke-linejoin=\"round\" aria-hidden=\"true\"{ns}/>",
             s.index, s.index, dr.d, s.width
         ));
         let labelled = !s.label.is_empty() && !dr.present.is_empty();
@@ -523,18 +698,24 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
                 x - 16.0,
                 x - 4.0
             ));
+            // the end label draws the name the group already carries, so
+            // it is hidden rather than announced a second time
             out.push_str(&format!(
-                "<text class=\"endlabel\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
+                "<text class=\"endlabel\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" aria-hidden=\"true\">{}</text>",
                 x - END_LABEL_X,
                 y + 4.0,
                 escape(&s.label)
             ));
         }
+        out.push_str("</g>");
     }
     out.push_str("</g>");
 
     let by = l.track_y();
-    out.push_str("<g class=\"track\">");
+    // the track and the peek rule are decoration too: the bar says where
+    // the playhead has been, which the thumb's own value says in words,
+    // and the chapter ticks on it are named by the buttons below
+    out.push_str("<g class=\"track\" aria-hidden=\"true\">");
     // the film's peek band: a wash over the chapter under the pointer,
     // widened at runtime and empty until then. It carries a class of its
     // own rather than the block's `band`, so that a query for the one can
@@ -567,19 +748,56 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
     out.push_str("</g></g>");
 
     out.push_str(&format!(
-        "<g class=\"cursor\"><line class=\"peek-line\" x1=\"{}\" x2=\"{}\" y1=\"{}\" y2=\"{:.1}\" visibility=\"hidden\"{ns}/></g>",
+        "<g class=\"cursor\" aria-hidden=\"true\"><line class=\"peek-line\" x1=\"{}\" x2=\"{}\" y1=\"{}\" y2=\"{:.1}\" visibility=\"hidden\"{ns}/></g>",
         l.left,
         l.left,
         l.top,
         l.plot_bottom()
     ));
+    // The playhead is the thumb, and where this chart owns its widget it is
+    // the slider: the role, the tab stop and the aria values sit here and
+    // never on the svg, which is a document (decision 15). It holds the
+    // readout as well, so the time is read as the slider's own value and
+    // not a second time as loose text beside it.
+    //
+    // The 24 by 24 px rect states the thumb's target (decision 20); it does
+    // not take the pointer. A press is read on the svg wherever it lands,
+    // the track counting as one target under 2.5.8's spatial-selection
+    // rule, and a rect that took the pointer here would put the focus on
+    // the thumb instead of the chart on every press that met the playhead.
+    // The ring around it is drawn 2 px outside that rect, shown by the
+    // stylesheet on `:focus-visible` alone. It is a rect in the drawing
+    // and never a CSS outline, because an outline on an SVG node is laid
+    // out in user space: it scales with the viewBox and is clipped by the
+    // viewport, so the 2 px the criterion asks for is 1 px in a box drawn
+    // at half its viewBox and gone altogether at the edges (decision 20).
+    // It states both ways of not painting its interior: `fill="none"`
+    // keeps it out of hit-testing, which `visiblePainted` decides from the
+    // fill alone, and `fill-opacity="0"` keeps it unpainted under a
+    // stylesheet or a forced palette that puts a colour back into `fill`.
+    let room = TARGET / 2.0 + RING_OFFSET + RING_WIDTH / 2.0;
+    let thumb_row = (by + 2.0).min(l.height - room).max(room);
+    let thumb = if aria.slider {
+        format!(
+            " role=\"slider\" tabindex=\"0\" aria-label=\"{THUMB_NAME}\" aria-valuemin=\"0\" aria-valuemax=\"{:.2}\" aria-valuenow=\"0\" aria-valuetext=\"0.00 seconds\"",
+            spec.duration
+        )
+    } else {
+        String::new()
+    };
     out.push_str(&format!(
-        "<g class=\"playhead\" part=\"playhead\" transform=\"translate({:.1} 0)\"><line class=\"head\" x1=\"0\" x2=\"0\" y1=\"{}\" y2=\"{:.1}\"{ns}/><circle class=\"head-dot\" cx=\"0\" cy=\"{:.1}\" r=\"5\"{ns}/><text class=\"head-t\" x=\"4\" y=\"{:.1}\">0.00s</text></g>",
+        "<g class=\"playhead\" part=\"playhead\"{thumb} transform=\"translate({:.1} 0)\"><line class=\"head\" x1=\"0\" x2=\"0\" y1=\"{}\" y2=\"{:.1}\"{ns}/><circle class=\"head-dot\" cx=\"0\" cy=\"{:.1}\" r=\"5\"{ns}/><rect class=\"target\" x=\"{:.1}\" y=\"{:.1}\" width=\"{TARGET}\" height=\"{TARGET}\" fill=\"none\"{ns}/><text class=\"head-t\" x=\"4\" y=\"{:.1}\" aria-hidden=\"true\">0.00s</text><rect class=\"head-ring\" x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"none\" fill-opacity=\"0\"{ns}/></g>",
         l.left,
         l.top,
         by + 4.0,
         by + 2.0,
-        l.readout_y()
+        -TARGET / 2.0,
+        thumb_row - TARGET / 2.0,
+        l.readout_y(),
+        -TARGET / 2.0 - RING_OFFSET,
+        thumb_row - TARGET / 2.0 - RING_OFFSET,
+        TARGET + 2.0 * RING_OFFSET,
+        TARGET + 2.0 * RING_OFFSET,
     ));
 
     // The pointer targets come last, so paint order gives them the pointer
@@ -608,14 +826,27 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
     // Below 24 px the chart is a dense visualisation under the criterion's
     // own exception and the alternatives carry it, so the emitter draws the
     // overlap rather than nudging a cue off its time.
+    //
+    // Each rect is also the operable thing its cue has, so it sits inside a
+    // `role="button"` that names the cue and its time, and the two kinds
+    // are gathered in a named graphics-object apiece (decision 15). The
+    // buttons hold the rects that were here already rather than a second
+    // set of their own: what a pointer hits and what a key reaches are one
+    // element, so they can never come to stand for different instants. They
+    // take `tabindex="-1"`, which is decision 17's roving tabindex at rest:
+    // the thumb is the one tab stop until the reader steps into the cues,
+    // and the consumer moves the attribute when they do.
+    //
+    // The button repeats its rect's `data-cue`, and carries no class: a
+    // class is what the z-order groups are read by, and `mark` and
+    // `chapter` are the classes the drawn rules and ticks are painted by,
+    // so a cue that named its kind in a class would take that paint. A
+    // consumer's stylesheet names the button by its role and its kind
+    // instead, which is how decision 20's hover and focus styling reaches
+    // it and how it turns off the site-wide `:focus-visible` outline that
+    // would otherwise be drawn around a `<g>` in user space.
     out.push_str("<g class=\"targets\" part=\"targets\">");
-    let cues = spec.marks.iter().map(|m| ("mark", m.t, mark_row)).chain(
-        spec.chapters
-            .iter()
-            .skip(1)
-            .map(|ch| ("chapter", ch.t, by + 2.0)),
-    );
-    for (cue, t, row) in cues {
+    let cue_rect = |cue: &str, t: f64, row: f64, out: &mut String| {
         // the row is brought inside the box before it is written. The root
         // svg clips at its viewport and clipped geometry is not hit at all,
         // so a target centred on the chapter row, 8 px from the bottom
@@ -629,6 +860,30 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
             l.x_of(t) - TARGET / 2.0,
             row - TARGET / 2.0
         ));
+    };
+    if !spec.marks.is_empty() {
+        out.push_str("<g role=\"graphics-object\" aria-label=\"Marks\">");
+        for m in &spec.marks {
+            out.push_str(&format!(
+                "<g role=\"button\" tabindex=\"-1\" data-cue=\"mark\" aria-label=\"{}\">",
+                escape(&cue_label(&m.label, m.t))
+            ));
+            cue_rect("mark", m.t, mark_row, &mut out);
+            out.push_str("</g>");
+        }
+        out.push_str("</g>");
+    }
+    if spec.chapters.len() > 1 {
+        out.push_str("<g role=\"graphics-object\" aria-label=\"Chapters\">");
+        for ch in spec.chapters.iter().skip(1) {
+            out.push_str(&format!(
+                "<g role=\"button\" tabindex=\"-1\" data-cue=\"chapter\" aria-label=\"{}\">",
+                escape(&cue_label(&ch.label, ch.t))
+            ));
+            cue_rect("chapter", ch.t, by + 2.0, &mut out);
+            out.push_str("</g>");
+        }
+        out.push_str("</g>");
     }
     out.push_str("</g>");
     out.push_str("</svg>");
@@ -909,10 +1164,9 @@ mod tests {
     fn the_playhead_is_one_group_at_the_axis_origin() {
         let r = film(&demo());
         assert!(r.svg.contains("<g class=\"playhead\" part=\"playhead\" transform=\"translate(46.0 0)\"><line class=\"head\" x1=\"0\" x2=\"0\""));
-        assert!(
-            r.svg
-                .contains("<text class=\"head-t\" x=\"4\" y=\"250.0\">0.00s</text>")
-        );
+        assert!(r.svg.contains(
+            "<text class=\"head-t\" x=\"4\" y=\"250.0\" aria-hidden=\"true\">0.00s</text>"
+        ));
         assert_eq!(r.layout, Layout::film(3.0));
     }
 
@@ -1199,15 +1453,20 @@ mod tests {
     /// The rects inside the targets group, in the order they are written,
     /// checking on the way that nothing at all follows the group: the
     /// targets are the last thing in the markup, which is what hands them
-    /// the pointer.
+    /// the pointer. Each sits inside a button of its own now, so the piece
+    /// a rect is read out of carries that button's opening tag with it.
     fn targets(svg: &str) -> Vec<&str> {
         let tail = svg
             .split_once("<g class=\"targets\" part=\"targets\">")
             .expect("the targets group")
             .1;
-        let (inside, after) = tail.split_once("</g>").expect("the group's end");
-        assert_eq!(after, "</svg>", "the targets are written last");
-        inside.split_inclusive("/>").collect()
+        let inside = tail
+            .strip_suffix("</g></svg>")
+            .expect("the targets are written last");
+        inside
+            .split_inclusive("/>")
+            .filter(|piece| piece.contains("<rect"))
+            .collect()
     }
 
     /// Every cue carries an invisible 24 by 24 px rect on its own row, and
@@ -1352,6 +1611,455 @@ mod tests {
         assert_eq!((centres[0] + 12.0) - (centres[1] - 12.0), 14.0);
         // and both rules are drawn, whatever their labels could do
         assert_eq!(svg.matches("<line class=\"mark\"").count(), 2);
+    }
+
+    /// The markup inside the group whose opening tag begins with `open`,
+    /// up to that group's own closing tag: the groups opened inside it are
+    /// counted, so a group holding groups is read whole.
+    fn inside<'a>(svg: &'a str, open: &str) -> &'a str {
+        let start = svg
+            .find(open)
+            .unwrap_or_else(|| panic!("no `{open}` in the markup"));
+        let body = svg[start..].split_once('>').expect("the tag ends").1;
+        let mut depth = 1usize;
+        for (i, _) in body.match_indices('<') {
+            let rest = &body[i + 1..];
+            if rest.starts_with("g ") || rest.starts_with("g>") {
+                depth += 1;
+            } else if rest.starts_with("/g>") {
+                depth -= 1;
+                if depth == 0 {
+                    return &body[..i];
+                }
+            }
+        }
+        panic!("the group opened by `{open}` never closes");
+    }
+
+    /// The `aria-label` of every element carrying `role`, in the order they
+    /// are written. A role written without a name fails here rather than
+    /// coming back as an empty string: an unnamed object is the defect.
+    fn labelled(svg: &str, role: &str) -> Vec<String> {
+        svg.split(&format!("role=\"{role}\""))
+            .skip(1)
+            .map(|rest| {
+                let head = rest.split_once('>').expect("the tag ends").0;
+                const KEY: &str = "aria-label=\"";
+                let i = head
+                    .find(KEY)
+                    .unwrap_or_else(|| panic!("a {role} with no name: `{head}`"));
+                let after = &head[i + KEY.len()..];
+                after[..after.find('"').expect("a closing quote")].to_owned()
+            })
+            .collect()
+    }
+
+    /// Decision 15's structure, so far as the drawing carries it: the svg
+    /// is a document, everything that only decorates it is inside one
+    /// hidden group or hidden where it stands, and each series is an
+    /// object named from its own data.
+    #[test]
+    fn the_decoration_is_hidden_and_the_series_are_named_objects() {
+        let spec = annotated();
+        let svg = sized(&spec).svg;
+        assert!(
+            svg.starts_with(
+                "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 640 240\" tabindex=\"0\" role=\"graphics-document\">"
+            ),
+            "{svg}"
+        );
+        assert!(!svg.contains("role=\"img\""), "{svg}");
+        // one hidden group holds the grid, the axes, the ticks, the band
+        // and the marks, drawn things a reader is told about in words
+        let decoration = inside(&svg, "<g aria-hidden=\"true\">");
+        for group in [
+            "<g class=\"axes\">",
+            "<g class=\"bands\">",
+            "<g class=\"marks\">",
+            "<g class=\"chapters\">",
+        ] {
+            assert!(decoration.contains(group), "{group} is not hidden");
+        }
+        for drawn in [
+            "class=\"grid\"",
+            "class=\"axis\"",
+            "class=\"tick\"",
+            "class=\"band\"",
+            "class=\"mark\"",
+            "class=\"mark-label\"",
+        ] {
+            assert!(decoration.contains(drawn), "{drawn} is not hidden");
+        }
+        // and nothing announced is inside it
+        for exposed in ["class=\"series-", "class=\"playhead\"", "class=\"targets\""] {
+            assert!(!decoration.contains(exposed), "{exposed} is hidden");
+        }
+        // the track and the peek rule are decoration where they stand: the
+        // bar says what the thumb's own value says, and the ticks on it are
+        // named by the chapter buttons
+        assert!(svg.contains("<g class=\"track\" aria-hidden=\"true\">"));
+        assert!(svg.contains("<g class=\"cursor\" aria-hidden=\"true\">"));
+
+        // one object per series, named "Name, N samples, min to max unit,
+        // from t0 to t1", computed here from the fixture
+        let units = vec!["%".to_owned()];
+        let svg = render_with(
+            &spec,
+            Layout::sized(640.0, 240.0, spec.end),
+            &Aria {
+                units: units.clone(),
+                ..Aria::default()
+            },
+        )
+        .svg;
+        let s = &spec.series[0];
+        let present: Vec<(f64, f64)> = s.points.iter().flatten().copied().collect();
+        let lo = present
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f64::INFINITY, f64::min);
+        let hi = present
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f64::NEG_INFINITY, f64::max);
+        let want = format!(
+            "{}, {} samples, {lo} to {hi} {}, from {:.2} s to {:.2} s",
+            s.label,
+            present.len(),
+            units[0],
+            present[0].0,
+            present[present.len() - 1].0
+        );
+        assert_eq!(
+            labelled(&svg, "graphics-object"),
+            [want, "Marks".to_owned(), "Chapters".to_owned()]
+        );
+        // the line and the end label are hidden inside it, so the name is
+        // announced once and not again as loose text
+        let object = inside(&svg, "<g role=\"graphics-object\"");
+        assert!(
+            object.contains("<path class=\"series-2\" part=\"series-2\"")
+                && object.contains("class=\"endlabel\"")
+                && object.contains("class=\"swatch series-2\"")
+        );
+        for hidden in ["<path class=\"series-2\"", "<text class=\"endlabel\""] {
+            let head = object
+                .split_once(hidden)
+                .expect("the element")
+                .1
+                .split_once('>')
+                .expect("the tag ends")
+                .0;
+            assert!(head.contains("aria-hidden=\"true\""), "{hidden}: {head}");
+        }
+    }
+
+    /// The numbers a series announces are the block's, not the drawing's:
+    /// a chart thinned to two points per pixel column still says how many
+    /// samples it holds.
+    #[test]
+    fn a_series_is_named_by_its_samples_and_not_by_the_thinned_path() {
+        let spec = many();
+        let svg = render_with(
+            &spec,
+            Layout::sized(640.0, 240.0, spec.end),
+            &Aria {
+                units: vec!["%".to_owned()],
+                ..Aria::default()
+            },
+        )
+        .svg;
+        let name = labelled(&svg, "graphics-object")
+            .into_iter()
+            .next()
+            .expect("the series");
+        assert!(
+            name.starts_with("every sample, 1800 samples, 0 to 100 %, from 0.00 s to 3.00 s"),
+            "{name}"
+        );
+        // the path really was thinned, so the count could not have come
+        // from the points that were drawn
+        let drawn = attribute(&svg, "<path class=\"series-4\"", "d")
+            .matches(['M', 'L'])
+            .count();
+        assert!(drawn < spec.series[0].points.len(), "{drawn} points drawn");
+        // a series with gaps counts the samples it has and not the holes,
+        // and one with no name of its own is announced by its numbers
+        let svg = sized(&gaps()).svg;
+        assert_eq!(
+            labelled(&svg, "graphics-object"),
+            ["6 samples, 10 to 90, from 0.00 s to 3.00 s"]
+        );
+        // and a series with nothing in it says so rather than a range
+        let svg = sized(&empty()).svg;
+        assert_eq!(
+            labelled(&svg, "graphics-object"),
+            ["nothing yet, no samples"]
+        );
+    }
+
+    /// A series announces numbers a listener can hear. Binary floating
+    /// point does not divide by ten, so a block whose values were summed
+    /// or scaled arrives carrying `0.30000000000000004`, and a name built
+    /// with `f64`'s own Display reads all seventeen digits out. Every
+    /// other number the emitter writes is fixed-precision; these are the
+    /// two that were not.
+    #[test]
+    fn the_numbers_a_series_announces_are_not_raw_floating_point() {
+        // the decision on its own: a hundredth, at the shortest spelling
+        // that survives it, and no trailing zeros to be read aloud
+        assert_eq!(announced(0.1 + 0.2), "0.3");
+        assert_eq!(announced(100.0), "100");
+        assert_eq!(announced(0.0), "0");
+        assert_eq!(announced(-0.0), "0");
+        assert_eq!(announced(-12.5), "-12.5");
+        assert_eq!(announced(99.437_199_358_559_6), "99.44");
+        assert_eq!(announced(2.0 / 3.0), "0.67");
+        // and in the name the block's own arithmetic reaches
+        let noisy: Vec<f64> = (0..4).map(|i| f64::from(i) * 0.1 + 0.2).collect();
+        let spec = Spec {
+            y: (0.0, 1.0),
+            series: vec![Series {
+                label: "drift".to_owned(),
+                index: 1,
+                points: [0.0, 1.0, 2.0, 3.0]
+                    .into_iter()
+                    .zip(noisy.iter().copied())
+                    .map(Some)
+                    .collect(),
+                width: 2.0,
+            }],
+            ..demo()
+        };
+        // the raw values really are the long ones, so the name below is
+        // shortened by the emitter and not by the arithmetic
+        assert_eq!(noisy[1].to_string(), "0.30000000000000004");
+        let name = labelled(&sized(&spec).svg, "graphics-object")
+            .into_iter()
+            .next()
+            .expect("the series");
+        assert_eq!(name, "drift, 4 samples, 0.2 to 0.5, from 0.00 s to 3.00 s");
+    }
+
+    /// Every cue is the operable thing decision 15 asks for: a button that
+    /// names it, holding the one rect a pointer already hit.
+    #[test]
+    fn every_cue_is_a_button_that_names_it_and_holds_its_own_target() {
+        let spec = annotated();
+        let svg = sized(&spec).svg;
+        assert_eq!(
+            labelled(&svg, "button"),
+            ["first frame, 0.60 s", "steady, 2.10 s", "settle, 1.20 s"]
+        );
+        // the two kinds are gathered under a name apiece, each holding its
+        // own cues and no others
+        let marks = inside(&svg, "<g role=\"graphics-object\" aria-label=\"Marks\">");
+        let chapters = inside(&svg, "<g role=\"graphics-object\" aria-label=\"Chapters\">");
+        assert_eq!(
+            marks.matches("part=\"target\" data-cue=\"mark\"").count(),
+            spec.marks.len()
+        );
+        assert_eq!(
+            marks
+                .matches("part=\"target\" data-cue=\"chapter\"")
+                .count(),
+            0
+        );
+        assert_eq!(
+            chapters
+                .matches("part=\"target\" data-cue=\"chapter\"")
+                .count(),
+            spec.chapters.len() - 1
+        );
+        assert_eq!(
+            chapters
+                .matches("part=\"target\" data-cue=\"mark\"")
+                .count(),
+            0
+        );
+        // one rect to a button, and no second set of them: what a pointer
+        // hits and what a key reaches are the same element
+        assert_eq!(
+            svg.matches("<rect class=\"target\" part=\"target\"")
+                .count(),
+            spec.marks.len() + spec.chapters.len() - 1
+        );
+        let group = inside(&svg, "<g class=\"targets\" part=\"targets\">");
+        let buttons: Vec<&str> = group.split("<g role=\"button\"").skip(1).collect();
+        assert_eq!(buttons.len(), 3);
+        for button in buttons {
+            let (head, body) = button.split_once('>').expect("the tag ends");
+            let body = body.split_once("</g>").expect("the button closes").0;
+            assert!(head.contains("tabindex=\"-1\""), "{head}");
+            assert_eq!(body.matches("<rect").count(), 1, "{body}");
+            assert!(body.contains("pointer-events=\"all\""), "{body}");
+            // the button names the instant its own rect stands for
+            let t: f64 = rect_of(body, "data-t").parse().expect("a number");
+            let label = attribute(&format!("<g {head}>"), "<g", "aria-label");
+            assert!(label.ends_with(&format!("{t:.2} s")), "{label} is not {t}");
+            // and the kind of cue it is, which is the only handle a
+            // stylesheet has on it: the button carries no class, so a rule
+            // that hides the chapter cues with their ticks, or draws the
+            // focus indicator a `<g>` may not take as an outline, has this
+            // and the role and nothing else. It agrees with its own rect
+            let kind = attribute(&format!("<g {head}>"), "<g", "data-cue");
+            assert!(kind == "mark" || kind == "chapter", "{head}");
+            assert_eq!(rect_of(body, "data-cue"), kind, "{button}");
+        }
+        // a chart with no cue at all writes neither group and no button
+        let bare = sized(&empty()).svg;
+        assert!(!bare.contains("role=\"button\""), "{bare}");
+        assert!(!bare.contains("aria-label=\"Chapters\""), "{bare}");
+    }
+
+    /// The thumb is the slider where the chart owns one: the role, the tab
+    /// stop, the name and the value sit on it, and the readout inside it,
+    /// so the time is announced once, as that slider's own value.
+    #[test]
+    fn the_thumb_carries_the_slider_the_value_and_the_readout() {
+        let spec = demo();
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        let aria = Aria {
+            title: "chart-title".to_owned(),
+            units: vec!["%".to_owned()],
+            slider: true,
+        };
+        let svg = render_with(&spec, l, &aria).svg;
+        let head = svg
+            .split_once("<g class=\"playhead\"")
+            .expect("the thumb")
+            .1
+            .split_once('>')
+            .expect("the tag ends")
+            .0;
+        for want in [
+            "role=\"slider\"",
+            "tabindex=\"0\"",
+            // the control is named for what it moves and not for what the
+            // chart draws: the document above it carries the consumer's
+            // title, and a slider named by that list reads the whole
+            // legend out before its own value on every step
+            "aria-label=\"Time\"",
+            "aria-valuemin=\"0\"",
+            &format!("aria-valuemax=\"{:.2}\"", spec.duration),
+            "aria-valuenow=\"0\"",
+            "aria-valuetext=\"0.00 seconds\"",
+        ] {
+            assert!(head.contains(want), "{want} is not on the thumb: {head}");
+        }
+        // and nowhere else: the svg is a document, whatever the thumb is
+        let root = svg.split_once('>').expect("the svg tag ends").0;
+        for never in ["role=\"slider\"", "role=\"img\"", "aria-value"] {
+            assert!(!root.contains(never), "{never} on the svg: {root}");
+        }
+        assert!(root.contains("role=\"graphics-document\""));
+        assert!(root.contains("aria-labelledby=\"chart-title\""));
+        // the consumer's title names the document and nothing else: it is
+        // the list of series, which is what the figure is of and not what
+        // the control does
+        assert_eq!(svg.matches("aria-labelledby=\"chart-title\"").count(), 1);
+        assert!(!head.contains("aria-labelledby"), "{head}");
+        assert_eq!(svg.matches("role=\"slider\"").count(), 1);
+        assert_eq!(svg.matches("aria-valuenow").count(), 1);
+        // and the thumb is the tab stop the drawing ships with: the svg
+        // gives its own up, so a `delegatesFocus` host lands on the
+        // control and Tab passes through once (decision 17). The cue
+        // buttons are `-1`, which is decision 17's roving tabindex at
+        // rest; the consumer moves the attribute from here
+        assert!(!root.contains("tabindex"), "a tab stop on the svg: {root}");
+        assert_eq!(svg.matches("tabindex=\"0\"").count(), 1, "{svg}");
+        // the line, the dot, the hit rect, the readout and the ring are all
+        // inside it, and the readout is written once
+        let thumb = inside(&svg, "<g class=\"playhead\"");
+        for part in [
+            "class=\"head\"",
+            "class=\"head-dot\"",
+            "class=\"target\"",
+            "class=\"head-t\"",
+            "class=\"head-ring\"",
+        ] {
+            assert!(thumb.contains(part), "{part} is not inside the thumb");
+        }
+        assert_eq!(svg.matches("class=\"head-t\"").count(), 1);
+        // the hit rect states the thumb's 24 px target and leaves the
+        // pointer to the svg, which reads a press wherever it lands
+        let piece = |class: &str| {
+            thumb
+                .split_inclusive("/>")
+                .find(|e| e.contains(class))
+                .unwrap_or_else(|| panic!("no {class} in the thumb"))
+        };
+        let rect = piece("<rect class=\"target\"");
+        assert_eq!(
+            (rect_num(rect, "width"), rect_num(rect, "height")),
+            (TARGET, TARGET)
+        );
+        assert_eq!(rect_num(rect, "x"), -TARGET / 2.0);
+        assert!(!rect.contains("pointer-events"), "{rect}");
+        assert_eq!(rect_of(rect, "fill"), "none");
+        // the ring sits 2 px outside that rect, with room for its own
+        // stroke inside the box at both edges. Outward, because a ring
+        // inset into the thing it rings is drawn over the thumb's own
+        // pixels and fails the contrast criterion (decision 20)
+        let ring = piece("<rect class=\"head-ring\"");
+        assert_eq!(rect_of(ring, "fill"), "none");
+        // it never paints its interior, whatever `fill` becomes
+        assert_eq!(rect_of(ring, "fill-opacity"), "0");
+        assert_eq!(rect_num(ring, "x"), rect_num(rect, "x") - RING_OFFSET);
+        assert_eq!(rect_num(ring, "y"), rect_num(rect, "y") - RING_OFFSET);
+        assert_eq!(
+            rect_num(ring, "width"),
+            rect_num(rect, "width") + 2.0 * RING_OFFSET
+        );
+        // and the gap is the criterion's own number, written here as the
+        // number and not as the constant that produced it: decision 20
+        // asks for 2 px outward, and a constant halved would keep every
+        // assertion above true
+        assert_eq!(rect_num(rect, "x") - rect_num(ring, "x"), 2.0);
+        assert_eq!(rect_num(rect, "y") - rect_num(ring, "y"), 2.0);
+        assert_eq!(
+            rect_num(ring, "x") + rect_num(ring, "width")
+                - (rect_num(rect, "x") + rect_num(rect, "width")),
+            2.0
+        );
+        assert_eq!(
+            rect_num(ring, "y") + rect_num(ring, "height")
+                - (rect_num(rect, "y") + rect_num(rect, "height")),
+            2.0
+        );
+        assert!(rect_num(ring, "y") - RING_WIDTH / 2.0 >= 0.0, "{ring}");
+        assert!(
+            rect_num(ring, "y") + rect_num(ring, "height") + RING_WIDTH / 2.0 <= l.height,
+            "{ring}"
+        );
+    }
+
+    /// A chart embedded in another element's shadow tree owns no slider:
+    /// the film's control bar is the one that announces the value, so the
+    /// thumb here is decoration and the chart adds no second tab stop.
+    #[test]
+    fn a_chart_that_owns_no_slider_leaves_its_thumb_decoration() {
+        let spec = flight();
+        let svg = film(&spec).svg;
+        for never in ["role=\"slider\"", "aria-valu", "aria-labelledby"] {
+            assert!(!svg.contains(never), "{never} in a chart that owns none");
+        }
+        // the svg is the one tab stop; the cue buttons are reached by
+        // script and by a roving tabindex, never by Tab
+        assert_eq!(svg.matches("tabindex=\"0\"").count(), 1);
+        assert!(svg.starts_with(
+            "<svg class=\"chart\" part=\"chart\" viewBox=\"0 0 900 268\" tabindex=\"0\" role=\"graphics-document\">"
+        ));
+        // and the structure that is not a control is there all the same
+        assert_eq!(
+            labelled(&svg, "button").len(),
+            spec.chapters.len() - 1 + spec.marks.len()
+        );
+        assert_eq!(
+            labelled(&svg, "graphics-object").len(),
+            spec.series.len() + 1
+        );
+        assert!(svg.contains("<g class=\"playhead\" part=\"playhead\" transform="));
     }
 
     /// The rules, the wash and the labels a block's own annotations draw.
@@ -1943,6 +2651,7 @@ mod tests {
         "head",
         "head-dot",
         "head-t",
+        "head-ring",
         "targets",
         "target",
     ];

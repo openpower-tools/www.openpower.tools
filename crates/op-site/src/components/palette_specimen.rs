@@ -702,13 +702,12 @@ fn spec_of(figure: &ChartFigure) -> Spec {
     }
 }
 
-/// The renderer opens every chart as the film's `role="slider"`, because
-/// the film's chart is a control that writes its own value on every tick.
-/// A specimen's chart follows no clock and answers no key, so a focusable
-/// slider frozen at its parked time would be a control reporting a value
-/// nothing can change. The opening tag is rewritten as a named image and
-/// the tab stop dropped, which is the same rewrite, for the same reason,
-/// that `chart.rs`'s `svg_of` makes to a graphics document.
+/// The renderer opens every chart as a `graphics-document` with a tab stop
+/// on it, because a chart is a thing to read and to drive. A specimen's
+/// chart follows no clock and answers no key: it is a picture of a chart,
+/// and one already described by the figure's own caption. The opening tag
+/// is rewritten as a named image, which collapses the subtree the emitter
+/// exposed, and the tab stop is dropped.
 fn as_image(svg: &str, name: &str) -> String {
     let Some((head, body)) = svg.split_once('>') else {
         return svg.to_owned();
@@ -741,8 +740,17 @@ fn park_edits(l: &Layout, figure: &ChartFigure) -> Vec<(String, String)> {
             format!("transform=\"translate({head:.1} 0)\""),
         ),
         (
-            format!("y=\"{:.1}\">0.00s</text>", l.readout_y()),
-            format!("y=\"{:.1}\">{:.2}s</text>", l.readout_y(), figure.head),
+            // the readout is hidden from the accessibility tree, since the
+            // thumb speaks its own value, so the edit carries that attribute
+            format!(
+                "y=\"{:.1}\" aria-hidden=\"true\">0.00s</text>",
+                l.readout_y()
+            ),
+            format!(
+                "y=\"{:.1}\" aria-hidden=\"true\">{:.2}s</text>",
+                l.readout_y(),
+                figure.head
+            ),
         ),
         (
             format!(
@@ -1426,9 +1434,13 @@ mod tests {
                 CHART_FIGURES.len() + 1
             );
         }
-        // a chart that is not a control: no tab stop, no frozen slider
+        // a chart that is not a control: no tab stop, no frozen slider.
+        // The cue buttons the emitter writes carry `tabindex="-1"`, which
+        // is programmatic focus and no tab stop at all, and a named image
+        // hides them along with everything else it holds.
         assert!(!applied.contains("role=\"slider\""));
-        assert!(!applied.contains("tabindex"));
+        assert!(!applied.contains("tabindex=\"0\""));
+        assert!(!applied.contains("aria-valu"));
         assert_eq!(
             applied.matches("role=\"img\"").count(),
             CHART_FIGURES.len() * THEMES.len()

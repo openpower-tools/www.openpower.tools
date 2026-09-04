@@ -12,8 +12,8 @@
       matches the hash the build embedded, and keeps the pre-rendered chart itself when its
       width already fits the container; otherwise it lays the chart out at the measured width.
       From then on a resize observer re-lays it out whenever the container changes, so text
-      stays its token size, and below 480 px every second tick label and the chapter bar are
-      hidden.</p>
+      stays its token size, and below 480 px every second tick label goes, and the chapter bar
+      with the buttons on its cues, so a chapter that is not drawn is not reachable either.</p>
       <p>Series take their colour from the palette tokens (<code>--op-series-1</code> to
       <code>6</code>) by position, and colour is never the only cue: each series after the first
       has its own dash pattern, a labelled series ends in a direct label with a swatch, an
@@ -83,9 +83,12 @@
         mobile-only pattern, so it ships to be judged in use and may be withdrawn.
       </opt:callout>
       <h2>Keys</h2>
-      <p>Tabbing reaches the chart itself, and the data table's disclosure after it. Keys act
-      only while the chart has focus, and each one asks for a time rather than moving the
-      playhead itself. A seek from the chart pauses the film, as the film's own seeks do.</p>
+      <p>Tabbing reaches the playhead, which is the slider that announces the time, and the
+      data table's disclosure after it. Keys act only while the chart has focus, and each one
+      asks for a time rather than moving the playhead itself. While a mark or a chapter has the
+      focus the arrows step between them rather than along the timeline. A seek from the chart
+      pauses the film, as the film's own seeks do, and the same keys are named in a line under
+      every chart, beside the summary of what it holds.</p>
       <opt:table lined="">
         <table>
           <thead><tr><th scope="col">key</th><th scope="col">asks for</th></tr></thead>
@@ -98,7 +101,9 @@
             <tr><td>Page Up, Page Down</td><td>the previous or next chapter, as do Control or Alt with an arrow</td></tr>
             <tr><td>Home, End</td><td>the start or the end</td></tr>
             <tr><td><code>0</code> to <code>9</code></td><td>tenths of the way through</td></tr>
-            <tr><td>Escape</td><td>abandon a pending seek</td></tr>
+            <tr><td>Escape</td><td>abandon a pending seek, or leave the marks and chapters</td></tr>
+            <tr><td>Down, Up</td><td>enter the marks and chapters, or return to the playhead</td></tr>
+            <tr><td>Enter or Space on a cue</td><td>seek to that mark or chapter</td></tr>
           </tbody>
         </table>
       </opt:table>

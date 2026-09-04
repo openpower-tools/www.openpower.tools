@@ -17,6 +17,6 @@ pub mod ticks;
 pub use data::{Data, Error, escape_script, hash, hash_hex};
 pub use labels::{marker_path, marker_samples, spread};
 pub use layout::Layout;
-pub use render::{Rendered, escape, render};
+pub use render::{Aria, Rendered, announced, escape, render, render_with};
 pub use spec::{Band, Chapter, Mark, Series, Spec};
 pub use ticks::{tick_increment, tick_step, ticks};

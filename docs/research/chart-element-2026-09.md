@@ -709,3 +709,92 @@ value and the described summary that says what the chart is, and that is
 phase 4's work, along with decision 17's `step` attribute, `delegatesFocus`
 and the roving tabindex between the thumb, the marks and the chapter ticks. The snap-back ships as the experiment the
 research note called it, marked as such on the docs page.
+
+## Phase 4 close-out (2026-09-05)
+
+Phase 4 gave the chart the structure decision 15 asks for. The host is a
+group labelled by its visible title and described by its summary and a
+visible instructions line naming the keys. The svg stays a
+`graphics-document`; the grid, the axes, the ticks, the band and the
+decorative marks sit in a group hidden from the accessibility tree; each
+series is a `graphics-object` named with its label, its sample count, its
+range and its span; the marks and the chapters are groups of buttons
+wrapped around the hit rects phase 3 emitted; and the playhead is the one
+slider, carrying `aria-valuenow` and a spoken `aria-valuetext`. The svg is
+never a slider and never an image, and the readout inside the thumb is
+hidden from the tree, because Chrome exposes it as a text child and decision
+15 exists to stop the time being read twice.
+
+The film's own chart had been a focusable slider whose value never changed
+since phase 2. It is now a labelled document with a visible title, hidden
+decoration, named series and a decorative playhead, and the film's native
+range input is the single slider a reader tabs to. Its text is 12 px, so
+the film and the element agree at last.
+
+Announcements follow decision 18. A status region, present from the first
+render, speaks on a committed seek, on play, on pause and when a chapter
+boundary is crossed during playback, and on nothing else: no peek, no
+pending, nothing assertive. The spoken value carries the duration and the
+frame index while the thumb is unfocused, so they are heard when it next
+gains focus, and drops them while focused; a clock tick writes at most
+every 300 ms and only while focused, while a key or pointer seek writes at
+once, in the same frame it is emitted. The film's own control follows the
+same rules, reusing the chart's decision rather than a second copy, and its
+region and its control now spell one instant the same way.
+
+Decision 20's ring is an in-SVG rect two pixels outside the thumb, painted
+with `currentColor` so a forced palette carries it without a mapping of its
+own, shown on `:focus-visible` only, and computed from the tokens at 3.15
+to 1 against the dark theme's surface and 4.54 to 1 against the light
+theme's. No CSS outline touches a node of the
+drawing: the shared base stylesheet reaches every focusable node in the
+shadow root, and the guard that was meant to forbid that could only see
+selectors naming an emitted class, so it saw nothing. The cues take a
+painted indicator instead, shared byte for byte with the film, which reads
+the rules out of the element's own source so the two cannot drift.
+
+The roving of decision 17 is real rather than nominal: Down from the thumb
+enters the cues, the arrows step in time order, Enter or Space seeks to the
+focused cue, and Up or Escape returns. It walks only the cues the drawing
+shows, because below the width that hides the chapter bar the earlier
+version moved the tab stop onto a hidden node and left the widget with no
+reachable stop at all. The `step` attribute and `delegatesFocus` are in
+place, and the element no longer trusts the engine's choice of delegate:
+Chrome puts a delegated focus on the svg rather than the thumb, so an
+engine-placed focus is moved to the stop while a focus the reader put on a
+cue or on the data table's disclosure is left alone.
+
+What driving a browser found that no unit test could. A pause was never
+broadcast, so no follower could announce it. The value on a committed seek
+was a frame late. Every path
+that seeks repeatedly was announcing repeatedly: a chart scrub, a native
+range drag, and a drag entering the chart without its own press are each
+one gesture and now speak once, when they settle. Two more came from a
+probe rather than from a check, and are fixed with the tests that hold them
+rather than with a witness: a re-layout could leave the shadow root with no
+active element, and the report's own re-layout edge still accepts the focus
+landing outside the element, so what is guarded is the restore rather than
+the loss. One came from reading the code across a seam: the film had
+inherited the chart's cue defect, drawing the same buttons from the same
+renderer while its own key handler never asked what held the focus, so
+Space on a cue played the film.
+
+The report drives all of it: 308 checks over 20 controls, the chart at 146
+and the film at 54, with the accessibility tree read once per edge and
+everything derived from it, the ring measured in pixels and in computed
+values, the status region read after each event that must speak, the value
+text witnessed at dispatch time rather than after a frame, and the target
+sizes measured against the spacing exception.
+
+Carried into later phases, recorded rather than hidden. Shift and Tab
+return to the thumb rather than to the cue the stop sat on, which is where
+Chrome's delegation lands. The embedded case, where a chart inside a film
+yields the slider, is implemented and tested and remains unreachable at
+runtime, because the film draws the renderer's SVG into its own root rather
+than nesting the element. The `aria-describedby` relationship has no browser
+witness yet. And two checks stand as guards rather than as proof: one
+sub-check of the narrow-width roving passed against the unfixed build,
+because the state it guards is real but Chrome repairs it before the next
+frame, and the film's cue press has no pre-fix evidence at all, because the
+rebuild replaced the tree before that run could be staged and no such
+evidence was made up to fill the gap.
