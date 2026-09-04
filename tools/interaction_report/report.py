@@ -29,15 +29,27 @@ not report a measurement more finely than its check decides on it, or it
 carries a transition's last bit of floating-point wobble. --checks-json
 dumps the decisions, and compare_checks.py holds two runs to that rule.
 
+That clock is also what makes the controls safe to run at the same time.
+Every measurement on it is virtual time, and virtual time moves only when
+this tool draws a frame, so a busy machine cannot change a result: --jobs
+runs that many controls at once, each in its own worker process with its
+own shell on its own debugging port and its own page, against the one
+server this run starts. The real clock measures the machine it is running
+on, where a second browser under load would change the timings, so there
+the controls go one at a time and --jobs is ignored.
+
     uv run tools/interaction_report/report.py --dist dist --out reports/interactions
 """
 from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import glob
+import io
 import json
 import math
+import multiprocessing
 import os
 import re
 import shutil
@@ -48,6 +60,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -289,6 +302,7 @@ class Browser:
         self.closing = False
         self.cast_frames: list[tuple[float, bytes]] = []
         self.casting = False
+        self.cast_frame0 = 0  # the frame a recording began at, which sets its cadence
         self.cast_rect = None
         self.cast_size = (1280, 900)  # the viewport in CSS px, as screencast metadata gives it
         # the synthetic clock's state: frames drawn, where the frame grid stands
@@ -313,6 +327,7 @@ class Browser:
             # stand here, so this is the base every frame time is measured from
             self.tick0 = time.monotonic() * 1000.0 + TICK_HEADROOM_MS
         self.clip_uses_page_coords = None
+        self.seeded = None  # the theme seeding script, while a control has one installed
 
     def _read_loop(self):
         while not self.closing:
@@ -423,7 +438,10 @@ class Browser:
             self.advance(short)
         self.tick = self.tick0 + self.grid + INTERVAL_MS
         want = screenshot
-        casting = self.casting and (self.frames + 1) % VIDEO_EVERY == 0
+        # counted from the film's own first frame rather than from the browser's,
+        # so which of two neighbouring frames a recording holds is the film's
+        # business and not a consequence of whatever ran before it
+        casting = self.casting and (self.frames + 1 - self.cast_frame0) % VIDEO_EVERY == 0
         if want is None and casting:
             want = {"format": "jpeg", "quality": CAST_QUALITY, "optimizeForSpeed": True}
         params = {"frameTimeTicks": self.tick, "interval": INTERVAL_MS}
@@ -447,6 +465,7 @@ class Browser:
             self.cast_rect = rect
             self.cast_frames = []
             self.film_t0 = self.now()
+            self.cast_frame0 = self.frames
         if self.synthetic:
             # the recording is taken frame by frame in frame(); its pictures are
             # the whole viewport at the device scale, as the screencast's are
@@ -487,6 +506,12 @@ class Browser:
             self.ws.close()
         finally:
             self.proc.kill()
+            try:
+                # reaped here, so a worker that has run several controls leaves
+                # no shell of its own behind
+                self.proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
 
     def call(self, method: str, **params):
         with self.cond:
@@ -526,7 +551,20 @@ class Browser:
     def seed_theme(self, mode: str | None):
         script = f"try{{localStorage.setItem({STORAGE_KEY!r},{mode!r})}}catch(e){{}}" if mode else \
                  f"try{{localStorage.removeItem({STORAGE_KEY!r})}}catch(e){{}}"
-        self.call("Page.addScriptToEvaluateOnNewDocument", source=script)
+        self.seeded = self.call("Page.addScriptToEvaluateOnNewDocument", source=script)["identifier"]
+
+    def unseed_theme(self):
+        """Put the theme back as the browser found it: the seeding script off, and
+        the choice the page stored gone. A seed belongs to the control that asked
+        for it; left in place it would decide the theme of every control run after
+        it on this browser, and so make their frames depend on the run's order."""
+        if self.seeded is not None:
+            self.call("Page.removeScriptToEvaluateOnNewDocument", identifier=self.seeded)
+            self.seeded = None
+        try:
+            self.js(f"try{{localStorage.removeItem({STORAGE_KEY!r})}}catch(e){{}}; true")
+        except RuntimeError:
+            pass
 
     def reduced_motion(self, on: bool):
         self.call("Emulation.setEmulatedMedia",
@@ -875,6 +913,15 @@ def chart_svg(series: list[dict], t_max: float, marks=(), ylabel: str = "progres
 # ----------------------------------------------------------------------------
 # kinds
 # ----------------------------------------------------------------------------
+# A window's last frame lands exactly on its bound (0.6 s is thirty-six frames),
+# and the page's clock is a count of frames read as seconds, so the two ends of
+# the window carry the rounding of however many frames the browser had already
+# drawn: without this guard the same window holds thirty-six frames or
+# thirty-seven depending on what ran before it. The guard is a millionth of a
+# frame, far below anything a window means to include.
+EDGE = 1e-9
+
+
 def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=None, t0: float | None = None,
            film: list | None = None, rect=None, every: int = 1, scale: float = 2):
     """Samples `expr` for `seconds`; with `film`, also captures a clipped
@@ -888,7 +935,7 @@ def sample(b: Browser, expr: str, seconds: float, period: float = 0.05, until=No
     rows = []
     i = 0
     last_frame = -1.0
-    while b.now() - start < seconds:
+    while b.now() - start < seconds - EDGE:
         s = b.js(expr)
         t = round(b.now() - t0, 3)
         rows.append((t, s))
@@ -916,9 +963,9 @@ def burst(b: Browser, rect, seconds: float, fps: float = 15, t0: float | None = 
     b.cast_start(rect)
     film = []
     last = -1.0
-    while b.now() - start < seconds:
+    while b.now() - start < seconds - EDGE:
         t = round(b.now() - t0, 3)
-        if t - last >= 1 / fps - 1e-9:
+        if t - last >= 1 / fps - EDGE:
             film.append((t, None))
             last = t
         if b.synthetic:
@@ -1264,6 +1311,7 @@ def run_toggle(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> C
     b.reduced_motion(False)
     b.hover(2, 2)
     rep.edges.append(e8)
+    b.unseed_theme()
     return rep
 
 
@@ -1587,6 +1635,7 @@ document.querySelectorAll('.film').forEach(f => {
 
 def render_control(rep: ControlReport, out: Path):
     d = out / rep.tag
+    d.mkdir(parents=True, exist_ok=True)  # a control that failed before its runner made it still gets a page
     total = len(rep.checks)
     passed = sum(1 for c in rep.checks if c.ok)
     parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>{rep.tag} — interaction report</title><style>{CSS}</style></head><body>",
@@ -2303,6 +2352,77 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     return rep
 
 
+# ----------------------------------------------------------------------------
+# running the controls: one at a time, or one worker process each
+# ----------------------------------------------------------------------------
+# Longest first, so the slowest controls are not left to start last. The kind is
+# the whole cost signal, which saves naming tags: on this machine the toggle's
+# eight edges take about a minute, the chart three quarters of that, the switch
+# a third, and an attention control six to ten seconds (the film is about ninety
+# and has a phase to itself). Ties go to the tag so the order is stable. This is
+# a scheduling hint and never a correctness requirement: the reports are sorted
+# back into contract order before anything is rendered.
+KIND_COST = {"toggle": 0, "chart": 1, "switch": 2}
+
+
+def longest_first(ctrl: dict) -> tuple:
+    return (KIND_COST.get(ctrl["kind"], 3), ctrl["tag"])
+
+
+def failed_control(ctrl: dict, exc: BaseException) -> ControlReport:
+    """A crashed run is a failed control, not a crashed report."""
+    rep = ControlReport(tag=ctrl["tag"], kind=ctrl["kind"], page=ctrl["page"], nodes=["Idle"])
+    e = Edge(("Idle", "Attend", "Idle"), "Run failed", "")
+    e.checks.append(Check("run completes", False, repr(exc)[:300]))
+    rep.edges.append(e)
+    return rep
+
+
+def run_kind(b: Browser, base: str, ctrl: dict, out: Path, machine: list) -> ControlReport:
+    """One control, driven by the runner its kind names."""
+    if ctrl["kind"] == "toggle":
+        return run_toggle(b, base, ctrl, out, machine)
+    if ctrl["kind"] == "switch":
+        return run_switch(b, base, ctrl, out)
+    if ctrl["kind"] == "film":
+        return run_film(b, base, ctrl, out)
+    if ctrl["kind"] == "chart":
+        return run_chart(b, base, ctrl, out)
+    return run_attention(b, base, ctrl, out)
+
+
+def run_control(job: tuple) -> tuple:
+    """One control in a worker process: its own browser on its own port and its
+    own profile, driving its own page against the server the parent started, then
+    its ad hoc page. Returns the finished report and whatever the run printed, so
+    the parent can put a control's lines out as one block rather than interleave
+    six workers'. Only plain data crosses back: no socket, no Browser, no image."""
+    ctrl, base, out, clock, binary, machine, work = job
+    global CLOCK, RECORDER
+    CLOCK = clock
+    said = io.StringIO()
+    b = None
+    try:
+        with contextlib.redirect_stdout(said):
+            # the port is picked and bound here in the child, so two workers
+            # cannot be handed the same one; the parallel path is synthetic
+            # only, which is why there is no clip calibration to do
+            b = Browser(binary, work, synthetic=(clock == CLOCK_SYNTHETIC))
+            RECORDER = b
+            b.goto(base + "/", "document.readyState === 'complete'")
+            rep = run_kind(b, base, ctrl, out, machine)
+    # a shell that never starts and a page that never becomes ready both call
+    # sys.exit; in a worker that is this control failing, not the run
+    except (Exception, SystemExit) as exc:
+        rep = failed_control(ctrl, exc)
+    finally:
+        if b is not None:
+            b.close()
+    rep.clock = clock
+    render_control(rep, out)
+    return rep, said.getvalue()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dist", help="serve this directory")
@@ -2317,9 +2437,13 @@ def main():
     ap.add_argument("--shell", help="the chrome-headless-shell the synthetic clock drives")
     ap.add_argument("--checks-json", help="write every control's checks (name, outcome, detail) here as JSON")
     ap.add_argument("--only", help="comma-separated tags")
+    ap.add_argument("--jobs", type=int, help="how many controls to run at once, each in its own worker process and browser "
+                                             "(default: up to six on the synthetic clock, where the measurements are virtual "
+                                             "time; one on the real clock, which measures the machine itself)")
     ap.add_argument("--publish", action="store_true", help="copy the integrated revision into <dist>/reports/interactions/ (deploys with the site)")
     args = ap.parse_args()
 
+    started = time.time()
     shell = find_shell(args.shell)
     if args.clock == CLOCK_SYNTHETIC and not shell:
         sys.exit("--clock synthetic needs a chrome-headless-shell: pass --shell PATH or set OP_HEADLESS_SHELL")
@@ -2331,6 +2455,13 @@ def main():
     global CLOCK
     CLOCK = clock
     print(f"{clock_note(clock)}; {binary} ({binary_version(binary)})", flush=True)
+    if clock == CLOCK_REAL:
+        if args.jobs is not None and args.jobs > 1:
+            print("--jobs ignored on the real clock: it measures the machine this runs on, and a second browser under "
+                  "load would move the timings it reports; the controls run one at a time")
+        jobs = 1
+    else:
+        jobs = max(1, args.jobs if args.jobs is not None else min(6, os.cpu_count() or 1))
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -2349,6 +2480,14 @@ def main():
         subprocess.check_output(["cargo", "run", "-q", "-p", "op-webc", "--bin", "machine_table"], text=True))
     contract = json.load(open(args.contract))["controls"]
     only = set(args.only.split(",")) if args.only else None
+    selected = [c for c in contract if not only or c["tag"] in only]
+    statics = [c["tag"] for c in selected if c["kind"] == "static"]
+    # phase 1: every control except the film, which needs the integrated pages to exist
+    phase1 = [c for c in selected if c["kind"] not in ("static", "film")]
+    jobs = max(1, min(jobs, len(phase1) or 1))  # no more workers than there are controls
+    print(f"controls: {len(phase1)} in phase 1, {jobs} at a time" +
+          ("; on the synthetic clock a measurement is virtual time, so workers cannot move each other's results"
+           if jobs > 1 else ""), flush=True)
 
     adhoc = out / "adhoc"
     integrated = out / "integrated"
@@ -2357,46 +2496,65 @@ def main():
     b = Browser(binary, work, synthetic=(clock == CLOCK_SYNTHETIC))
     global RECORDER
     RECORDER = b
-    reports, statics, failed = [], [], False
+    reports, failed = [], False
     prefix = "/reports/interactions/"
 
-    def run_one(ctrl):
+    def tally(rep) -> list:
+        """A control's outcome: the failures it found, then how it stands."""
         nonlocal failed
-        print(f"== {ctrl['tag']} ({ctrl['kind']})", flush=True)
-        try:
-            if ctrl["kind"] == "toggle":
-                rep = run_toggle(b, base, ctrl, adhoc, machine)
-            elif ctrl["kind"] == "switch":
-                rep = run_switch(b, base, ctrl, adhoc)
-            elif ctrl["kind"] == "film":
-                rep = run_film(b, base, ctrl, adhoc)
-            elif ctrl["kind"] == "chart":
-                rep = run_chart(b, base, ctrl, adhoc)
-            else:
-                rep = run_attention(b, base, ctrl, adhoc)
-        except Exception as exc:  # a crashed run is a failed control, not a crashed report
-            rep = ControlReport(tag=ctrl["tag"], kind=ctrl["kind"], page=ctrl["page"], nodes=["Idle"])
-            e = Edge(("Idle", "Attend", "Idle"), "Run failed", "")
-            e.checks.append(Check("run completes", False, repr(exc)[:300]))
-            rep.edges.append(e)
-        rep.clock = clock
-        render_control(rep, adhoc)
-        reports.append(rep)
+        lines = []
         for c in rep.checks:
             if not c.ok:
                 failed = True
-                print(f"   FAIL {c.name}: {c.detail}")
-        print(f"   {sum(1 for c in rep.checks if c.ok)}/{len(rep.checks)} checks pass")
+                lines.append(f"   FAIL {c.name}: {c.detail}")
+        lines.append(f"   {sum(1 for c in rep.checks if c.ok)}/{len(rep.checks)} checks pass")
+        return lines
+
+    def run_one(ctrl):
+        print(f"== {ctrl['tag']} ({ctrl['kind']})", flush=True)
+        try:
+            rep = run_kind(b, base, ctrl, adhoc, machine)
+        except Exception as exc:  # a crashed run is a failed control, not a crashed report
+            rep = failed_control(ctrl, exc)
+        rep.clock = clock
+        render_control(rep, adhoc)
+        reports.append(rep)
+        print("\n".join(tally(rep)), flush=True)
+
+    def run_together(controls):
+        """The controls at once, longest first, one worker process each. A worker
+        prints nothing itself: its lines come back with its report and go out as
+        one block, so a control's header, its failures and its count stay together.
+        The reports are sorted back into contract order here, so neither the pages
+        nor the checks dump depends on which worker finished first."""
+        place = {c["tag"]: i for i, c in enumerate(controls)}
+        done = []
+        # spawn, not fork: a worker starts from the module rather than from a copy
+        # of this process, which holds a CDP socket and the thread that reads it
+        with ProcessPoolExecutor(max_workers=jobs, mp_context=multiprocessing.get_context("spawn")) as pool:
+            pending = {pool.submit(run_control, (c, base, adhoc, clock, binary, machine, work / c["tag"])): c
+                       for c in sorted(controls, key=longest_first)}
+            for future in as_completed(pending):
+                ctrl = pending[future]
+                try:
+                    rep, said = future.result()
+                except Exception as exc:  # a worker that died is still one failed control
+                    rep, said = failed_control(ctrl, exc), ""
+                    rep.clock = clock
+                    render_control(rep, adhoc)
+                done.append((place[ctrl["tag"]], rep))
+                block = [f"== {ctrl['tag']} ({ctrl['kind']})"] + ([said.rstrip("\n")] if said.strip() else []) + tally(rep)
+                print("\n".join(block), flush=True)
+        reports.extend(rep for _, rep in sorted(done, key=lambda pair: pair[0]))
 
     try:
         b.goto(base + "/", "document.readyState === 'complete'")
         if clock == CLOCK_REAL:
             b.calibrate_clip()
-        selected = [c for c in contract if not only or c["tag"] in only]
-        statics = [c["tag"] for c in selected if c["kind"] == "static"]
-        # phase 1: every control except the film, which needs the integrated pages to exist
-        for ctrl in selected:
-            if ctrl["kind"] not in ("static", "film"):
+        if jobs > 1:
+            run_together(phase1)
+        else:
+            for ctrl in phase1:
                 run_one(ctrl)
         render_index(reports, statics, adhoc)
         # the integrated revision, from the site's own elements
@@ -2429,6 +2587,7 @@ def main():
         print(f"checks:            {args.checks_json}")
     print(f"ad hoc report:     {adhoc / 'index.html'}")
     print(f"integrated report: {integrated / 'index.html'}" + (f"  (published to {Path(args.dist) / 'reports' / 'interactions'})" if args.publish and args.dist else ""))
+    print(f"wall clock:        {time.time() - started:.1f}s over {len(reports)} controls, {jobs} at a time")
     sys.exit(1 if failed else 0)
 
 
