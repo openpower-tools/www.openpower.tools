@@ -249,6 +249,16 @@ def binary_version(binary: str) -> str:
         return "version unknown"
 
 
+# A headless browser has no input device, so by default it answers (pointer: none)
+# and (hover: none), and an element that gates a hover on those queries could never
+# run its hovering branch here. These are Blink's own settings for what the device
+# is rather than a CDP emulation, and they give every page a fine hovering pointer,
+# the answers a mouse gives, in the shell and in Chrome's own headless alike.
+# Emulation.setTouchEmulationEnabled still makes the device coarse on top of them,
+# so the coarse path is driven the same way it always was.
+POINTER = "--blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2"
+
+
 class Browser:
     def __init__(self, chrome: str, workdir: Path, synthetic: bool = False):
         self.synthetic = synthetic
@@ -265,7 +275,7 @@ class Browser:
                  "--disable-checker-imaging", "--disable-image-animation-resync"] if synthetic else
                 ["--headless=new", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check"])
         self.proc = subprocess.Popen(
-            [chrome, *mode, "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
+            [chrome, *mode, POINTER, "--disable-gpu", "--no-sandbox", "--hide-scrollbars",
              "--window-size=1280,900", f"--force-device-scale-factor={DPR}",
              f"--remote-debugging-port={self.port}", "--remote-allow-origins=*",
              f"--user-data-dir={self.profile}", "about:blank"],
@@ -1984,15 +1994,41 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
                   Check("release seeks and clears pending", p3["k"] == 2 and p3["pending"] is None and not p3["pend_state"], f"playhead {p3['k']}"),
                   Check("Escape cancels a press", p4["k"] == 2 and p4["pending"] is None, f"playhead {p4['k']}")]
     rep.edges.append(e4)
-    # E5 the chart under forced colours and high contrast: identity must survive without the palette
-    e5 = Edge(("Paused", "Peek", "Paused"), "Forced colours and high contrast",
+    # E5 the chart under forced colours, print and high contrast: identity must
+    # survive without the palette. Every paint is read, not a sample of them: the
+    # shared blocks were once interpolated halfway up the chart stylesheet, so
+    # everything written after them - the playhead, its dot and its readout, the
+    # track, the played bar, the chapter tick and the peek rule - put its token
+    # straight back on a forced palette and in print, at equal specificity and in
+    # silence. The checks that were here read the series, the markers, the end
+    # label and the grid, all of them written before the blocks, so they passed
+    # throughout. The paints written after them are read below.
+    e5 = Edge(("Paused", "Peek", "Paused"), "Forced colours, print and high contrast",
               "With forced-colors active every paint maps to a system colour, markers appear on every series and dashes carry identity; "
-              "with prefers-contrast more the grid reaches the strong border and strokes thicken.")
+              "in print emulation every paint maps to a print black or grey and the peek rule goes; with prefers-contrast more the grid "
+              "reaches the strong border and strokes thicken. Each paint is read off the rendered node, not off the stylesheet.")
     CH = f"""(() => {{ const sr = {F}.shadowRoot; const cs = e => e && getComputedStyle(e);
       const p1 = sr.querySelector('path[class^=series].series-1'), p2 = sr.querySelector('path[class^=series].series-2') || p1, m = sr.querySelector('.marker'), g = sr.querySelector('.grid'), lab = sr.querySelector('.endlabel');
+      const head = sr.querySelector('.head'), dot = sr.querySelector('.head-dot'), ht = sr.querySelector('.head-t');
+      const bg = sr.querySelector('.bar-bg'), played = sr.querySelector('.bar-played'), ch = sr.querySelector('.chapter'), peek = sr.querySelector('.peek-line');
+      const token = n => getComputedStyle({F}).getPropertyValue(n).trim();
       return {{s1: cs(p1).stroke, s2: cs(p2).stroke, dash2: cs(p2).strokeDasharray, w1: cs(p1).strokeWidth, marker: m ? cs(m).display : null, grid: cs(g).stroke, label: lab ? cs(lab).fill : null,
-        token1: getComputedStyle({F}).getPropertyValue('--op-series-1').trim(), strong: getComputedStyle({F}).getPropertyValue('--op-border-strong').trim()}}; }})()"""
+        head: head ? cs(head).stroke : null, dot: dot ? cs(dot).fill : null, readout: ht ? cs(ht).fill : null,
+        track: bg ? cs(bg).fill : null, played: played ? cs(played).fill : null,
+        chapter: ch ? cs(ch).stroke : null, peek: peek ? cs(peek).stroke : null, peek_shown: peek ? cs(peek).display : null,
+        token1: token('--op-series-1'), strong: token('--op-border-strong'), accent: token('--op-accent'),
+        border: token('--op-border'), peek_token: token('--op-peek')}}; }})()"""
     normal = b.js(CH)
+    # the peek rule's token, witnessed by moving it: --op-peek is declared per
+    # theme, registered and contrast-tested, and it carried the same value as
+    # --op-muted, so a rule painted with the wrong one of the two looked right.
+    # Nothing but changing one of them can tell them apart in a browser.
+    b.js(f"{F}.style.setProperty('--op-peek', 'rgb(1, 2, 3)'); 'ok'")
+    b.wait(0.2)
+    tinted = b.js(CH)
+    b.js(f"{F}.style.removeProperty('--op-peek'); 'ok'")
+    b.wait(0.2)
+    untinted = b.js(CH)
     b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "active"}])
     b.wait(0.2)
     forced = b.js(CH)
@@ -2000,6 +2036,13 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     b.wait(0.2)
     more = b.js(CH)
     b.call("Emulation.setEmulatedMedia", features=[{"name": "forced-colors", "value": "none"}, {"name": "prefers-contrast", "value": "no-preference"}])
+    b.wait(0.2)
+    # the print mapping is the same question with a different answer, asked the
+    # way the browser asks it of a page it is about to print
+    b.call("Emulation.setEmulatedMedia", media="print")
+    b.wait(0.2)
+    printed = b.js(CH)
+    b.call("Emulation.setEmulatedMedia", media="")
     b.wait(0.2)
     back = b.js(CH)
 
@@ -2011,15 +2054,46 @@ def run_film(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
             return "rgb(%d, %d, %d)" % tuple(int(v[i:i + 2], 16) for i in (1, 3, 5))
         return v
 
+    # the print blocks the stylesheet names, as the browser reports them
+    PRINT_BLACK, PRINT_TRACK, PRINT_PLAYED = "rgb(0, 0, 0)", "rgb(221, 221, 221)", "rgb(85, 85, 85)"
     e5.checks += [Check("series stroke resolves to its palette token", normal["s1"] == rgb(normal["token1"]), f"{normal['s1']} vs token {normal['token1']}"),
                   Check("the second series carries a dash pattern", normal["dash2"] not in (None, "", "none"), f"dasharray {normal['dash2']}"),
                   Check("markers are hidden for labelled series in normal mode", normal["marker"] == "none", f"display {normal['marker']}"),
+                  Check("the peek rule is painted with the peek token and nothing else is",
+                        tinted["peek"] == "rgb(1, 2, 3)" and tinted["s1"] == normal["s1"] and tinted["grid"] == normal["grid"]
+                        and untinted["peek"] == normal["peek"],
+                        f"moving --op-peek to rgb(1, 2, 3) moved the peek rule {normal['peek']} -> {tinted['peek']} and put it back "
+                        f"at {untinted['peek']}; the token reads {normal['peek_token']} and the series and grid did not move"),
                   Check("forced colours replace the palette stroke with a system colour", forced["s1"] != normal["s1"] and forced["s1"] == forced["s2"], f"{normal['s1']} -> {forced['s1']} / {forced['s2']}"),
                   Check("forced colours keep the dash pattern as the identity cue", forced["dash2"] == normal["dash2"], f"{forced['dash2']}"),
                   Check("forced colours show the markers", forced["marker"] == "inline", f"display {forced['marker']}"),
+                  Check("forced colours put the playhead, its dot and the played bar on one system colour",
+                        forced["head"] == forced["dot"] == forced["played"] and forced["head"] != rgb(normal["accent"]),
+                        f"playhead {normal['head']} -> {forced['head']}, its dot {forced['dot']}, the played bar "
+                        f"{normal['played']} -> {forced['played']}, none of them the accent token {normal['accent']}"),
+                  Check("forced colours put the track on the same subordinate colour as the grid",
+                        forced["track"] == forced["grid"] and forced["track"] != rgb(normal["border"]),
+                        f"track {normal['track']} -> {forced['track']}, grid {forced['grid']}, border token {normal['border']}"),
+                  Check("forced colours put the peek rule, the readout and the chapter tick on the text colour",
+                        forced["peek"] == forced["s1"] and forced["readout"] == forced["s1"] and forced["chapter"] in (None, forced["s1"]),
+                        f"peek rule {normal['peek']} -> {forced['peek']}, readout {normal['readout']} -> {forced['readout']}, chapter tick "
+                        f"{forced['chapter'] or 'not drawn: this film has one chapter, so the tick is left to the Rust ordering test'}, "
+                        f"series {forced['s1']}"),
+                  Check("print puts the playhead, its dot, its readout and the chapter tick on black",
+                        {printed["head"], printed["dot"], printed["readout"]} == {PRINT_BLACK} and printed["chapter"] in (None, PRINT_BLACK),
+                        f"playhead {normal['head']} -> {printed['head']}, its dot {printed['dot']}, its readout {printed['readout']}, "
+                        f"chapter tick {printed['chapter'] or 'not drawn by this film'}"),
+                  Check("print puts the track and the played bar on its own greys",
+                        (printed["track"], printed["played"]) == (PRINT_TRACK, PRINT_PLAYED),
+                        f"track {normal['track']} -> {printed['track']}, played bar {normal['played']} -> {printed['played']}"),
+                  Check("print drops the peek rule altogether", printed["peek_shown"] == "none",
+                        f"the peek rule's display is {printed['peek_shown']} in print and {normal['peek_shown']} on screen"),
                   Check("high contrast raises the grid to the strong border", more["grid"] == rgb(more["strong"]) and more["grid"] != normal["grid"], f"{normal['grid']} -> {more['grid']} (strong {more['strong']})"),
                   Check("high contrast thickens the strokes", float(more["w1"].rstrip("px")) > float(normal["w1"].rstrip("px")), f"{normal['w1']} -> {more['w1']}"),
-                  Check("the emulation is reset afterwards", back["s1"] == normal["s1"] and back["marker"] == normal["marker"])]
+                  Check("the emulation is reset afterwards",
+                        back["s1"] == normal["s1"] and back["marker"] == normal["marker"] and back["head"] == normal["head"]
+                        and back["peek_shown"] == normal["peek_shown"],
+                        f"series {back['s1']}, markers {back['marker']}, playhead {back['head']}, peek rule display {back['peek_shown']}")]
     rep.edges.append(e5)
     # E6 the recorded video on the stage follows the film's clock
     e6 = Edge(("Paused", "Play", "Playing"), "The stage plays the recording",
@@ -2189,11 +2263,17 @@ assert fnv1a64_hex("") == "cbf29ce484222325" and fnv1a64_hex("a") == "af63dc4c86
 
 def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     """The chart kind: a pre-rendered <opt-chart> that follows a film's clock.
-    Static first (scripts off, two widths), then upgrade, a full play, and resize."""
+    Static first (scripts off, two widths), then upgrade, a full play and resize,
+    then the gestures: a tap, a drag, Escape mid-drag, a hover, the key table, the
+    focus rule those keys obey and a coarse long press, each read off the film's
+    own clock."""
     tag = ctrl["tag"]
     rep = ControlReport(tag=tag, kind="chart", page=ctrl["page"], nodes=["Static", "Following"],
                         machine_edges=[("Static", "Upgrade", "Following"), ("Following", "Tick", "Following"),
-                                       ("Following", "Resize", "Following"), ("Static", "Resize", "Static")])
+                                       ("Following", "Resize", "Following"), ("Static", "Resize", "Static"),
+                                       # the intents a gesture or a key carries: the chart asks, the film answers
+                                       ("Following", "Seek", "Following"), ("Following", "Peek", "Following"),
+                                       ("Following", "Cancel", "Following"), ("Following", "Toggle", "Following")])
     d = out / tag
     d.mkdir(parents=True, exist_ok=True)
     b.reduced_motion(False)
@@ -2349,6 +2429,648 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     wide, narrow = len(counts.get(900, {}).get("tick_px") or []), len(counts.get(360, {}).get("tick_px") or [])
     e4.checks.append(Check("every second tick label hidden when narrow", wide > 0 and 0 < narrow <= (wide + 1) // 2, f"{wide} labels wide, {narrow} narrow"))
     rep.edges.append(e4)
+
+    # ---- the gestures: real pointer and key input, answered by the film ------
+    # The chart moves nothing itself. A press or a key emits opt-chart-seek,
+    # opt-chart-peek or opt-chart-toggle; the film's clock answers; the chart
+    # follows that answer like any other tick. So what a gesture did is read off
+    # the film's own readout, which is the authority for the clock, and the chart's
+    # readout is held against it. The thresholds are the element's own, from
+    # crates/op-site/src/components/chart.rs: how far along x a position may be
+    # from a sample and still mean it, how far a press may travel and still be a
+    # tap, how long a coarse press is held before it aims, and how near its own
+    # origin an aiming drag has to come back to be a change of mind.
+    SNAP_RADIUS, DRAG_PX, LONG_PRESS, SNAPBACK_PX = 40.0, 3.0, 0.5, 4.0
+    # the one chart svg that is on screen: the element ships a wide chart and a
+    # narrow one and the container query hides whichever does not fit, so the
+    # hidden one has no box at all. Every script below opens by finding it, and
+    # a gesture aimed at the hidden chart would land nowhere.
+    SHOWN = "[...%s.querySelectorAll('svg.chart')].find(e => e.getBoundingClientRect().width > 0)"
+    b.goto(base + ctrl["page"], READY)
+    b.wait(0.4)
+    rect = b.js(LOC)  # scrolls the chart into view; nothing below scrolls again
+    # the chart's own geometry: the box a client coordinate is measured in, the
+    # viewBox its units are, and the track bar, whose x and width are the plot's
+    # time axis (E3 judges the playhead against the same pair). The pointer
+    # capabilities come with it, because the element gates its hover preview on them.
+    GEOM = f"""(() => {{ const c = {C}, sr = c.shadowRoot;
+      const svg = {SHOWN % 'sr'};
+      if (!svg) return null;
+      const r = svg.getBoundingClientRect(), vb = svg.viewBox.baseVal, bar = svg.querySelector('.bar-bg');
+      return {{x: r.x, y: r.y, w: r.width, h: r.height, vbw: vb.width, vbh: vb.height,
+        bar: [+bar.getAttribute('x'), +bar.getAttribute('width')], track: +bar.getAttribute('y') + 2,
+        block: (c.querySelector('script[type="application/json"]') || {{}}).textContent || '',
+        fine: matchMedia('(pointer: fine)').matches, coarse: matchMedia('(pointer: coarse)').matches,
+        no_pointer: matchMedia('(pointer: none)').matches, hover: matchMedia('(hover: hover)').matches,
+        touches: navigator.maxTouchPoints}}; }})()"""
+    # what a gesture has done: the three custom states, the readout (the preview's
+    # time while one is showing, the clock's otherwise), the playhead, the preview
+    # rule, the film's clock and its playing state, and whether the chart has the focus
+    GEST = f"""(() => {{ const c = {C}, f = {F}, sr = c.shadowRoot;
+      const svg = {SHOWN % 'sr'};
+      const head = svg && svg.querySelector('g.playhead'), ht = svg && svg.querySelector('.head-t');
+      const tx = head ? (head.getAttribute('transform') || '').match(/translate\\(([-\\d.]+)/) : null;
+      const line = svg && svg.querySelector('.peek-line');
+      return {{peeking: c.matches(':state(peeking)'), pending: c.matches(':state(pending)'),
+        cancelling: c.matches(':state(cancelling)'),
+        readout: ht ? ht.textContent : null, x: tx ? +tx[1] : null,
+        rule: line && line.getAttribute('visibility') !== 'hidden' ? +line.getAttribute('x1') : null,
+        film_t: f.shadowRoot.querySelector('.t').textContent, playing: f.matches(':state(playing)'),
+        focused: sr.activeElement === svg}}; }})()"""
+    # Every event the page receives is recorded with its isTrusted, so a check can
+    # say the gesture came from the browser's input pipeline: an element.click() and
+    # a dispatched event are both untrusted, and a report that drove the chart that
+    # way would say so here rather than pass. A key also carries where it went: the
+    # svg on its composed path, and the element, whose own listener is the one the
+    # focus rule refuses a key at.
+    b.js("(() => { const c = " + C + ";\n"
+         "      const svg = " + SHOWN % "c.shadowRoot" + ";\n"
+         """      const rec = window.__opgest = {down: null, up: null, key: null};
+      const seen = e => ({trusted: e.isTrusted, kind: e.pointerType || '', chart: e.composedPath().indexOf(svg) >= 0});
+      document.addEventListener('pointerdown', e => { rec.down = seen(e); }, true);
+      document.addEventListener('pointerup', e => { rec.up = seen(e); }, true);
+      document.addEventListener('keydown', e => { rec.key = {trusted: e.isTrusted, key: e.key, chart: e.composedPath().indexOf(svg) >= 0,
+        element: e.composedPath().indexOf(c) >= 0}; }, true);
+      return true; })()""")
+    g = b.js(GEOM)
+    block = json.loads(g["block"])
+    duration = float(block["duration"])
+    times = [row[0] for row in block["rows"]]
+    chapters = [ch["t"] for ch in block["chapters"]]
+    gap = max(later - earlier for earlier, later in zip(times, times[1:]))
+    scale = g["w"] / g["vbw"]  # CSS px per chart unit: one, to within the pixel a kept pre-render may differ by
+    bx, bw = g["bar"]
+    y_track, y_plot = g["y"] + g["track"] * scale, g["y"] + g["vbh"] * 0.4 * scale
+
+    def unit(cx: float) -> float:
+        """A client x in the chart's own units, as the element reads it."""
+        return (cx - g["x"]) / scale
+
+    def at_x(t: float) -> float:
+        """The client x of a time, through the track the chart drew."""
+        return g["x"] + (bx + min(1.0, max(0.0, t / duration)) * bw) * scale
+
+    def lands(got: float | None, want: float) -> bool:
+        """Whether a time read off the page is the one expected. The readouts
+        are written to the hundredth of a second, so that is the tolerance;
+        a reading that never arrived is never the expected time."""
+        return got is not None and abs(got - want) <= 0.011
+
+    def maps_to(cx: float) -> float:
+        """What the element makes of a position: the nearest sample within the
+        snap radius, and the position's own time when none is near enough. A tie
+        goes to the earlier sample, as the layout's own hit test does."""
+        u = unit(cx)
+        near = min(times, key=lambda t: abs(bx + t / duration * bw - u))
+        if abs(bx + near / duration * bw - u) <= SNAP_RADIUS:
+            return near
+        return min(duration, max(0.0, (u - bx) / bw * duration))
+
+    def mouse(cx: float, cy: float, kind: str = "mousePressed"):
+        b.call("Input.dispatchMouseEvent", type=kind, x=cx, y=cy, button="left", clickCount=1)
+
+    def drag_to(cx: float, cy: float):
+        b.call("Input.dispatchMouseEvent", type="mouseMoved", x=cx, y=cy, button="left", buttons=1)
+
+    def key(name: str, code: str | None = None, mods: int = 0):
+        """One keydown/keyup. mods is the CDP bitmask: Alt 1, Control 2, Meta 4, Shift 8."""
+        p = {"key": name, **({"code": code} if code else {}), **({"modifiers": mods} if mods else {})}
+        b.call("Input.dispatchKeyEvent", type="keyDown", **p)
+        b.call("Input.dispatchKeyEvent", type="keyUp", **p)
+
+    # E5 tap: a press and a release at one position, with no travel between them
+    e5 = Edge(("Following", "Seek", "Following"), "Tap: a press on the track seeks the film",
+              "A press and a release at one position on the track, with nothing in between: the chart reads the position, "
+              "snaps it to the sample within its snap radius, and asks the film for that time. The press is a CDP mouse event, "
+              "so the page sees a trusted pointerdown; a scripted click carries an untrusted one, and the check below says which arrived.")
+    x_tap = at_x(times[5]) + 0.4 * SNAP_RADIUS * scale
+    t_tap = maps_to(x_tap)
+    tap0 = b.js(GEST)
+    mouse(x_tap, y_track)
+    tap_down = b.js(GEST)
+    mouse(x_tap, y_track, "mouseReleased")
+    b.wait(0.15)
+    tap1 = b.js(GEST)
+    rec = b.js("window.__opgest")
+    down, up = rec.get("down") or {}, rec.get("up") or {}
+    landed = seconds(tap1["film_t"])
+    e5.checks += [Check("the press arrives as a trusted pointer event on the chart",
+                        bool(down.get("trusted") and down.get("chart") and up.get("trusted") and up.get("chart")),
+                        f"pointerdown trusted={down.get('trusted')} pointerType={down.get('kind')} on the chart={down.get('chart')}, "
+                        f"pointerup trusted={up.get('trusted')}"),
+                  Check("the chart takes the focus from the press itself", tap_down["focused"], f"focused={tap_down['focused']} while the button is down"),
+                  Check("the press alone does not seek", tap_down["film_t"] == tap0["film_t"], f"film still at {tap_down['film_t']}"),
+                  Check("the release moves the film's clock", tap1["film_t"] != tap0["film_t"], f"{tap0['film_t']} to {tap1['film_t']}"),
+                  Check("the tap lands on the sample its position snaps to", lands(landed, t_tap),
+                        f"film at {tap1['film_t']}, expected {t_tap:.2f}s from a press {unit(x_tap) - unit(at_x(t_tap)):.0f} px past that sample "
+                        f"(snap radius {SNAP_RADIUS:.0f} px, one sample is {gap:.2f}s)"),
+                  Check("the chart's readout followed the film", tap1["readout"] == tap1["film_t"], f"chart {tap1['readout']}, film {tap1['film_t']}")]
+    rep.edges.append(e5)
+
+    # E6 drag: the preview aims while the clock stays, and the release commits
+    e6 = Edge(("Following", "Peek", "Following"), "Drag: the preview aims, the release commits",
+              "A press, five moves across the plot and a release. Past the slop a tap is allowed the press becomes a pending seek: "
+              "the host carries the pending state, the preview names the time under the pointer, and the film's clock does not move, "
+              "because a preview is not a seek. The release is what commits, and it commits where the pointer left it.")
+    x_from, x_to = at_x(times[1]), at_x(times[6]) + 0.35 * SNAP_RADIUS * scale
+    steps = [x_from + (x_to - x_from) * i / 5 for i in range(1, 6)]
+    t_to = maps_to(x_to)
+    drag0 = b.js(GEST)
+    film = b.film_start(rect)
+    t0 = b.now()
+    mouse(x_from, y_plot)
+    rows = sample(b, GEST, 0.18, t0=t0, film=film, rect=rect)
+    held = len(rows)  # the rows before the first move: the press on its own
+    aims = []
+    for cx in steps:
+        drag_to(cx, y_plot)
+        rows += sample(b, GEST, 0.12, t0=t0, film=film, rect=rect)
+        aims.append((cx, rows[-1][1]))
+    mouse(x_to, y_plot, "mouseReleased")
+    t_rel = round(b.now() - t0, 3)
+    rows += sample(b, GEST, 0.35, t0=t0, film=film, rect=rect)
+    ts = [t for t, _ in rows]
+    make_film(e6, film, d, "drag", keys=8, ylabel="% of the film's duration", chapter0="aiming", marks=[(t_rel, "release")],
+              title=f"the preview crosses {len(steps)} positions before the release commits",
+              trace=[(0.0, "Following", "Peek", "Following"), (t_rel, "Following", "Seek", "Following")],
+              series=[{"label": "the time the preview names", "series": SERIES["preview"], "t": ts,
+                       "y": [(seconds(s["readout"]) or 0.0) / duration * 100 for _, s in rows], "lw": 2.4, "at": 0.35},
+                      {"label": "the film's clock", "series": SERIES["thumb"], "t": ts,
+                       "y": [(seconds(s["film_t"]) or 0.0) / duration * 100 for _, s in rows], "lw": 2.6, "at": 0.8}])
+    off = max(abs(unit(at_x(seconds(s["readout"]) or 0.0)) - unit(cx)) for cx, s in aims)
+    wrong = [f"{cx:.0f} px wanted {maps_to(cx):.2f}s got {s['readout']}" for cx, s in aims if not lands(seconds(s["readout"]), maps_to(cx))]
+    still = sorted({s["film_t"] for _, s in aims} | {s["film_t"] for _, s in rows[:held]})
+    last = rows[-1][1]
+    e6.checks += [Check("the press on its own aims nothing", not any(s["pending"] or s["peeking"] for _, s in rows[:held]),
+                        f"{held} samples with the button down and no travel, none of them pending"),
+                  Check("a drag past the slop aims a pending seek", all(s["pending"] and s["peeking"] for _, s in aims),
+                        f"{sum(1 for _, s in aims if s['pending'])} of {len(aims)} positions pending, "
+                        f"the first {unit(steps[0]) - unit(x_from):.0f} px along and the slop is {DRAG_PX:.0f} px"),
+                  Check("the preview names the time under the pointer", not wrong,
+                        f"{len(aims)} positions, each within {off:.1f} px of the time it names" if not wrong else "; ".join(wrong)),
+                  Check("the film's clock does not move while the drag aims", still == [drag0["film_t"]],
+                        f"film at {', '.join(still)} throughout, playhead at {drag0['x']} px"),
+                  Check("the release commits where the pointer was", lands(seconds(last["film_t"]), t_to),
+                        f"film at {last['film_t']}, expected {t_to:.2f}s (one sample is {gap:.2f}s)"),
+                  Check("the pending state and the preview clear at the release", not last["pending"] and not last["peeking"] and last["rule"] is None,
+                        f"pending={last['pending']}, peeking={last['peeking']}, preview rule {last['rule']}")]
+    rep.edges.append(e6)
+
+    # E7 Escape during a drag: the aim is dropped and the release commits nothing
+    e7 = Edge(("Following", "Cancel", "Following"), "Escape during a drag: the seek is dropped",
+              "A press, a move onto another sample, then Escape while the button is still down. The press takes the focus itself, "
+              "which is what lets Escape reach the very drag it started: the aim goes, and the release that follows commits nothing, "
+              "so the film's clock ends where it stood before the press.")
+    xa, xb = at_x(times[2]), at_x(times[5])
+    esc0 = b.js(GEST)
+    mouse(xa, y_plot)
+    drag_to(xb, y_plot)
+    b.wait(0.1)
+    esc1 = b.js(GEST)
+    key("Escape", "Escape")
+    esc2 = b.js(GEST)
+    mouse(xb, y_plot, "mouseReleased")
+    b.wait(0.15)
+    esc3 = b.js(GEST)
+    struck = b.js("window.__opgest.key") or {}
+    e7.checks += [Check("the drag was aiming at another sample before Escape",
+                        esc1["pending"] and lands(seconds(esc1["readout"]), maps_to(xb)),
+                        f"pending={esc1['pending']}, previewing {esc1['readout']} while the film reads {esc1['film_t']}"),
+                  Check("Escape arrives as a trusted key event on the chart",
+                        bool(struck.get("trusted") and struck.get("chart") and struck.get("key") == "Escape"),
+                        f"keydown {struck.get('key')} trusted={struck.get('trusted')} on the chart={struck.get('chart')}"),
+                  Check("Escape clears the pending seek and its preview",
+                        not esc2["pending"] and not esc2["peeking"] and esc2["readout"] == esc0["film_t"],
+                        f"pending={esc2['pending']}, peeking={esc2['peeking']}, readout back to {esc2['readout']}"),
+                  Check("the release after Escape commits nothing", esc3["film_t"] == esc0["film_t"] and esc3["x"] == esc0["x"],
+                        f"film at {esc3['film_t']}, as before the press; playhead at {esc3['x']} px")]
+    rep.edges.append(e7)
+
+    # E8 hover: the preview a fine hovering pointer gets, and no clock moved
+    e8 = Edge(("Following", "Peek", "Following"), "Hover: the pointer previews a time without asking for it",
+              "The pointer crosses the plot with no button down. A hover is not a gesture a finger can make, so the element gates this "
+              "preview on a fine pointer, and the browser is launched with the Blink settings that give the page one: the first check "
+              "below is that precondition, and it fails rather than weakens if the browser answers otherwise.")
+    x_hover = at_x(times[3]) + 0.5 * SNAP_RADIUS * scale
+    t_hover = maps_to(x_hover)
+    hov0 = b.js(GEST)
+    b.hover(x_hover, y_plot)
+    b.wait(0.12)
+    hov1 = b.js(GEST)
+    b.hover(4, 4)
+    b.wait(0.12)
+    hov2 = b.js(GEST)
+    shown = seconds(hov1["readout"])
+    e8.checks += [Check("the browser reports a fine hovering pointer", bool(g["fine"] and g["hover"]),
+                        f"pointer: fine {g['fine']}, coarse {g['coarse']}, none {g['no_pointer']}; hover: hover {g['hover']}; "
+                        f"navigator.maxTouchPoints {g['touches']}"),
+                  Check("the pointer over the plot peeks", hov1["peeking"] and not hov1["pending"],
+                        f"peeking={hov1['peeking']}, pending={hov1['pending']}, previewing {hov1['readout']}"),
+                  Check("the peek names the sample the pointer is nearest", lands(shown, t_hover),
+                        f"previewing {hov1['readout']}, expected {t_hover:.2f}s from a pointer {unit(x_hover) - unit(at_x(t_hover)):.0f} px past "
+                        f"that sample (snap radius {SNAP_RADIUS:.0f} px, one sample is {gap:.2f}s)"),
+                  Check("the peek leaves the film's clock alone", hov1["film_t"] == hov0["film_t"] and hov1["x"] == hov0["x"],
+                        f"film at {hov1['film_t']}, playhead at {hov1['x']} px, as before the pointer arrived"),
+                  Check("the state and the preview clear when the pointer leaves",
+                        not hov2["peeking"] and hov2["readout"] == hov2["film_t"] and hov2["rule"] is None,
+                        f"peeking={hov2['peeking']}, readout back to {hov2['readout']}, preview rule {hov2['rule']}")]
+    rep.edges.append(e8)
+
+    # E9 keys: the chart's own table, every landing read from the page's data block
+    e9 = Edge(("Following", "Seek", "Following"), "Keys: every rule of the table, against the page's own data",
+              "The chart is focused by a press on it, then driven by CDP key events. Every expected landing below is computed from the "
+              "block the page carries, never from a number typed into this tool: the samples a comma and an arrow step between, the "
+              "chapter starts a page key walks, and the duration the digits and End are fractions of.")
+
+    def index_at(t: float) -> int:
+        """The sample at or before t, the first when t is before all of them."""
+        return max([j for j, s in enumerate(times) if s <= t + 1e-9] or [0])
+
+    def stepped(t: float, n: int) -> float:
+        return times[min(len(times) - 1, max(0, index_at(t) + n))]
+
+    def chapter_next(t: float) -> float:
+        return next((ch for ch in chapters if ch > t + 1e-9), duration)
+
+    mouse(at_x(0.0), y_track)
+    mouse(at_x(0.0), y_track, "mouseReleased")
+    b.wait(0.12)
+    start = b.js(GEST)
+    plan = [("End", "End", "End", 0, "the end of the announced timeline", lambda t: duration),
+            ("ArrowLeft", "ArrowLeft", "ArrowLeft", 0, "five samples back", lambda t: stepped(t, -5)),
+            (",", ",", "Comma", 0, "one sample back", lambda t: stepped(t, -1)),
+            ("Shift and ArrowRight", "ArrowRight", "ArrowRight", 8, "one second on", lambda t: min(duration, t + 1.0)),
+            ("Control and ArrowRight", "ArrowRight", "ArrowRight", 2, "the next chapter, as Page Down does", chapter_next),
+            ("PageDown", "PageDown", "PageDown", 0, "the next chapter, the announced maximum when there is none", chapter_next),
+            ("7", "7", "Digit7", 0, "seven tenths of the axis", lambda t: duration * 0.7),
+            ("l", "l", "KeyL", 0, "ten samples on, held at the last", lambda t: stepped(t, 10)),
+            ("Home", "Home", "Home", 0, "the start", lambda t: 0.0)]
+    at = seconds(start["film_t"]) or 0.0
+    e9.checks.append(Check("the press on the chart focused it", start["focused"], f"focused={start['focused']}, film at {start['film_t']}"))
+    for label, name, code, mods, says, want in plan:
+        target = want(at)
+        key(name, code, mods)
+        b.wait(0.08)
+        st = b.js(GEST)
+        got = seconds(st["film_t"])
+        e9.checks.append(Check(f"{label} seeks {says}", lands(got, target),
+                               f"film {secs(at)} to {st['film_t']}, expected {target:.2f}s from the page's data; the chart's readout {st['readout']}"))
+        at = target
+    rep.edges.append(e9)
+
+    # E10 Space: the one key that asks the film to run rather than to move
+    e10 = Edge(("Following", "Toggle", "Following"), "Space: the chart asks the film to play, and to stop again",
+               "Space is the one key in the table that carries no time: the chart emits opt-chart-toggle and the film plays or pauses. "
+               "The clock that answers is the film's, so what Space did is read from the film's playing state and from its readout moving.")
+    sp0 = b.js(GEST)
+    key(" ", "Space")
+    b.wait(0.3)
+    sp1 = b.js(GEST)
+    key(" ", "Space")
+    sp2 = b.js(GEST)
+    b.wait(0.2)
+    sp3 = b.js(GEST)
+    ran = (seconds(sp1["film_t"]) or 0.0) - (seconds(sp0["film_t"]) or 0.0)
+    e10.checks += [Check("Space starts the film", sp1["playing"] and not sp0["playing"], f"playing {sp0['playing']} then {sp1['playing']}"),
+                   Check("the film's clock runs while it plays", ran > 0.1, f"{sp0['film_t']} to {sp1['film_t']}"),
+                   Check("Space again stops it", sp2["playing"] is False, f"playing {sp2['playing']}"),
+                   Check("the clock stops with it", sp3["film_t"] == sp2["film_t"], f"still at {sp3['film_t']}"),
+                   Check("the chart followed the clock both ways", sp3["readout"] == sp3["film_t"], f"chart {sp3['readout']}, film {sp3['film_t']}")]
+    rep.edges.append(e10)
+
+    # E11 focus: the table's keys are the chart's own only while the chart has the focus
+    e11 = Edge(("Following", "Seek", "Following"), "Focus: the keys act on the chart and nowhere else",
+               "The chart answers its key table only while the chart itself has the focus. The focus goes to the data table's "
+               "disclosure, which is inside the chart's own shadow root: a key struck there still reaches the element's own listener, "
+               "so nothing but the focus rule can refuse it, and each check below says the key arrived before it says nothing moved. "
+               "An arrow and Space there move no clock, and Space opens the table the disclosure belongs to instead. The same two keys "
+               "are then struck again with the chart focused, and both act.")
+    e11.note = ("The focus goes to the disclosure rather than to something outside the chart because a key struck outside would not "
+                "reach the element at all, and the rule would go untested. The film's play button, the nearest thing on the page, "
+                "answers an arrow by stepping five of its own frames and Space by playing: that is the film's key table, and it would "
+                "move the very clock these checks watch.")
+    SUMMARY = f"{C}.shadowRoot.querySelector('details.data summary')"
+    OPEN = f"{C}.shadowRoot.querySelector('details.data').open"
+    blur0 = b.js(GEST)
+    b.js(f"{SUMMARY}.focus(); 'ok'")
+    key("ArrowRight", "ArrowRight")
+    b.wait(0.12)
+    blur1, arrow = b.js(GEST), b.js("window.__opgest.key") or {}
+    key(" ", "Space")
+    b.wait(0.2)
+    blur2, space = b.js(GEST), b.js("window.__opgest.key") or {}
+    opened = b.js(OPEN)
+    key(" ", "Space")  # the disclosure closes again, so the page is left as this edge found it
+    b.wait(0.12)
+    # the chart takes the focus back the way E9 gives it: a press on the chart itself
+    x_back = at_x(times[0])
+    t_back = maps_to(x_back)
+    want = stepped(t_back, 5)
+    mouse(x_back, y_track)
+    mouse(x_back, y_track, "mouseReleased")
+    b.wait(0.15)
+    back = b.js(GEST)
+    key("ArrowRight", "ArrowRight")
+    b.wait(0.12)
+    keyed = b.js(GEST)
+    key(" ", "Space")
+    b.wait(0.25)
+    played = b.js(GEST)
+    key(" ", "Space")  # stopped again, so the coarse press below starts from a still clock
+    b.wait(0.15)
+    landed = seconds(keyed["film_t"])
+    e11.checks += [Check("an arrow struck inside the chart, with the focus off it, seeks nothing",
+                         bool(arrow.get("element")) and not blur1["focused"] and blur1["film_t"] == blur0["film_t"] and blur1["readout"] == blur0["readout"],
+                         f"keydown {arrow.get('key')} trusted={arrow.get('trusted')} reached the element={arrow.get('element')}, "
+                         f"the chart focused={blur1['focused']}; film still at {blur1['film_t']}, the chart's readout still {blur1['readout']}"),
+                   Check("Space there plays nothing, and opens the data table instead",
+                         bool(space.get("element")) and blur2["playing"] == blur0["playing"] and blur2["film_t"] == blur0["film_t"] and bool(opened),
+                         f"keydown {space.get('key')!r} reached the element={space.get('element')}; film still at {blur2['film_t']}, "
+                         f"playing={blur2['playing']}, and the disclosure the key belongs to is open={opened}"),
+                   Check("the same arrow seeks once the chart has the focus back",
+                         back["focused"] and lands(landed, want),
+                         f"focused={back['focused']} after the press; film {back['film_t']} to {keyed['film_t']}, expected {want:.2f}s, "
+                         f"five samples on from {t_back:.2f}s in the page's data"),
+                   Check("the same Space plays once the chart has the focus back", played["playing"] and not keyed["playing"],
+                         f"playing {keyed['playing']} then {played['playing']}, film {keyed['film_t']} to {played['film_t']}")]
+    rep.edges.append(e11)
+
+    # E12 the coarse path: no hover to preview with, so a press held long enough aims
+    e12 = Edge(("Following", "Seek", "Following"), "The coarse path: a press held long enough aims, and the release commits",
+               "With touch emulation on, the browser answers (pointer: coarse) and offers five touch points, and the input is a real "
+               "touch: CDP touch events, which the page receives as pointer events of type touch. A finger that does not move sends no "
+               "events at all, so the element arms a wake-up instead and the press becomes a pending seek once it has been held.")
+    x_touch = at_x(times[4]) - 0.4 * SNAP_RADIUS * scale
+    t_touch = maps_to(x_touch)
+    b.call("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
+    try:
+        b.frame()  # an emulation change reaches the page in the next frame
+        media = b.js("[matchMedia('(pointer: coarse)').matches, matchMedia('(pointer: fine)').matches, navigator.maxTouchPoints]")
+        touch0 = b.js(GEST)
+        b.call("Input.dispatchTouchEvent", type="touchStart", touchPoints=[{"x": x_touch, "y": y_track, "id": 1}])
+        touch1 = b.js(GEST)
+        b.wait(LONG_PRESS + 0.2)
+        touch2 = b.js(GEST)
+        b.call("Input.dispatchTouchEvent", type="touchEnd", touchPoints=[])
+        b.wait(0.2)
+        touch3 = b.js(GEST)
+        finger = b.js("window.__opgest.down") or {}
+    finally:
+        b.call("Emulation.setTouchEmulationEnabled", enabled=False)
+        b.frame()
+        restored = b.js("[matchMedia('(pointer: coarse)').matches, navigator.maxTouchPoints]")
+    previewed, committed = seconds(touch2["readout"]), seconds(touch3["film_t"])
+    e12.checks += [Check("touch emulation makes the pointer coarse", media == [True, False, 5],
+                         f"pointer: coarse {media[0]}, fine {media[1]}, navigator.maxTouchPoints {media[2]}"),
+                   Check("the touch arrives as a trusted pointer event of type touch",
+                         bool(finger.get("trusted") and finger.get("kind") == "touch" and finger.get("chart")),
+                         f"pointerdown trusted={finger.get('trusted')} pointerType={finger.get('kind')} on the chart={finger.get('chart')}"),
+                   Check("a press not yet held long enough aims nothing", not touch1["pending"],
+                         f"pending={touch1['pending']} one frame after the finger went down"),
+                   Check("held past the delay it aims a seek", touch2["pending"] and touch2["peeking"],
+                         f"pending={touch2['pending']}, peeking={touch2['peeking']} once held past the {LONG_PRESS:.1f}s delay, on the page's own clock"),
+                   Check("the held press previews the sample under the finger", lands(previewed, t_touch),
+                         f"previewing {touch2['readout']}, expected {t_touch:.2f}s from a finger {unit(at_x(t_touch)) - unit(x_touch):.0f} px short of that sample"),
+                   Check("the clock waits for the release", touch2["film_t"] == touch0["film_t"], f"film still at {touch2['film_t']}"),
+                   Check("the release commits the seek", lands(committed, t_touch) and not touch3["pending"],
+                         f"film at {touch3['film_t']}, expected {t_touch:.2f}s, pending={touch3['pending']}"),
+                   Check("touch emulation is off again", restored == [False, 0],
+                         f"pointer: coarse {restored[0]}, navigator.maxTouchPoints {restored[1]}")]
+    rep.edges.append(e12)
+
+    # E13 two fingers: a second point down before the first came up, which is the
+    # one gesture a mouse cannot make. The rule the checks below hold the element
+    # to is its own, read off crates/op-site/src/components/chart.rs: on_down ends
+    # any live press before it takes the new one, and on_move and on_up ignore a
+    # pointer whose id is not the live press's (should_ignore). So the gesture
+    # belongs to whichever finger went down last, and the other one's release
+    # means nothing rather than committing at a position its own press never saw.
+    e13 = Edge(("Following", "Seek", "Following"), "Two fingers: the press belongs to the one that went down last",
+               "A second finger arriving on a chart already being pressed is the gesture a mouse cannot make, and the element's rule "
+               "for it is that the later press takes the gesture over: the press it replaces is ended rather than left lying, its "
+               "capture released and its aim dropped, and a release carried by any pointer but the live press's is ignored. So the "
+               "seek that commits is the last press's own, and never one finger's origin read at the other finger's position. The "
+               "same two places are then pressed in the opposite order, and the commit follows the order the fingers arrived in "
+               "rather than where on the track they landed.")
+    e13.note = ("Both points are held through the protocol's own bookkeeping: Input.dispatchTouchEvent carries the set of active "
+                "points and Chrome dispatches the one that changed, so the touchStart that adds the second finger names the first "
+                "one again and leaves it pressed, and each touchEnd names the point that lifts. The page's own touch log is what "
+                "says the two were down together, and the first check of each round reads it: a dispatch that had quietly replaced "
+                "the point set rather than added to it would fail there, rather than pass everything after it against one finger.")
+    # the page's own witness for this edge: every touch event with the points it
+    # left active and the one it changed, and every pointer event with the id it
+    # carried, its isTrusted and whether the chart was on its composed path.
+    # __opgest above keeps only the last event of each kind, and two pointers at
+    # once is the whole question here. The checks below are mostly negative - that
+    # a finger's lift moved nothing - and a negative check with no witness passes
+    # just as well when the input never reached the page at all, so each of them
+    # reads the event out of this log before it says what did not happen.
+    b.js("(() => { const log = window.__optouch = [];\n"
+         "      const svg = " + SHOWN % f"{C}.shadowRoot" + ";\n"
+         """      for (const t of ['touchstart', 'touchend', 'touchcancel'])
+        document.addEventListener(t, e => log.push({e: e.type, active: [...e.touches].map(p => p.identifier),
+          changed: [...e.changedTouches].map(p => p.identifier)}), true);
+      for (const t of ['pointerdown', 'pointerup', 'pointercancel'])
+        document.addEventListener(t, e => log.push({e: e.type, id: e.pointerId, kind: e.pointerType,
+          trusted: e.isTrusted, chart: e.composedPath().indexOf(svg) >= 0}), true);
+      return true; })()""")
+
+    def touch(kind: str, points: list):
+        """One touch event carrying these (client x, touch id) points on the track:
+        for a start, every point down once it has arrived; for an end, the points that lift."""
+        b.call("Input.dispatchTouchEvent", type=kind, touchPoints=[{"x": cx, "y": y_track, "id": i} for cx, i in points])
+
+    def logged() -> list:
+        """Everything the page has seen since the last read, taken off the log."""
+        return b.js("window.__optouch.splice(0)")
+
+    def captures(ids: list) -> list:
+        """Which of these pointer ids the svg still holds a capture for."""
+        return b.js(f"""(() => {{ const svg = {SHOWN % f'{C}.shadowRoot'};
+          return {ids}.map(id => svg.hasPointerCapture(id)); }})()""")
+
+    def two_fingers(x_first: float, x_second: float) -> dict:
+        """One finger down and held past the long-press delay, a second down beside
+        it while the first is still pressed and held in its turn, then the first
+        lifted and the second lifted. What a step did is read at the frame its event
+        was delivered in, which is the smallest unit of page time there is."""
+        m = {}
+        logged()
+        m["before"] = b.js(GEST)
+        touch("touchStart", [(x_first, 1)])
+        b.wait(LONG_PRESS + 0.2)
+        m["held"] = b.js(GEST)
+        touch("touchStart", [(x_first, 1), (x_second, 2)])
+        m["taken"] = b.js(GEST)
+        m["log"] = logged()
+        m["ids"] = [e["id"] for e in m["log"] if e["e"] == "pointerdown"]
+        m["caps"] = captures(m["ids"])
+        b.wait(LONG_PRESS + 0.2)
+        m["aimed"] = b.js(GEST)
+        touch("touchEnd", [(x_first, 1)])
+        m["lifted"] = b.js(GEST)
+        m["lift_log"] = logged()
+        touch("touchEnd", [(x_second, 2)])
+        b.wait(0.2)
+        m["done"] = b.js(GEST)
+        m["left"] = captures(m["ids"])
+        return m
+
+    # far enough apart that neither finger's sample is within the other's snap
+    # radius, and each a little off its own sample so that the time a check
+    # expects is the sample the element snapped to and not the position itself
+    x_early, x_late = at_x(times[1]) + 0.35 * SNAP_RADIUS * scale, at_x(times[6]) - 0.35 * SNAP_RADIUS * scale
+    b.call("Emulation.setTouchEmulationEnabled", enabled=True, maxTouchPoints=5)
+    try:
+        b.frame()  # an emulation change reaches the page in the next frame
+        media = b.js("[matchMedia('(pointer: coarse)').matches, matchMedia('(pointer: fine)').matches, navigator.maxTouchPoints]")
+        e13.checks.append(Check("touch emulation offers the five points this edge needs two of", media == [True, False, 5],
+                                f"pointer: coarse {media[0]}, fine {media[1]}, navigator.maxTouchPoints {media[2]}"))
+        for x_first, x_second in ((x_early, x_late), (x_late, x_early)):
+            t_first, t_second = maps_to(x_first), maps_to(x_second)
+            order = f"{t_first:.2f}s first, {t_second:.2f}s second"
+            m = two_fingers(x_first, x_second)
+            clock = m["before"]["film_t"]
+            held, taken, aimed, lifted, done = (m[k] for k in ("held", "taken", "aimed", "lifted", "done"))
+            downs = [e for e in m["log"] if e["e"] == "pointerdown"]
+            adds = next((e for e in m["log"] if e["e"] == "touchstart" and e["changed"] == [2]), {})
+            # the two checks that say a finger changed nothing read the event that
+            # carried it out of the log first: without that, a dispatch the page
+            # never saw would pass them both
+            arrived = downs[-1] if downs else {}
+            lift = next((e for e in m["lift_log"] if e["e"] == "pointerup" and e["id"] == (m["ids"] or [None])[0]), {})
+            committed = seconds(done["film_t"])
+            e13.checks += [
+                Check(f"{order}: both fingers are down at once",
+                      sorted(adds.get("active") or []) == [1, 2] and len(downs) == 2 and downs[0]["id"] != downs[1]["id"]
+                      and all(e["kind"] == "touch" for e in downs),
+                      f"the touchstart that added the second point left {adds.get('active')} active and changed {adds.get('changed')}; "
+                      f"two pointerdowns of type {sorted({e['kind'] for e in downs})}, ids {[e['id'] for e in downs]}"),
+                Check(f"{order}: the first finger, held past the delay, aims at its own sample",
+                      held["pending"] and held["peeking"] and lands(seconds(held["readout"]), t_first)
+                      and held["film_t"] == clock,
+                      f"pending={held['pending']}, peeking={held['peeking']}, previewing {held['readout']} for a finger "
+                      f"{unit(x_first) - unit(at_x(t_first)):.0f} px from the {t_first:.2f}s sample; film still at {held['film_t']}"),
+                Check(f"{order}: the second finger going down reaches the chart, ends that aim and seeks nothing",
+                      bool(arrived.get("trusted") and arrived.get("chart")) and arrived.get("kind") == "touch"
+                      and not taken["pending"] and not taken["peeking"] and taken["rule"] is None and taken["film_t"] == clock,
+                      f"pointerdown id {arrived.get('id')} trusted={arrived.get('trusted')} of type {arrived.get('kind')} "
+                      f"on the chart={arrived.get('chart')}; one frame later: pending={taken['pending']}, peeking={taken['peeking']}, "
+                      f"preview rule {taken['rule']}, the readout back to the clock's own {taken['readout']}, film still at {taken['film_t']}"),
+                Check(f"{order}: the capture goes with the press", m["caps"] == [False, True],
+                      f"the svg holds a pointer capture for {m['ids']}: {m['caps']}, so the first finger's was released as its press ended"),
+                Check(f"{order}: the second finger, held in its turn, aims at its own sample",
+                      aimed["pending"] and aimed["peeking"] and lands(seconds(aimed["readout"]), t_second)
+                      and aimed["film_t"] == clock,
+                      f"pending={aimed['pending']}, previewing {aimed['readout']}, expected {t_second:.2f}s from a finger "
+                      f"{unit(x_second) - unit(at_x(t_second)):.0f} px from that sample; film still at {aimed['film_t']}"),
+                Check(f"{order}: the first finger lifting reaches the chart, commits nothing and disturbs nothing",
+                      bool(lift.get("trusted") and lift.get("chart")) and lift.get("kind") == "touch"
+                      and lifted["film_t"] == clock and lifted["x"] == m["before"]["x"] and lifted["pending"]
+                      and lands(seconds(lifted["readout"]), t_second),
+                      f"pointerup id {lift.get('id')} trusted={lift.get('trusted')} of type {lift.get('kind')} "
+                      f"on the chart={lift.get('chart')}; film still at {lifted['film_t']} and the playhead still at "
+                      f"{lifted['x']} px; the second finger goes on aiming at {lifted['readout']}, pending={lifted['pending']}"),
+                Check(f"{order}: the release that commits is the last press's own",
+                      lands(committed, t_second),
+                      f"film {clock} to {done['film_t']}, expected the {t_second:.2f}s under the second finger and not the "
+                      f"{t_first:.2f}s under the first, {abs(t_second - t_first):.2f}s away (one sample is {gap:.2f}s)"),
+                Check(f"{order}: nothing is left set behind the gesture",
+                      not done["pending"] and not done["peeking"] and done["rule"] is None and m["left"] == [False, False]
+                      and done["readout"] == done["film_t"],
+                      f"pending={done['pending']}, peeking={done['peeking']}, preview rule {done['rule']}, captures {m['left']} for "
+                      f"{m['ids']}; the chart's readout {done['readout']} on the film's {done['film_t']}")]
+    finally:
+        b.call("Emulation.setTouchEmulationEnabled", enabled=False)
+        b.frame()
+        restored = b.js("[matchMedia('(pointer: coarse)').matches, navigator.maxTouchPoints]")
+    e13.checks.append(Check("touch emulation is off again", restored == [False, 0],
+                            f"pointer: coarse {restored[0]}, navigator.maxTouchPoints {restored[1]}"))
+    rep.edges.append(e13)
+
+    # E14 the snap-back, the other way a drag is cancelled and the one nothing
+    # here drove: the cancelling state is published on the docs page and appeared
+    # in no check, so a release inside the band could have committed a seek and
+    # this report would have said nothing. Decision 19 marks the snap-back as an
+    # experiment, which is exactly the kind of thing a report is for. The band is
+    # the element's own SNAPBACK_PX, wider than the slop a tap is allowed, so no
+    # position sits on both thresholds at once; it is measured in the chart's
+    # units, hence the scale on the way back.
+    e14 = Edge(("Following", "Cancel", "Following"), "The snap-back: a drag brought home cancels on release",
+               "A press aims a seek, then comes back within a few pixels of where it went down. The chart says so at once - the "
+               "cancelling state, with the preview still showing - because nothing has been decided yet: aiming out again resumes "
+               "the pending seek, and that release commits where the pointer left it, so one drag across its own start is one "
+               "gesture and not two. The second round lets go inside the band instead, which is the cancel, and the film's clock "
+               "ends exactly where it stood before the press.")
+    x_origin, x_out = at_x(times[2]), at_x(times[6])
+    x_in = x_origin + 0.5 * SNAPBACK_PX * scale  # half the band from the origin, and under the slop as well
+    t_out = maps_to(x_out)
+    snap0 = b.js(GEST)
+    mouse(x_origin, y_plot)
+    drag_to(x_out, y_plot)
+    b.wait(0.12)
+    snap_out = b.js(GEST)
+    drag_to(x_in, y_plot)
+    b.wait(0.12)
+    snap_home = b.js(GEST)
+    drag_to(x_out, y_plot)
+    b.wait(0.12)
+    snap_again = b.js(GEST)
+    mouse(x_out, y_plot, "mouseReleased")
+    b.wait(0.15)
+    # that release committed, so it is also where the clock stands before the
+    # second round presses
+    stood = b.js(GEST)
+    # the second round: the same drag, let go inside the band
+    mouse(x_origin, y_plot)
+    drag_to(x_out, y_plot)
+    b.wait(0.12)
+    drop_out = b.js(GEST)
+    drag_to(x_in, y_plot)
+    b.wait(0.12)
+    drop_home = b.js(GEST)
+    mouse(x_in, y_plot, "mouseReleased")
+    b.wait(0.15)
+    dropped = b.js(GEST)
+    let_go = (b.js("window.__opgest") or {}).get("up") or {}
+    e14.checks += [Check("the drag out aims a pending seek at the sample it reached",
+                         snap_out["pending"] and not snap_out["cancelling"] and snap_out["peeking"]
+                         and lands(seconds(snap_out["readout"]), t_out),
+                         f"pending={snap_out['pending']}, cancelling={snap_out['cancelling']}, previewing "
+                         f"{snap_out['readout']}, expected {t_out:.2f}s {unit(x_out) - unit(x_origin):.0f} px from the press"),
+                   Check("brought back inside the band it says it will cancel, and goes on previewing",
+                         snap_home["cancelling"] and snap_home["pending"] and snap_home["peeking"]
+                         and snap_home["rule"] is not None and snap_home["film_t"] == snap0["film_t"],
+                         f"cancelling={snap_home['cancelling']}, pending={snap_home['pending']}, the preview rule still drawn at "
+                         f"{snap_home['rule']} and naming {snap_home['readout']}, from {unit(x_in) - unit(x_origin):.1f} px off the "
+                         f"origin with a band of {SNAPBACK_PX:.0f} px; film still at {snap_home['film_t']}"),
+                   Check("aiming out again resumes the pending seek and drops the warning",
+                         snap_again["pending"] and not snap_again["cancelling"] and snap_again["peeking"]
+                         and lands(seconds(snap_again["readout"]), t_out),
+                         f"cancelling={snap_again['cancelling']}, pending={snap_again['pending']}, previewing "
+                         f"{snap_again['readout']} again"),
+                   Check("the release out there commits, so the return was not itself the cancel",
+                         lands(seconds(stood["film_t"]), t_out)
+                         and not stood["pending"] and not stood["cancelling"],
+                         f"film {snap0['film_t']} to {stood['film_t']}, expected {t_out:.2f}s (one sample is {gap:.2f}s)"),
+                   Check("a second drag brought home the same way warns the same way",
+                         drop_out["pending"] and drop_home["cancelling"] and drop_home["peeking"],
+                         f"out: pending={drop_out['pending']}; home: cancelling={drop_home['cancelling']}, "
+                         f"peeking={drop_home['peeking']}, previewing {drop_home['readout']}"),
+                   Check("the release inside the band arrives on the chart and commits nothing",
+                         bool(let_go.get("trusted") and let_go.get("chart"))
+                         and dropped["film_t"] == stood["film_t"] and dropped["x"] == stood["x"],
+                         f"pointerup trusted={let_go.get('trusted')} on the chart={let_go.get('chart')}; film at "
+                         f"{dropped['film_t']}, as before the press, and the playhead still at {dropped['x']} px, "
+                         f"after aiming at {drop_out['readout']} on the way out"),
+                   Check("both states and the preview clear with that release",
+                         not dropped["pending"] and not dropped["cancelling"] and not dropped["peeking"]
+                         and dropped["rule"] is None and dropped["readout"] == dropped["film_t"],
+                         f"pending={dropped['pending']}, cancelling={dropped['cancelling']}, peeking={dropped['peeking']}, "
+                         f"preview rule {dropped['rule']}, the chart's readout {dropped['readout']} back on the film's "
+                         f"{dropped['film_t']}")]
+    rep.edges.append(e14)
+    b.hover(2, 2)
     return rep
 
 

@@ -257,7 +257,7 @@ Each decision states what, why, which reports and sources support it, and whethe
 
 18. Announcements. No live region for peek or pending. `aria-valuetext` reads "1 minute 32 seconds" with the chapter title appended; the duration ("of 4 minutes 3 seconds") and the frame index are written into the valuetext at initialisation and again on blur, so they are spoken when the thumb next gains focus, and omitted from every change while focused, which honours both sentences on the APG page (ledger row 25). The status region receives one short message on commit ("Seeked to 1 minute 32 seconds, chapter Boot"), on play and pause, and when a chapter boundary is crossed while playing, rate-limited to chapter boundaries and never per sample (R2 recommendation 11; PhET's context response), as the film's live region already does for cancel and speed (`film.rs:576-602`, `film.rs:1077`). Clock-driven `aria-valuetext` updates are debounced 300 ms and applied only while the thumb has focus; key and pointer seeks update it immediately (PhET, researcher-sighted); no `aria-atomic` clock, no assertive regions. Reasoning: the slider role already speaks its value, so a live wrapper double-announces (accessibility.build via R2); O'Hara's "fewest live regions"; the film's current valuetext repeats the total on every step, which R2 and R3 both flag. Sources: R2 finding 19 and recommendation 11, R3 priority 2. Established practice; the chapter announcement reverses my earlier draft in R2's favour.
 
-19. Pointer. Hover peek is enabled on `pointer: fine` only; a press without movement, on the track or anywhere on the plot, commits a seek to that x on release (SC 2.5.7's tap on the track, verified); a press that moves becomes a pending seek with a preview, committed on release and cancelled by Escape; returning the pointer within a few pixels of its origin before release shows a "release to cancel" state and cancels, which R3's expanded text calls "an extrapolation from a mobile-only feature to pointer drags, so treat it as an experiment", so it ships behind the interaction report's review; hover emits a peek snapped to the nearest sample along x within 40 CSS px, y ignored (Plot, verified); on coarse pointers there is no hover, a long press starts the pending seek with the preview above the finger (the film's `.peek` already sits above the chart, `film.rs:745`), and the iOS slide-down speed gesture is not adopted (R3). The film gains previous and next chapter buttons in its control bar as a further single-pointer alternative (R2 recommendation 6), and its native `dom.slider` control remains as the user-agent-exception fallback for touch assistive technology (agreement 15). Sources: R3 priorities 1 and 2 and dissent, R2 finding 4 and recommendation 6, SC 2.5.7. Established practice, with the snap-back marked experimental.
+19. Pointer. Hover peek is enabled on `(hover: hover) and (pointer: fine)` (amended 2026-09-04: the feature being gated is hovering, and `pointer` says only how precise the primary device is, so a pen-driven screen answers fine and cannot hover; the pair denies a mouse docked to a tablet, which `any-hover` and `any-pointer` would serve at the cost of enabling the peek on a touchscreen laptop, so the primary-device pair is the choice); a press without movement, on the track or anywhere on the plot, commits a seek to that x on release (SC 2.5.7's tap on the track, verified); a press that moves becomes a pending seek with a preview, committed on release and cancelled by Escape; returning the pointer within a few pixels of its origin before release shows a "release to cancel" state and cancels, which R3's expanded text calls "an extrapolation from a mobile-only feature to pointer drags, so treat it as an experiment", so it ships behind the interaction report's review; hover emits a peek snapped to the nearest sample along x within 40 CSS px, y ignored (Plot, verified); on coarse pointers there is no hover, a long press starts the pending seek with the preview above the finger (the film's `.peek` already sits above the chart, `film.rs:745`), and the iOS slide-down speed gesture is not adopted (R3). The film gains previous and next chapter buttons in its control bar as a further single-pointer alternative (R2 recommendation 6), and its native `dom.slider` control remains as the user-agent-exception fallback for touch assistive technology (agreement 15). Sources: R3 priorities 1 and 2 and dissent, R2 finding 4 and recommendation 6, SC 2.5.7. Established practice, with the snap-back marked experimental.
 
 20. Target size and focus ring. The thumb, every mark and every chapter tick carry an invisible 24 by 24 CSS px hit rect, or, where marks sit closer than 24 px, the spacing exception is proven by the test rather than assumed; the track counts as one target under 2.5.8's spatial-selection rule (verified). The focus ring is an in-SVG `<rect>` around the thumb with `stroke: currentColor`, 2 px wide, offset 2 px outward (a 2 px inset ring fails 2.4.13, R2 finding 6), `fill-opacity` 0, shown on `:focus-visible` only, at 3:1 against the surface and a 3:1 change against the unfocused state, plus a stronger stroke on the thumb itself; no CSS outline on SVG nodes because UA outlines on SVG scale and clip in user space (R2 finding 20, R1 finding 24, researcher-sighted; APG's ring, verified); `focus({ preventScroll: true })` when moving focus programmatically; the interaction report checks that sticky page chrome never covers the thumb at either end of the track (2.4.11). Marks and chapter ticks get hover and focus styling through their parts, with focus mirroring hover (Chartability). Sources: R2 recommendations 7 and 8 and findings 5, 6 and 20, R1 finding 24. Established practice.
 
@@ -599,3 +599,113 @@ counted separately as intake, not rendering. The element's own render path
 retains about 12.5 KB. The whole binary grew from 395.6 KB to 454.3 KB
 across the phase, the element, the reader, the shim's property support and
 the docs page's markup included.
+
+## Phase 3 close-out (2026-09-04)
+
+Phase 3 gave the chart its intents. Every gesture and key asks the film for
+a time, in seconds; the chart still moves only when a tick comes back, so
+one clock stays in charge. `op-chart` gained `Layout::nearest`, the sample
+under a pointer within a radius, and a final `targets` group of 24 by 24 px
+rects that are hit without being painted at all, one per mark and one per
+chapter after the first. A transparent fill would still be a painted
+rectangle for forced colours and print to undo, so the rects take
+`fill="none"` with `pointer-events="all"`. They carry the cue in
+`data-cue` rather than in a class, because the first attempt reused the
+painting classes and every hit target drew itself, including an opaque box
+over the track on any film with two chapters; a test now enumerates the
+stylesheets' selectors and fails if a target can match one. Their rows are
+clamped inside the drawing box, since a rect that hangs past it is clipped,
+and clipped geometry is not hit-tested, which had quietly cut the chapter
+targets to 24 by 20. Nothing reads the group yet: decision 20's focusable
+marks and chapter ticks are phase 4, and until then the targets only take
+the pointer away from what is behind them.
+
+The element gained the pure decisions behind the gestures, `snap`,
+`key_intent` and `pointer_phase`, each tested on both sides of every
+threshold, and the wiring that turns them into `opt-chart-seek`,
+`opt-chart-peek` and `opt-chart-toggle`, with the `peeking`, `pending` and
+`cancelling` states. Hover is gated on `(hover: hover) and (pointer: fine)`
+per the amendment to decision 19. The coarse path is decided per gesture
+from the pointer's own type rather than from the device, so a finger on a
+touchscreen laptop gets its long press and a mouse on a tablet does not.
+`End` and the digits use the announced duration rather than the axis end,
+which the schema lets differ. The film applies the three intents from any
+chart that names it, reading the source from the event's composed path
+rather than from the retargeted target, which had misrouted a chart behind
+a third element's shadow root; its control bar gained previous and next
+chapter buttons that share the keys' own stepping.
+
+Marks and the band are drawn at last. They were parsed and validated in
+phase 2 and reached nothing, so the docs promised cues that did not exist.
+A mark is a rule with a bottom-edge label, the band a rect behind the
+series with its own label and a one pixel surface stroke where it meets a
+line, which is now a real rule in both stylesheets rather than the inert
+attribute the first attempt shipped with a test asserting it. Both new
+label classes gained their own rules and the halo every label over the plot
+carries, having painted in the user agent's black with none; and the
+track's own wash is `peek-band` now, because two rects sharing the class
+`band` meant a query for one could take the other. The top row,
+the chapter and band labels, goes through one placement pass with the end
+labels' column reserved, and a label that cannot be placed is dropped: the
+film's own flight fixture is the first casualty, showing its last
+chapter's rule without the word, which is the intended trade against text
+printed over text.
+
+The interaction report drives all of it with real input on the synthetic
+clock: the chart kind went from 26 checks to 99. A tap seeks where it
+lands, a drag previews without moving the clock and commits on release,
+Escape mid-drag leaves the clock where it was, every key moves the clock by
+the amount the page's own data block predicts, Space plays and pauses, keys
+struck while the focus is elsewhere reach the element and are refused, and
+a coarse long press under touch emulation aims and commits. Hover is driven
+for real: headless reports no pointer by default, but the Blink settings
+`primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2`
+give it a fine hovering one, and `Emulation.setTouchEmulationEnabled` still
+overrides that to coarse, so both branches run in one pass. The hover edge
+opens with a hard precondition, so it fails rather than degrading if a
+browser ever reports no pointer again.
+
+A second pointer going down takes the press over, the press it replaces is
+ended rather than left lying, and a release carried by any pointer but the
+live one is ignored, so a two-finger scrub commits under the finger that
+owns the gesture and nothing is left set behind the other. An edge drives
+two touch points in both orders and measures it, including the pointer
+capture moving with the press.
+
+Two defects the harness found in the element, neither visible to a unit
+test. The long-press wake-up was armed for exactly its own threshold, and
+the phase compares against that same number, so on a synthetic clock the
+coarse gesture armed or did not depending on rounding, failing about one
+run in three; it now wakes a millisecond later. And the snap-back cancel,
+added because decision 19 asks for a held state rather than an event, made
+a long press cancel itself: a press that aims without moving sits in the
+cancel band from the first instant. Coming back now means having left, and
+`Down::travelled` records it.
+
+Two defects in shipped work came out of drawing the palette specimen, which
+is what looking at a thing in use is for. The peek rule was painted with
+the muted text colour while `--op-peek` sat declared, registered, blended
+by the theme transition and held to a contrast floor by the palette test,
+drawing nothing; the two carry the same value in both themes, so it looked
+right. And the forced-colours and print blocks were interpolated where
+eight later rules at equal specificity overrode them, so on a forced
+palette the playhead, its dot, its readout, the track, the played bar, the
+chapter tick and the peek rule all kept their theme paints and the band
+stayed a wash instead of becoming an outline. Phase 1's own checks never
+saw it: they sampled the series strokes, the markers, the grid and the end
+labels, every one of which is painted before the shared blocks and so was
+never in doubt. The blocks now sit after the last rule that paints a token,
+a test asserts that nothing written after them repaints what they map, and
+the report reads the computed paints of the playhead, the track and the
+peek rule under a forced palette.
+
+What phase 3 does not do. The chart is focusable and operable, and it
+announces no value: the aria value attributes belong to the range roles,
+not to the `graphics-document` the svg carries, so writing them there
+announced nothing. It also has no summary and no instructions
+line, so a reader who focuses it is told neither what it holds nor that it
+answers keys. Decisions 15 and 18 build the thumb group that can hold a
+value and the described summary that says what the chart is, and that is
+phase 4's work, along with decision 17's `step` attribute, `delegatesFocus`
+and the roving tabindex between the thumb, the marks and the chapter ticks. The snap-back ships as the experiment the
+research note called it, marked as such on the docs page.

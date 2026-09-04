@@ -1,9 +1,11 @@
 //! Classed SVG for a [`Spec`], laid out by [`Layout`]. Elements sit in
-//! z-ordered groups: axes, marks, series, track, cursor, playhead. The
-//! playhead group is the only thing that moves per tick: one `transform`
-//! carries its line, dot and readout.
+//! z-ordered groups: axes, bands, marks, series, track, cursor, playhead,
+//! targets. The playhead group is the only thing that moves per tick: one
+//! `transform` carries its line, dot and readout. The targets are last,
+//! invisible and hittable, so a pointer meets a cue's target before
+//! anything drawn under it.
 
-use crate::{Layout, Spec};
+use crate::{Layout, Mark, Spec};
 
 /// The emitted markup and the geometry it was drawn with.
 #[derive(Clone, Debug, PartialEq)]
@@ -57,8 +59,67 @@ fn tick_text(v: f64, step: f64) -> String {
 
 /// Minimum vertical distance between end labels (12 px text plus a gap).
 const LABEL_GAP: f64 = 14.0;
+/// The side of a pointer target in CSS px: the 24 by 24 minimum SC 2.5.8
+/// asks of every target a pointer must hit.
+const TARGET: f64 = 24.0;
+/// Room a label takes per character. A static emitter has no font
+/// metrics, so the width is estimated: 6.5 px is generous for the 12 px
+/// face the stylesheet sets, which is the safe direction when the estimate
+/// is what decides whether two labels collide.
+const LABEL_ADVANCE: f64 = 6.5;
+/// Clear space between two labels that share a row: the mark labels along
+/// the bottom edge, and the cue labels along the top.
+const ROW_LABEL_GAP: f64 = 8.0;
+/// How far back from a series' last point its end label is anchored. The
+/// swatch runs from 16 to 4 px behind that point, and the label ends 4 px
+/// before the swatch.
+const END_LABEL_X: f64 = 20.0;
+/// How far right of its own rule a chapter's label starts.
+const CHAPTER_LABEL_X: f64 = 4.0;
+/// The room a label takes, at [`LABEL_ADVANCE`] to the character.
+fn label_width(text: &str) -> f64 {
+    text.chars().count() as f64 * LABEL_ADVANCE
+}
+
 /// Markers per series at most, spread over the samples.
 const MAX_MARKERS: usize = 8;
+
+/// Where each mark's label sits along the bottom edge, and `None` for a
+/// mark that keeps its rule and loses its label. Every label wants the
+/// middle of its own rule; the spreader shifts them apart by the widest
+/// label's slot and pulls the run inside the plot, as it spreads the end
+/// labels down the right-hand side. A label the spreader had to push clear
+/// of its own rule points at nothing, so it is dropped rather than drawn
+/// where it misleads: decision 24's greedy removal. Which of two colliding
+/// marks keeps its label is the spreader's answer, not a rule of this
+/// function's own, and it is not always the earlier mark. The first sweep
+/// pushes later labels away from earlier ones, so where the run fits, the
+/// earlier mark keeps its place and the later one is moved and dropped;
+/// but a run that overflows the right-hand end is pinned there by the
+/// second sweep and pulled left, and then it is an earlier label that is
+/// carried off its own mark and dropped. Two marks at one instant are
+/// moved alike, and the spreader's stable order leaves the label with
+/// whichever the block lists first. One pass, with no reshuffle into the
+/// room a dropped label leaves.
+fn mark_labels(marks: &[Mark], l: &Layout) -> Vec<Option<f64>> {
+    let widths: Vec<f64> = marks.iter().map(|m| label_width(&m.label)).collect();
+    let widest = widths.iter().copied().fold(0.0, f64::max);
+    let wanted: Vec<f64> = marks.iter().map(|m| l.x_of(m.t)).collect();
+    let placed = crate::labels::spread(
+        &wanted,
+        widest + ROW_LABEL_GAP,
+        l.left + widest / 2.0,
+        l.width - l.right - widest / 2.0,
+    );
+    marks
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let moved = (placed[i] - wanted[i]).abs();
+            (!m.label.is_empty() && moved <= widths[i] / 2.0).then_some(placed[i])
+        })
+        .collect()
+}
 
 /// Keep min and max per pixel column, and only when a series carries more
 /// present points than the plot is wide: a chart of tens or hundreds of
@@ -173,6 +234,57 @@ fn path_d(points: &[Option<(f64, f64)>], l: &Layout) -> String {
     d
 }
 
+/// The left edge of the column the direct end labels take in the top right
+/// corner, and the plot's own right edge where no series carries one. The
+/// labels along the top row stop clear of it: an end label is what tells
+/// one series from another where colour cannot, so it is never moved and
+/// never covered (decision 24).
+fn end_label_edge(spec: &Spec, drawn: &[Drawn], l: &Layout) -> f64 {
+    spec.series
+        .iter()
+        .zip(drawn)
+        .filter(|(s, dr)| !s.label.is_empty() && !dr.present.is_empty())
+        .map(|(s, dr)| {
+            let (t, _) = dr.present[dr.present.len() - 1];
+            l.x_of(t) - END_LABEL_X - label_width(&s.label)
+        })
+        .fold(l.width - l.right, f64::min)
+}
+
+/// Which of a row's labels are drawn. `boxes` is the horizontal extent each
+/// label wants, `None` for a cue with nothing to say, and `edge` is the
+/// first x the row may not reach into.
+///
+/// One greedy pass along the row with [`ROW_LABEL_GAP`] of clear space
+/// between neighbours, which is decision 24's greedy placement and removal:
+/// a label that cannot take the place it wants is dropped rather than drawn
+/// over its neighbour, because a label shifted off its own cue points at
+/// nothing. Two contests are settled here. Against another cue label the
+/// earlier one wins, always: the pass runs left to right, nothing is ever
+/// moved, and so the label nearer the playhead at the axis origin is the
+/// one that keeps its place. Against the end labels the end labels win,
+/// always: `edge` is reserved before the pass begins, so a cue label near
+/// the end of the timeline is the one that goes.
+fn place_row(boxes: &[Option<(f64, f64)>], edge: f64) -> Vec<bool> {
+    // a label with no box sorts last and is never placed, so it can never
+    // stand in the way of one with something to draw
+    let lefts: Vec<f64> = boxes
+        .iter()
+        .map(|b| b.map_or(f64::INFINITY, |(a, _)| a))
+        .collect();
+    let mut drawn = vec![false; boxes.len()];
+    let mut taken = f64::NEG_INFINITY;
+    for i in crate::labels::order_by(&lefts) {
+        let Some((a, b)) = boxes[i] else { continue };
+        if a < taken + ROW_LABEL_GAP || b + ROW_LABEL_GAP > edge {
+            continue;
+        }
+        drawn[i] = true;
+        taken = taken.max(b);
+    }
+    drawn
+}
+
 /// Draw `spec` in the box and scales `l` describes. The caller chooses the
 /// layout (the film uses [`Layout::film`]) so the element and the page
 /// build can size a chart without the renderer knowing about either.
@@ -247,35 +359,109 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
     ));
     out.push_str("</g>");
 
-    // the chapter rules and their labels sit in a `chapters` group of their
-    // own, as the ticks on the track below do, so one rule in the
-    // consumer's stylesheet hides every chapter cue in a narrow box
-    out.push_str("<g class=\"marks\"><g class=\"chapters\">");
-    for ch in spec.chapters.iter().skip(1) {
+    // what each series actually draws: the samples it was given, thinned
+    // per pixel column when it carries more of them than the plot is wide,
+    // as a path and as the present points the cues sit on. Drawn far below
+    // this, but measured here: where a series ends is where its end label
+    // sits, and the labels along the top row are placed clear of those.
+    let drawn: Vec<Drawn> = spec
+        .series
+        .iter()
+        .map(|s| drawn_of(&decimate(&s.points, &l), &l))
+        .collect();
+    // the top row: the band's label over the middle of its span, then one
+    // per chapter just right of its own rule, all placed in one pass so no
+    // two of them overlap and none reaches into the end labels' column
+    let row_y = l.top + 10.0;
+    let mut row_boxes: Vec<Option<(f64, f64)>> = vec![spec.band.as_ref().and_then(|band| {
+        let half = label_width(&band.label) / 2.0;
+        let mid = (l.x_of(band.t0) + l.x_of(band.t1)) / 2.0;
+        (!band.label.is_empty()).then_some((mid - half, mid + half))
+    })];
+    row_boxes.extend(spec.chapters.iter().skip(1).map(|ch| {
+        let left = l.x_of(ch.t) + CHAPTER_LABEL_X;
+        (!ch.label.is_empty()).then_some((left, left + label_width(&ch.label)))
+    }));
+    let top_row = place_row(&row_boxes, end_label_edge(spec, &drawn, &l));
+
+    // the band is a wash under everything else the chart draws, so it goes
+    // in a group of its own before the marks and the series. It carries no
+    // paint: the class maps to the band token, and `stroke-width` is the
+    // width of an edge the stylesheet paints in the surface colour, which
+    // is decision 24's gap where the band's own edge meets a series line or
+    // the playhead. It is a narrower reading than the decision's wording: a
+    // series line that crosses over the band still meets it with no gap,
+    // since only the boundary is drawn. A span given backwards draws the
+    // same span: a negative width is an error in SVG, so the edges are
+    // ordered before they are written.
+    if let Some(band) = &spec.band {
+        let (a, b) = (l.x_of(band.t0), l.x_of(band.t1));
+        let (a, b) = if a <= b { (a, b) } else { (b, a) };
+        out.push_str("<g class=\"bands\">");
+        out.push_str(&format!(
+            "<rect class=\"band\" x=\"{a:.1}\" y=\"{}\" width=\"{:.1}\" height=\"{:.1}\" stroke-width=\"1\"{ns}/>",
+            l.top,
+            b - a,
+            l.plot_height()
+        ));
+        // a label with no room of its own on the top row is dropped; the
+        // wash still shows the span it named
+        if top_row[0] {
+            out.push_str(&format!(
+                "<text class=\"band-label\" x=\"{:.1}\" y=\"{row_y:.1}\" text-anchor=\"middle\">{}</text>",
+                (a + b) / 2.0,
+                escape(&band.label)
+            ));
+        }
+        out.push_str("</g>");
+    }
+
+    // the marks the block annotates the plot with, then the chapter rules
+    // and their labels in a `chapters` group of their own, as the ticks on
+    // the track below are, so one rule in the consumer's stylesheet hides
+    // every chapter cue in a narrow box. Mark labels run along the bottom
+    // edge, where they cross no gridline label and no chapter label.
+    let mark_row = l.plot_bottom() - 4.0;
+    out.push_str("<g class=\"marks\">");
+    for (m, at) in spec.marks.iter().zip(mark_labels(&spec.marks, &l)) {
+        let x = l.x_of(m.t);
+        // the rule carries its own time, as its target does, so the
+        // element can name the mark a pointer or a key has reached
+        // without measuring the markup back into times
+        out.push_str(&format!(
+            "<line class=\"mark\" data-t=\"{:.3}\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{}\" y2=\"{:.1}\" stroke-width=\"1\"{ns}/>",
+            m.t,
+            l.top,
+            l.plot_bottom()
+        ));
+        // a label with no room of its own is dropped; the rule stays
+        if let Some(x) = at {
+            out.push_str(&format!(
+                "<text class=\"mark-label\" x=\"{x:.1}\" y=\"{mark_row:.1}\" text-anchor=\"middle\">{}</text>",
+                escape(&m.label)
+            ));
+        }
+    }
+    out.push_str("<g class=\"chapters\">");
+    for (ch, at) in spec.chapters.iter().skip(1).zip(&top_row[1..]) {
         let x = l.x_of(ch.t);
         out.push_str(&format!(
             "<line class=\"mark\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{}\" y2=\"{:.1}\"{ns}/>",
             l.top,
             l.plot_bottom()
         ));
-        out.push_str(&format!(
-            "<text class=\"marklabel\" x=\"{:.1}\" y=\"{:.1}\">{}</text>",
-            x + 4.0,
-            l.top + 10.0,
-            escape(&ch.label)
-        ));
+        // as with a mark, a label with no room is dropped and the rule stays
+        if *at {
+            out.push_str(&format!(
+                "<text class=\"marklabel\" x=\"{:.1}\" y=\"{row_y:.1}\">{}</text>",
+                x + CHAPTER_LABEL_X,
+                escape(&ch.label)
+            ));
+        }
     }
     out.push_str("</g></g>");
 
     out.push_str("<g class=\"series\">");
-    // what each series actually draws: the samples it was given, thinned
-    // per pixel column when it carries more of them than the plot is wide,
-    // as a path and as the present points the cues sit on
-    let drawn: Vec<Drawn> = spec
-        .series
-        .iter()
-        .map(|s| drawn_of(&decimate(&s.points, &l), &l))
-        .collect();
     // end labels first, so their vertical placement can be settled together
     let wanted: Vec<f64> = spec
         .series
@@ -339,7 +525,7 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
             ));
             out.push_str(&format!(
                 "<text class=\"endlabel\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
-                x - 20.0,
+                x - END_LABEL_X,
                 y + 4.0,
                 escape(&s.label)
             ));
@@ -349,8 +535,13 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
 
     let by = l.track_y();
     out.push_str("<g class=\"track\">");
+    // the film's peek band: a wash over the chapter under the pointer,
+    // widened at runtime and empty until then. It carries a class of its
+    // own rather than the block's `band`, so that a query for the one can
+    // never take the other and a rule for one can never paint the other:
+    // both are rects of the same shape and only the class tells them apart.
     out.push_str(&format!(
-        "<rect class=\"band\" x=\"{}\" y=\"{}\" width=\"0\" height=\"{:.1}\"{ns}/>",
+        "<rect class=\"peek-band\" x=\"{}\" y=\"{}\" width=\"0\" height=\"{:.1}\"{ns}/>",
         l.left,
         l.top,
         l.plot_height()
@@ -390,6 +581,56 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
         by + 2.0,
         l.readout_y()
     ));
+
+    // The pointer targets come last, so paint order gives them the pointer
+    // ahead of the cues they stand for: one rect for every mark and one for
+    // every chapter, so the count follows the data rather than the rows a
+    // cue happens to be drawn on. Each is 24 by 24 CSS px, SC 2.5.8's
+    // minimum, centred on its cue's x and on its cue's own row: the bottom
+    // edge where a mark's label runs, the bar where a chapter's tick sits.
+    // `fill="none"` with `pointer-events="all"` is hit without being
+    // painted at all, where an opacity of zero or a transparent fill would
+    // still be a painted rectangle for forced colours and print to undo.
+    //
+    // The one class is `target`, which no rule in either consumer's
+    // stylesheet paints, and the cue it stands for is named in `data-cue`
+    // beside its time. Naming the cue in the class instead would hand the
+    // rect the cue's own paint: `mark` and `chapter` are the classes the
+    // drawn rules and ticks carry, so a stroked hit rect would appear
+    // wherever a cue does.
+    //
+    // Two cues closer than 24 px keep their own x, so their rects touch or
+    // overlap and the later one takes the pointer in the strip they share.
+    // What that overlap leans on is the criterion's spacing exception: a
+    // circle of 24 px diameter centred on each target's bounding box must
+    // meet no other target, which centres 24 px apart satisfy and centres
+    // 10 px apart do not (their circles overlap by 14 px, as the rects do).
+    // Below 24 px the chart is a dense visualisation under the criterion's
+    // own exception and the alternatives carry it, so the emitter draws the
+    // overlap rather than nudging a cue off its time.
+    out.push_str("<g class=\"targets\" part=\"targets\">");
+    let cues = spec.marks.iter().map(|m| ("mark", m.t, mark_row)).chain(
+        spec.chapters
+            .iter()
+            .skip(1)
+            .map(|ch| ("chapter", ch.t, by + 2.0)),
+    );
+    for (cue, t, row) in cues {
+        // the row is brought inside the box before it is written. The root
+        // svg clips at its viewport and clipped geometry is not hit at all,
+        // so a target centred on the chapter row, 8 px from the bottom
+        // edge, would keep 24 px of markup and offer 20 px of target, under
+        // the minimum this rect exists to meet. x is left as it is: both
+        // margins are wider than half a target, and a rect moved along x
+        // would no longer stand for its own time.
+        let row = row.min(l.height - TARGET / 2.0).max(TARGET / 2.0);
+        out.push_str(&format!(
+            "<rect class=\"target\" part=\"target\" data-cue=\"{cue}\" data-t=\"{t:.3}\" x=\"{:.1}\" y=\"{:.1}\" width=\"{TARGET}\" height=\"{TARGET}\" fill=\"none\" pointer-events=\"all\"{ns}/>",
+            l.x_of(t) - TARGET / 2.0,
+            row - TARGET / 2.0
+        ));
+    }
+    out.push_str("</g>");
     out.push_str("</svg>");
     Rendered {
         svg: out,
@@ -399,7 +640,7 @@ pub fn render(spec: &Spec, l: Layout) -> Rendered {
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    use crate::{Chapter, Series, Spec};
+    use crate::{Band, Chapter, Mark, Series, Spec};
 
     fn series(label: &str, index: usize, t: &[f64], y: &[f64], width: f64) -> Series {
         Series {
@@ -417,6 +658,13 @@ pub(crate) mod fixtures {
         }
     }
 
+    fn mark(t: f64, label: &str) -> Mark {
+        Mark {
+            t,
+            label: label.to_owned(),
+        }
+    }
+
     /// The demo film on /component/film/: eight frames, one series.
     pub fn demo() -> Spec {
         let times = [0.0, 0.2, 0.45, 0.8, 1.2, 1.7, 2.3, 3.0];
@@ -426,6 +674,8 @@ pub(crate) mod fixtures {
             y: crate::layout::PERCENT,
             ylabel: "progress %".to_owned(),
             chapters: vec![chapter(0.0, "start"), chapter(1.2, "settle")],
+            marks: Vec::new(),
+            band: None,
             series: vec![series(
                 "thumb travel",
                 2,
@@ -458,10 +708,27 @@ pub(crate) mod fixtures {
                 chapter(1.5, "abort <early>"),
                 chapter(3.03, "settled"),
             ],
+            marks: Vec::new(),
+            band: None,
             series: vec![
                 series("ghost left %", 3, &t, &ghost, 2.4),
                 series("palette blend %", 1, &t, &palette, 1.8),
             ],
+        }
+    }
+
+    /// The demo annotated: two marks with room for both labels, and a
+    /// band over a stretch that starts clear of the chapter rule and runs
+    /// under the second mark, so the layering shows.
+    pub fn annotated() -> Spec {
+        Spec {
+            marks: vec![mark(0.6, "first frame"), mark(2.1, "steady")],
+            band: Some(Band {
+                t0: 1.4,
+                t1: 2.4,
+                label: "warm up".to_owned(),
+            }),
+            ..demo()
         }
     }
 
@@ -473,6 +740,8 @@ pub(crate) mod fixtures {
             y: crate::layout::PERCENT,
             ylabel: "progress %".to_owned(),
             chapters: vec![chapter(0.0, "start")],
+            marks: Vec::new(),
+            band: None,
             series: vec![Series {
                 label: "nothing yet".to_owned(),
                 index: 1,
@@ -547,9 +816,9 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
-    use super::fixtures::{demo, empty, flight, gaps, many, one_point, ramp};
+    use super::fixtures::{annotated, demo, empty, flight, gaps, many, one_point, ramp};
     use super::*;
-    use crate::Series;
+    use crate::{Band, Chapter, Mark, Series};
     use std::collections::{BTreeMap, BTreeSet};
 
     /// The film's preset box for a spec.
@@ -590,6 +859,11 @@ mod tests {
     #[test]
     fn sized_many_points_snapshot() {
         insta::assert_snapshot!(sized(&many()).svg);
+    }
+
+    #[test]
+    fn sized_annotated_snapshot() {
+        insta::assert_snapshot!(sized(&annotated()).svg);
     }
 
     #[test]
@@ -731,7 +1005,7 @@ mod tests {
         for (i, _) in svg.match_indices("part=\"") {
             let rest = &svg[i + "part=\"".len()..];
             let name = &rest[..rest.find('"').expect("a closing quote")];
-            let known = ["chart", "playhead"].contains(&name)
+            let known = ["chart", "playhead", "targets", "target"].contains(&name)
                 || name
                     .strip_prefix("series-")
                     .is_some_and(|n| n.parse::<usize>().is_ok());
@@ -892,6 +1166,613 @@ mod tests {
         after[..after.find('"').expect("a closing quote")].to_owned()
     }
 
+    /// A numeric attribute of the first element opening with `head`.
+    fn number(svg: &str, head: &str, attr: &str) -> f64 {
+        attribute(svg, head, attr)
+            .parse()
+            .expect("a number the emitter wrote")
+    }
+
+    /// One attribute of one emitted rect.
+    fn rect_of(rect: &str, key: &str) -> String {
+        attribute(rect, "<rect", key)
+    }
+
+    /// One numeric attribute of one emitted rect.
+    fn rect_num(rect: &str, key: &str) -> f64 {
+        number(rect, "<rect", key)
+    }
+
+    /// The marks group's own children: the rules and labels of the block's
+    /// own marks, up to the nested group the chapter rules live in.
+    fn own_marks(svg: &str) -> &str {
+        let inside = svg
+            .split_once("<g class=\"marks\">")
+            .expect("the marks group")
+            .1;
+        inside
+            .split_once("<g class=\"chapters\">")
+            .expect("the chapters group inside it")
+            .0
+    }
+
+    /// The rects inside the targets group, in the order they are written,
+    /// checking on the way that nothing at all follows the group: the
+    /// targets are the last thing in the markup, which is what hands them
+    /// the pointer.
+    fn targets(svg: &str) -> Vec<&str> {
+        let tail = svg
+            .split_once("<g class=\"targets\" part=\"targets\">")
+            .expect("the targets group")
+            .1;
+        let (inside, after) = tail.split_once("</g>").expect("the group's end");
+        assert_eq!(after, "</svg>", "the targets are written last");
+        inside.split_inclusive("/>").collect()
+    }
+
+    /// Every cue carries an invisible 24 by 24 px rect on its own row, and
+    /// they come last so a pointer meets them before what they stand for.
+    #[test]
+    fn every_cue_carries_a_pointer_target_that_is_hittable_without_being_seen() {
+        let spec = annotated();
+        let l = Layout::film(spec.end);
+        let svg = film(&spec).svg;
+        // last of all the groups, and nothing after it but the closing tag
+        assert_eq!(groups(&svg).last().map(String::as_str), Some("targets"));
+        let rects = targets(&svg);
+        // the rows the cues are drawn on, read back from the markup: the
+        // bottom edge where the mark labels run and the middle of a tick on
+        // the bar, so the targets are checked against what is drawn rather
+        // than against numbers repeated from the emitter
+        let mark_row = number(&svg, "<text class=\"mark-label\"", "y");
+        let tick_row = number(&svg, "<rect class=\"chapter\"", "y")
+            + number(&svg, "<rect class=\"chapter\"", "height") / 2.0;
+        assert_eq!(
+            (mark_row, tick_row),
+            (l.plot_bottom() - 4.0, l.track_y() + 2.0)
+        );
+        // one rect per mark and one per chapter past the start: the count
+        // follows the data, and a chapter no longer brings two
+        let cues: Vec<(&str, f64, f64)> = spec
+            .marks
+            .iter()
+            .map(|m| ("mark", m.t, mark_row))
+            .chain(
+                spec.chapters
+                    .iter()
+                    .skip(1)
+                    .map(|ch| ("chapter", ch.t, tick_row)),
+            )
+            .collect();
+        assert_eq!(rects.len(), cues.len());
+        assert_eq!(rects.len(), 3, "{rects:?}");
+        for (rect, (cue, t, row)) in rects.iter().zip(cues) {
+            // one class, which nothing paints, and the cue it stands for in
+            // an attribute: a hit rect classed `mark` or `chapter` would
+            // take the dashes those classes are drawn with
+            assert_eq!(rect_of(rect, "class"), "target");
+            assert_eq!(rect_of(rect, "part"), "target");
+            assert_eq!(rect_of(rect, "data-cue"), cue);
+            assert_eq!(rect_of(rect, "data-t"), format!("{t:.3}"));
+            // 24 by 24 CSS px, centred on the cue's x and on its own row
+            assert_eq!(
+                (rect_num(rect, "width"), rect_num(rect, "height")),
+                (24.0, 24.0)
+            );
+            assert!(
+                (rect_num(rect, "x") + 12.0 - l.x_of(t)).abs() <= 0.05,
+                "{rect} is not centred on {}",
+                l.x_of(t)
+            );
+            // on its cue's row, or as near it as the box allows: a rect
+            // hanging past the viewBox is clipped, and what is clipped is
+            // not hit, so a target there would be smaller than it says
+            let centre = rect_num(rect, "y") + TARGET / 2.0;
+            let flush = (rect_num(rect, "y") + TARGET - l.height).abs() <= 0.05;
+            assert!(centre <= row + 0.05, "{rect} is below the row at {row}");
+            assert!(
+                (centre - row).abs() <= 0.05 || flush,
+                "{rect} is neither on the row at {row} nor flush with the bottom edge"
+            );
+            // and it lies inside the box on both axes, every one of them
+            for (lo, hi, side) in [
+                (rect_num(rect, "x"), l.width, "x"),
+                (rect_num(rect, "y"), l.height, "y"),
+            ] {
+                assert!(lo >= 0.0, "{rect} starts before the box on {side}");
+                assert!(lo + TARGET <= hi, "{rect} runs past the box on {side}");
+            }
+            // invisible and still hittable: no paint at all, and no
+            // opacity trick standing in for one
+            assert_eq!(rect_of(rect, "fill"), "none");
+            assert_eq!(rect_of(rect, "pointer-events"), "all");
+            assert!(!rect.contains("opacity"), "{rect}");
+            assert!(!rect.contains("stroke=\""), "{rect}");
+        }
+        // the chapter's own row is 8 px from the bottom edge, closer than
+        // half a target, so its rect is the one the box brings back inside
+        // and it ends flush with that edge rather than 4 px past it
+        assert_eq!(l.height - tick_row, TARGET / 3.0);
+        let chapter = rects.last().expect("the chapter's target");
+        assert_eq!(rect_num(chapter, "y") + TARGET, l.height);
+        // the marks' row is down at the plot's bottom edge and the tick's
+        // is below the axis: the two rows are a band apart, not one on the
+        // other, and the times are the cues' own at three decimals
+        let rows: Vec<f64> = rects.iter().map(|r| rect_num(r, "y")).collect();
+        assert!(rows[2] - rows[0] > 24.0, "{rows:?}");
+        let ts: Vec<String> = rects.iter().map(|r| rect_of(r, "data-t")).collect();
+        assert_eq!(ts, ["0.600", "2.100", "1.200"]);
+        // a chart whose only cue is its start still writes the group, so
+        // the element can hang one listener on it whatever it draws
+        assert!(targets(&sized(&empty()).svg).is_empty());
+    }
+
+    /// Cues closer than a target keep their own x: the rects touch and
+    /// overlap, the later one taking the pointer where they meet. The
+    /// accessibility phase reads this, so the numbers are pinned here.
+    #[test]
+    fn cues_closer_than_a_target_overlap_rather_than_move_off_their_time() {
+        // 5.8 s over the 580 px plot puts a tenth of a second at 10 px
+        let spec = Spec {
+            end: 5.8,
+            duration: 5.8,
+            marks: vec![
+                Mark {
+                    t: 1.0,
+                    label: "first".to_owned(),
+                },
+                Mark {
+                    t: 1.1,
+                    label: "second".to_owned(),
+                },
+            ],
+            ..empty()
+        };
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        assert_eq!((l.x_of(1.0), l.x_of(1.1)), (146.0, 156.0));
+        let svg = render(&spec, l).svg;
+        let rects = targets(&svg);
+        // both marks are there, neither merged away nor moved
+        assert_eq!(rects.len(), 2, "{rects:?}");
+        // the emission order, which is the paint order: the later mark's
+        // rect is written after the earlier one's, so where the two overlap
+        // the later is on top and takes the pointer in that strip
+        let written: Vec<String> = rects
+            .iter()
+            .map(|r| format!("{} {}", rect_of(r, "data-cue"), rect_of(r, "data-t")))
+            .collect();
+        assert_eq!(written, ["mark 1.000", "mark 1.100"]);
+        // each rect keeps the x of the mark it stands for: nothing is
+        // merged away and nothing is nudged off its own time
+        let centres: Vec<f64> = rects.iter().map(|r| rect_num(r, "x") + 12.0).collect();
+        assert_eq!(centres, [146.0, 156.0]);
+        // 10 px apart and 24 px wide, so the two overlap by 14 px, and a
+        // pointer in that strip takes the later mark
+        assert_eq!(centres[1] - centres[0], 10.0);
+        assert_eq!((centres[0] + 12.0) - (centres[1] - 12.0), 14.0);
+        // and both rules are drawn, whatever their labels could do
+        assert_eq!(svg.matches("<line class=\"mark\"").count(), 2);
+    }
+
+    /// The rules, the wash and the labels a block's own annotations draw.
+    #[test]
+    fn marks_and_a_band_draw_their_rules_wash_and_labels() {
+        let spec = annotated();
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        let svg = render(&spec, l).svg;
+        // one rule per mark, from the top of the plot to its bottom, thin
+        let rules: Vec<&str> = own_marks(&svg)
+            .split_inclusive("/>")
+            .filter(|e| e.contains("<line class=\"mark\""))
+            .collect();
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        for (rule, m) in rules.iter().zip(&spec.marks) {
+            let x = attribute(rule, "<line", "x1")
+                .parse::<f64>()
+                .expect("a number");
+            assert_eq!(
+                attribute(rule, "<line", "x2"),
+                attribute(rule, "<line", "x1")
+            );
+            assert!((x - l.x_of(m.t)).abs() <= 0.05, "{rule}");
+            assert_eq!(attribute(rule, "<line", "y1"), format!("{}", l.top));
+            assert_eq!(
+                attribute(rule, "<line", "y2"),
+                format!("{:.1}", l.plot_bottom())
+            );
+            assert_eq!(attribute(rule, "<line", "stroke-width"), "1");
+            // the rule names its own time, at the three decimals its
+            // target writes, so the two can be matched up
+            assert_eq!(attribute(rule, "<line", "data-t"), format!("{:.3}", m.t));
+        }
+        // the chapter rules share the class and carry no time of their
+        // own: a rule a `data-t` names is a mark
+        let chapters = svg
+            .split_once("<g class=\"chapters\">")
+            .expect("the chapter rules")
+            .1;
+        assert!(!chapters.contains("<line class=\"mark\" data-t"), "{svg}");
+        // one label per mark, along the bottom edge, on its own rule
+        let labels: Vec<&str> = own_marks(&svg)
+            .split_inclusive("</text>")
+            .filter(|e| e.contains("<text class=\"mark-label\""))
+            .collect();
+        assert_eq!(labels.len(), 2, "{labels:?}");
+        for (label, m) in labels.iter().zip(&spec.marks) {
+            let x = attribute(label, "<text", "x")
+                .parse::<f64>()
+                .expect("a number");
+            assert!((x - l.x_of(m.t)).abs() <= 0.05, "{label}");
+            assert_eq!(
+                attribute(label, "<text", "y"),
+                format!("{:.1}", l.plot_bottom() - 4.0)
+            );
+            assert_eq!(attribute(label, "<text", "text-anchor"), "middle");
+            assert!(label.ends_with(&format!(">{}</text>", m.label)), "{label}");
+        }
+        // the band is a rect in its own group, behind the series, with its
+        // edges at the times the block gave and no paint of its own
+        let band = spec.band.as_ref().expect("the fixture's band");
+        assert!(svg.contains("<g class=\"bands\">"));
+        let rect = svg
+            .split_inclusive("/>")
+            .find(|e| e.contains("<rect class=\"band\""))
+            .expect("the band");
+        // both edges to the tenth of a pixel the emitter writes
+        assert!(
+            (rect_num(rect, "x") - l.x_of(band.t0)).abs() <= 0.05,
+            "{rect}"
+        );
+        assert!(
+            (rect_num(rect, "x") + rect_num(rect, "width") - l.x_of(band.t1)).abs() <= 0.05,
+            "{rect}"
+        );
+        assert_eq!(rect_num(rect, "y"), l.top);
+        assert_eq!(rect_num(rect, "height"), l.plot_height());
+        // the 1 px edge the stylesheet paints in the surface colour is the
+        // gap where the band meets a series line or the playhead
+        assert_eq!(rect_of(rect, "stroke-width"), "1");
+        assert!(
+            !rect.contains("fill=") && !rect.contains("stroke=\""),
+            "{rect}"
+        );
+        // and its label sits over the middle of the span
+        let label = svg
+            .split_inclusive("</text>")
+            .find(|e| e.contains("<text class=\"band-label\""))
+            .expect("the band label");
+        let mid = (l.x_of(band.t0) + l.x_of(band.t1)) / 2.0;
+        assert!(
+            (attribute(label, "<text", "x")
+                .parse::<f64>()
+                .expect("a number")
+                - mid)
+                .abs()
+                <= 0.05
+        );
+        assert!(label.ends_with(">warm up</text>"), "{label}");
+        // the wash is written before the series it sits behind
+        assert!(svg.find("<g class=\"bands\">") < svg.find("<g class=\"series\">"));
+        // a span given backwards draws the same span, never a negative width
+        let back = render(
+            &Spec {
+                band: Some(Band {
+                    t0: band.t1,
+                    t1: band.t0,
+                    label: band.label.clone(),
+                }),
+                ..spec.clone()
+            },
+            l,
+        )
+        .svg;
+        let flipped = back
+            .split_inclusive("/>")
+            .find(|e| e.contains("<rect class=\"band\""))
+            .expect("the band");
+        assert_eq!(rect_of(flipped, "x"), rect_of(rect, "x"));
+        assert_eq!(rect_of(flipped, "width"), rect_of(rect, "width"));
+    }
+
+    /// Decision 24's greedy removal: two marks too close for both labels
+    /// keep both rules, and the one nearest the playhead keeps its label.
+    #[test]
+    fn a_mark_label_with_no_room_is_dropped_and_its_rule_stays() {
+        let spec = Spec {
+            marks: vec![
+                Mark {
+                    t: 1.0,
+                    label: "first frame".to_owned(),
+                },
+                Mark {
+                    t: 1.1,
+                    label: "steady".to_owned(),
+                },
+            ],
+            ..demo()
+        };
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        // 19 px apart, where the labels want about 72 and 39 px of room
+        assert!((l.x_of(1.1) - l.x_of(1.0) - 19.3).abs() < 0.1);
+        let svg = render(&spec, l).svg;
+        // both rules are drawn, at their own times
+        assert_eq!(own_marks(&svg).matches("<line class=\"mark\"").count(), 2);
+        for m in &spec.marks {
+            assert!(
+                svg.contains(&format!(
+                    "<line class=\"mark\" data-t=\"{:.3}\" x1=\"{:.1}\"",
+                    m.t,
+                    l.x_of(m.t)
+                )),
+                "no rule at {}",
+                m.t
+            );
+        }
+        // one label survives, the earlier mark's: the mark nearest the
+        // playhead at the axis origin wins, and it stays on its own rule
+        let labels: Vec<&str> = own_marks(&svg)
+            .split_inclusive("</text>")
+            .filter(|e| e.contains("<text class=\"mark-label\""))
+            .collect();
+        assert_eq!(labels.len(), 1, "{labels:?}");
+        assert!(labels[0].ends_with(">first frame</text>"), "{}", labels[0]);
+        assert_eq!(
+            attribute(labels[0], "<text", "x"),
+            format!("{:.1}", l.x_of(1.0))
+        );
+        // and the dropped label leaves the target behind: a mark is
+        // hittable whether or not its name could be drawn
+        let hit: Vec<String> = targets(&svg)
+            .iter()
+            .filter(|r| rect_of(r, "data-cue") == "mark")
+            .map(|r| rect_of(r, "data-t"))
+            .collect();
+        assert_eq!(hit, ["1.000", "1.100"]);
+        // room enough and both labels are drawn
+        let apart = Spec {
+            marks: vec![
+                Mark {
+                    t: 0.4,
+                    label: "first frame".to_owned(),
+                },
+                Mark {
+                    t: 2.6,
+                    label: "steady".to_owned(),
+                },
+            ],
+            ..demo()
+        };
+        let svg = render(&apart, l).svg;
+        assert_eq!(svg.matches("<text class=\"mark-label\"").count(), 2);
+    }
+
+    /// The other half of the mark row's contest, which the spreader and
+    /// not the emitter decides: a run of labels that overflows the
+    /// right-hand end is pinned there and pulled left, so it is the later
+    /// mark that stays on its rule and the earlier one that is carried off
+    /// its own and dropped. The reverse of the case above, and the reason
+    /// the emitter claims no rule of its own about which mark wins.
+    #[test]
+    fn a_run_of_mark_labels_against_the_right_end_drops_the_earlier_one() {
+        let spec = Spec {
+            marks: vec![
+                Mark {
+                    t: 2.7,
+                    label: "first frame".to_owned(),
+                },
+                Mark {
+                    t: 2.8,
+                    label: "steady".to_owned(),
+                },
+            ],
+            ..demo()
+        };
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        // the two want the same room, and the slot the earlier one takes
+        // pushes the later past the last place a label may sit
+        let (a, b) = (l.x_of(2.7), l.x_of(2.8));
+        let widest = label_width("first frame");
+        let hi = l.width - l.right - widest / 2.0;
+        assert!(b - a < widest + ROW_LABEL_GAP, "{a} and {b} are clear");
+        assert!(a + widest + ROW_LABEL_GAP > hi, "the run fits after all");
+        let svg = render(&spec, l).svg;
+        // both rules are drawn, and the label left is the later mark's
+        assert_eq!(own_marks(&svg).matches("<line class=\"mark\"").count(), 2);
+        assert_eq!(labels_of(&svg, "mark-label"), ["steady"]);
+        // it is still over its own rule, within half its own width
+        let x = number(&svg, "<text class=\"mark-label\"", "x");
+        assert!(
+            (x - b).abs() <= label_width("steady") / 2.0,
+            "{x} is not on {b}"
+        );
+    }
+
+    /// The text of every label written with `class`, in the order drawn.
+    fn labels_of(svg: &str, class: &str) -> Vec<String> {
+        let head = format!("<text class=\"{class}\"");
+        svg.split(&head)
+            .skip(1)
+            .map(|rest| {
+                let text = rest.split_once('>').expect("the text node").1;
+                text.split_once('<').expect("a closing tag").0.to_owned()
+            })
+            .collect()
+    }
+
+    /// The chapter rules the chapters group holds, whatever their labels do.
+    fn chapter_rules(svg: &str) -> usize {
+        svg.split_once("<g class=\"marks\">")
+            .expect("the marks group")
+            .1
+            .split_once("<g class=\"chapters\">")
+            .expect("the chapters group")
+            .1
+            .matches("<line class=\"mark\"")
+            .count()
+    }
+
+    /// Decision 24 along the top row: a chapter label and a band label that
+    /// begin at one instant cannot both be drawn, so one is dropped rather
+    /// than written over the other.
+    #[test]
+    fn a_chapter_label_and_a_band_label_at_one_instant_cannot_both_draw() {
+        let spec = Spec {
+            band: Some(Band {
+                t0: 1.2,
+                t1: 1.6,
+                label: "settle".to_owned(),
+            }),
+            ..demo()
+        };
+        // the band opens where the demo's own chapter does
+        assert_eq!(spec.chapters[1].t, spec.band.as_ref().expect("a band").t0);
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        // the two boxes the emitter's own ruler asks for, overlapping by
+        // far more than the clear space a shared row needs
+        let chapter = l.x_of(1.2) + CHAPTER_LABEL_X;
+        let ends = chapter + label_width("settle");
+        let opens = (l.x_of(1.2) + l.x_of(1.6)) / 2.0 - label_width("settle") / 2.0;
+        assert!(opens < ends, "{opens} is clear of {ends}");
+        let svg = render(&spec, l).svg;
+        // the chapter's draws and the band's is dropped: the pass runs left
+        // to right, so the earlier label is placed first and keeps its place
+        assert_eq!(labels_of(&svg, "marklabel"), ["settle"]);
+        assert_eq!(labels_of(&svg, "band-label"), Vec::<String>::new(), "{svg}");
+        assert_eq!(
+            attribute(&svg, "<text class=\"marklabel\"", "x"),
+            format!("{chapter:.1}")
+        );
+        // and neither cue loses more than the word: the chapter keeps its
+        // rule and the band its wash, the one rect of the block's own class
+        assert_eq!(chapter_rules(&svg), 1);
+        assert_eq!(svg.matches("<rect class=\"band\"").count(), 1);
+        // room enough and both are drawn: the same band, moved along
+        let apart = Spec {
+            band: Some(Band {
+                t0: 1.9,
+                t1: 2.6,
+                label: "settle".to_owned(),
+            }),
+            ..demo()
+        };
+        let svg = render(&apart, l).svg;
+        assert_eq!(labels_of(&svg, "marklabel"), ["settle"]);
+        assert_eq!(labels_of(&svg, "band-label"), ["settle"]);
+    }
+
+    /// The end labels own the top right corner: they name the series, which
+    /// is the one thing colour alone may not say, so a cue label that would
+    /// reach into their column is the one that goes.
+    #[test]
+    fn a_cue_label_that_reaches_into_the_end_label_column_is_dropped() {
+        let spec = Spec {
+            chapters: vec![
+                Chapter {
+                    t: 0.0,
+                    label: "start".to_owned(),
+                },
+                Chapter {
+                    t: 2.3,
+                    label: "settled".to_owned(),
+                },
+            ],
+            ..demo()
+        };
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        let svg = render(&spec, l).svg;
+        // the column the one end label takes: its own anchor back by the
+        // room its text needs, read off the markup
+        let column =
+            number(&svg, "<text class=\"endlabel\"", "x") - label_width(&spec.series[0].label);
+        // the chapter label wants a box that ends well inside the plot and
+        // runs into that column, so the column is what drops it
+        let right = l.x_of(2.3) + CHAPTER_LABEL_X + label_width("settled");
+        assert!(
+            right + ROW_LABEL_GAP < l.width - l.right,
+            "{right} is off the plot, not into the column"
+        );
+        assert!(
+            right + ROW_LABEL_GAP > column,
+            "{right} clears the column at {column}"
+        );
+        assert_eq!(labels_of(&svg, "marklabel"), Vec::<String>::new(), "{svg}");
+        // the cue itself is untouched: its rule, its tick and its target
+        assert_eq!(chapter_rules(&svg), 1);
+        assert_eq!(svg.matches("<rect class=\"chapter\"").count(), 1);
+        assert_eq!(targets(&svg).len(), 1);
+        // and the column is the only thing in its way: with no end label to
+        // reserve it, the same chapter at the same x keeps its label
+        let mut bare = spec.clone();
+        bare.series[0].label.clear();
+        let svg = render(&bare, l).svg;
+        assert!(!svg.contains("endlabel"));
+        assert_eq!(labels_of(&svg, "marklabel"), ["settled"]);
+    }
+
+    /// A cue with nothing to say writes no label and reserves no room.
+    #[test]
+    fn a_cue_with_no_label_neither_draws_nor_stands_in_the_way() {
+        let mut spec = Spec {
+            band: Some(Band {
+                t0: 1.9,
+                t1: 2.6,
+                label: "settle".to_owned(),
+            }),
+            ..demo()
+        };
+        spec.chapters.push(Chapter {
+            t: 2.1,
+            label: String::new(),
+        });
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        // the nameless chapter is where a label of any width at all would
+        // be placed before the band's and leave it no room
+        let empty = l.x_of(2.1) + CHAPTER_LABEL_X;
+        let opens = (l.x_of(1.9) + l.x_of(2.6)) / 2.0 - label_width("settle") / 2.0;
+        assert!(
+            empty < opens && opens - empty < ROW_LABEL_GAP,
+            "{empty} does not crowd {opens}"
+        );
+        let svg = render(&spec, l).svg;
+        // so the band keeps its label, and the row carries no empty text
+        assert_eq!(labels_of(&svg, "band-label"), ["settle"]);
+        assert_eq!(labels_of(&svg, "marklabel"), ["settle"]);
+        // the chapter with nothing to say still draws its rule and its tick
+        assert_eq!(chapter_rules(&svg), 2);
+        assert_eq!(svg.matches("<rect class=\"chapter\"").count(), 2);
+        // and a band with nothing to say draws its wash and no label
+        let nameless = Spec {
+            band: Some(Band {
+                t0: 1.9,
+                t1: 2.6,
+                label: String::new(),
+            }),
+            ..demo()
+        };
+        let svg = render(&nameless, l).svg;
+        assert!(!svg.contains("band-label"), "{svg}");
+        assert_eq!(svg.matches("<rect class=\"band\"").count(), 1);
+    }
+
+    /// A chart that annotates nothing draws nothing for it.
+    #[test]
+    fn a_spec_without_marks_or_a_band_draws_neither() {
+        for svg in [film(&demo()).svg, film(&flight()).svg, sized(&empty()).svg] {
+            assert!(!svg.contains("bands"), "a band group with no band");
+            // no rect carries the block's class at all: the wash the film
+            // widens at runtime is the peek band, which is its own thing
+            assert_eq!(svg.matches("<rect class=\"band\"").count(), 0);
+            assert!(svg.contains("<rect class=\"peek-band\" x=\"46\" y=\"16\" width=\"0\""));
+            assert!(!svg.contains("mark-label"), "a mark label with no mark");
+            assert!(
+                !svg.contains("data-cue=\"mark\""),
+                "a mark target with no mark"
+            );
+            // the marks group stays: it is the chapters' home as well
+            assert!(svg.contains("<g class=\"marks\"><g class=\"chapters\">"));
+        }
+    }
+
     #[test]
     fn a_path_breaks_at_every_gap_and_a_lone_sample_draws_a_zero_length_segment() {
         let svg = sized(&gaps()).svg;
@@ -1038,10 +1919,13 @@ mod tests {
         "tick",
         "tick-label",
         "alt",
+        "bands",
+        "band-label",
         "marks",
         "chapters",
         "mark",
         "marklabel",
+        "mark-label",
         "series",
         "marker",
         "shown",
@@ -1049,6 +1933,7 @@ mod tests {
         "endlabel",
         "track",
         "band",
+        "peek-band",
         "bar-bg",
         "bar-played",
         "chapter",
@@ -1058,6 +1943,8 @@ mod tests {
         "head",
         "head-dot",
         "head-t",
+        "targets",
+        "target",
     ];
 
     /// The z-order the emitter writes its groups in. The note's list
@@ -1069,9 +1956,13 @@ mod tests {
     /// chapter rule never covers a line. `chapters` appears twice because
     /// it is a nested group in both `marks` (the rules and their labels)
     /// and `track` (the ticks on the bar): one selector then hides every
-    /// chapter cue at once.
+    /// chapter cue at once. `bands` opens the drawing: the band is a wash
+    /// every other thing is drawn over. `targets` closes the list: the
+    /// invisible hit rects are written after everything they stand for,
+    /// because paint order is what hands them the pointer.
     const GROUP_ORDER: &[&str] = &[
-        "axes", "marks", "chapters", "series", "track", "chapters", "cursor", "playhead",
+        "axes", "bands", "marks", "chapters", "series", "track", "chapters", "cursor", "playhead",
+        "targets",
     ];
 
     /// Every class token in the markup.
@@ -1110,6 +2001,8 @@ mod tests {
             film(&demo()).svg,
             film(&flight()).svg,
             film(&unlabelled).svg,
+            film(&annotated()).svg,
+            sized(&annotated()).svg,
             sized(&empty()).svg,
             sized(&gaps()).svg,
             sized(&many()).svg,

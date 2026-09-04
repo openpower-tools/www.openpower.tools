@@ -21,7 +21,7 @@
       the film's.</p>
       <h2>Example</h2>
       <opt:film id="chart-film" sheet="/opt-film-demo.png" title="Eight frames of a theme flight">
-        <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"]], "ylabel": "progress %", "series": [{"label": "palette", "series": 1, "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "series": 3, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "series": 2, "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>
+        <script type="application/json">{"w": 128, "h": 96, "times": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "deltas": [0, 0.11, 0.02, 0.03, 0.2, 0.55, 0.62, 0.03], "chapters": [[0, "flight"], [2.36, "settle"]], "ylabel": "progress %", "series": [{"label": "palette", "series": 1, "lw": 2.6, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 20, 43, 74, 100]}, {"label": "progress ghost", "series": 3, "t": [0.0, 0.47, 0.94, 1.41, 1.89, 2.36, 2.83, 3.3], "y": [0, 1, 4, 9, 21, 43, 74, 100]}, {"label": "solid thumb", "series": 2, "t": [0.0, 0.1, 0.2, 3.3], "y": [0, 60, 100, 100]}]}</script>
       </opt:film>
       <opt:chart for="chart-film">
         <script type="application/json">{"duration": 3.3, "series": [{"id": "palette", "label": "palette", "unit": "%"}, {"id": "thumb", "label": "solid thumb", "unit": "%"}, {"id": "ghost", "label": "progress ghost", "unit": "%"}], "rows": [[0.0, 0, 0, 0], [0.47, 1, 100, 1], [0.94, 4, 100, 4], [1.41, 9, 100, 9], [1.89, 20, 100, 21], [2.36, 43, 100, 43], [2.83, 74, 100, 74], [3.3, 100, 100, 100]], "chapters": [{"t": 0, "title": "flight"}, {"t": 2.36, "title": "settle"}], "marks": [{"t": 1.89, "label": "half"}], "band": {"t0": 2.36, "t1": 3.3, "label": "settle"}}</script>
@@ -60,6 +60,48 @@
       <p>The block may not contain the character sequence that closes a script element; the
       build escapes it inside strings, and the parser rejects anything outside this schema
       naming the offending key.</p>
+      <h2>Moving the clock</h2>
+      <p>Every gesture and key on the chart asks the film for a time; the chart never moves its
+      own playhead. It sends <code>opt-chart-seek</code> to commit, <code>opt-chart-peek</code>
+      to preview and <code>opt-chart-toggle</code> to play or pause, and the film applies them to
+      its clock and broadcasts the result, which is what the chart draws. A chart bound to
+      another film is ignored, so several charts can share a page.</p>
+      <p>Where the pointer can hover and is a precise one, hovering the plot previews the sample
+      nearest it, or the time under it where no sample is within 40 pixels: the peek rule and its
+      readout follow the pointer, the chart takes the <code>peeking</code> state, and the film's
+      clock does not move. A press that does not travel more than three
+      pixels is a tap, and it seeks where it lands when released. A press that travels further
+      becomes a pending seek: the chart takes the <code>pending</code> state, the preview shows
+      where the release would land, and the release commits it. Escape abandons a pending seek
+      and leaves the clock where it was. With a coarse pointer there is no hover, and a press
+      held for half a second starts the same pending seek.</p>
+      <opt:callout variant="note" heading="One gesture is an experiment">
+        Bringing the pointer back within four pixels of where the press began says the seek will
+        be abandoned: the chart takes the <code>cancelling</code> state while the pointer stays
+        there, aiming away again resumes the seek, and releasing inside that band abandons it.
+        The research this element is built on rates the gesture as an extrapolation from a
+        mobile-only pattern, so it ships to be judged in use and may be withdrawn.
+      </opt:callout>
+      <h2>Keys</h2>
+      <p>Tabbing reaches the chart itself, and the data table's disclosure after it. Keys act
+      only while the chart has focus, and each one asks for a time rather than moving the
+      playhead itself. A seek from the chart pauses the film, as the film's own seeks do.</p>
+      <opt:table lined="">
+        <table>
+          <thead><tr><th scope="col">key</th><th scope="col">asks for</th></tr></thead>
+          <tbody>
+            <tr><td><code>Space</code>, <code>K</code></td><td>play or pause</td></tr>
+            <tr><td><code>,</code> <code>.</code></td><td>the previous or next sample</td></tr>
+            <tr><td>Left, Right</td><td>five samples back or forward</td></tr>
+            <tr><td><code>J</code> <code>L</code></td><td>ten samples back or forward</td></tr>
+            <tr><td>Shift with an arrow</td><td>one second back or forward</td></tr>
+            <tr><td>Page Up, Page Down</td><td>the previous or next chapter, as do Control or Alt with an arrow</td></tr>
+            <tr><td>Home, End</td><td>the start or the end</td></tr>
+            <tr><td><code>0</code> to <code>9</code></td><td>tenths of the way through</td></tr>
+            <tr><td>Escape</td><td>abandon a pending seek</td></tr>
+          </tbody>
+        </table>
+      </opt:table>
       <h2>Attributes, properties, events</h2>
       <opt:table lined="">
         <table>
@@ -71,6 +113,12 @@
             <tr><td><code>data</code></td><td>property</td><td>The data object, settable from script and never reflected; a value set before the element upgrades is kept.</td></tr>
             <tr><td><code>forElement</code></td><td>property</td><td>The bound film element; set it to wire a chart across shadow roots without ids.</td></tr>
             <tr><td><code>opt-film-time</code></td><td>event consumed</td><td>The film's composed, bubbling tick with detail <code>{ time, duration, playing }</code>; a bare number is still accepted.</td></tr>
+            <tr><td><code>opt-chart-seek</code></td><td>event sent</td><td>Composed and bubbling, detail <code>{ time }</code> in seconds, on a tap, on the release of a pending seek and on a key that moves the clock.</td></tr>
+            <tr><td><code>opt-chart-peek</code></td><td>event sent</td><td>Composed and bubbling, detail <code>{ time }</code> while previewing and <code>{ time: null }</code> when the preview ends.</td></tr>
+            <tr><td><code>opt-chart-toggle</code></td><td>event sent</td><td>Composed and bubbling, no detail; the film plays or pauses.</td></tr>
+            <tr><td><code>:state(peeking)</code></td><td>custom state</td><td>Set while a preview is showing.</td></tr>
+            <tr><td><code>:state(pending)</code></td><td>custom state</td><td>Set while a press is being dragged towards a seek.</td></tr>
+            <tr><td><code>:state(cancelling)</code></td><td>custom state</td><td>Set while a dragged seek sits back at its origin, where releasing abandons it.</td></tr>
             <tr><td><code>:state(hydrated)</code></td><td>custom state</td><td>Set when the element upgraded over a declarative root whose hash matched the block and took it over instead of writing markup; cleared when the data property replaces the data.</td></tr>
             <tr><td><code>:state(following)</code></td><td>custom state</td><td>Set once the first tick from the bound film arrives.</td></tr>
             <tr><td><code>:state(playing)</code></td><td>custom state</td><td>Mirrors the playing flag of the film's ticks.</td></tr>

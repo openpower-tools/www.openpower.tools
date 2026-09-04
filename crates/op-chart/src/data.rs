@@ -3,7 +3,7 @@
 //! the hash that tells a live pre-render from a stale one, and the escape
 //! that lets the block sit inside a `<script>` element.
 
-use crate::{Chapter, Series, Spec};
+use crate::{Band, Chapter, Mark, Series, Spec};
 use json::Value;
 
 /// A rejected data block. The message names the field at fault, so a build
@@ -341,21 +341,6 @@ pub struct Row {
     pub values: Vec<Option<f64>>,
 }
 
-/// A labelled instant on the time axis.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Mark {
-    pub t: f64,
-    pub label: String,
-}
-
-/// A labelled span of the time axis.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Band {
-    pub t0: f64,
-    pub t1: f64,
-    pub label: String,
-}
-
 /// A block that passed the schema: rows of values on one shared time axis,
 /// with the marks, band and chapters that annotate it.
 #[derive(Clone, Debug, PartialEq)]
@@ -429,6 +414,8 @@ impl Data {
                 .unwrap_or_default()
                 .to_owned(),
             chapters: self.chapters.clone(),
+            marks: self.marks.clone(),
+            band: self.band.clone(),
             series: self
                 .series
                 .iter()
@@ -942,6 +929,26 @@ mod tests {
         assert_eq!(spec.ylabel, "%");
         assert_eq!(spec.chapters.len(), 2);
         assert_eq!(spec.series.len(), 2);
+        // the block's own annotations travel into the spec, so the emitter
+        // draws what the schema promised the author it would
+        assert_eq!(
+            spec.marks,
+            vec![Mark {
+                t: 0.5,
+                label: "abort".to_owned()
+            }]
+        );
+        assert_eq!(
+            spec.band,
+            Some(Band {
+                t0: 0.2,
+                t1: 0.8,
+                label: "flight".to_owned()
+            })
+        );
+        // and a block that annotates nothing carries nothing
+        let bare = parse(r#"{"series": [], "rows": [], "duration": 1}"#).expect("valid");
+        assert!(bare.to_spec().marks.is_empty() && bare.to_spec().band.is_none());
         // the dash index one higher is the palette class
         assert_eq!((spec.series[0].index, spec.series[1].index), (3, 2));
         assert_eq!(spec.series[0].label, "ghost left %");

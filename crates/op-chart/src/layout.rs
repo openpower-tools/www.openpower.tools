@@ -108,6 +108,28 @@ impl Layout {
         ((x - self.left) / self.plot_width() * self.end).clamp(0.0, self.end)
     }
 
+    /// The sample nearest a horizontal position, as its index and its own
+    /// time, when it lies within `radius` CSS px of that position, and
+    /// nothing at all when the nearest one is further away or there are no
+    /// samples to hit. Only x is compared: a pointer anywhere over the
+    /// plot takes the sample in its column, whatever height it is at, so
+    /// the same answer serves a hover high above a line and a press on it.
+    /// `times` is the series' own order, non-decreasing, and may be empty.
+    /// A tie goes to the earlier sample, so a pointer midway between two
+    /// takes the one that happened first.
+    pub fn nearest(&self, x: f64, times: &[f64], radius: f64) -> Option<(usize, f64)> {
+        let mut best: Option<(usize, f64)> = None;
+        for (i, t) in times.iter().enumerate() {
+            let away = (self.x_of(*t) - x).abs();
+            // strictly nearer, so a tie leaves the earlier sample standing
+            if best.is_none_or(|(_, near)| away < near) {
+                best = Some((i, away));
+            }
+        }
+        best.filter(|(_, away)| *away <= radius)
+            .map(|(i, _)| (i, times[i]))
+    }
+
     /// Vertical position of a value, clamped to the value domain.
     pub fn y_of(&self, v: f64) -> f64 {
         self.top
@@ -183,6 +205,44 @@ mod tests {
         assert!(!f.non_scaling);
     }
 
+    #[test]
+    fn the_nearest_sample_is_the_one_in_the_pointers_column_inside_the_radius() {
+        let l = Layout::sized(640.0, 240.0, 2.0);
+        // the plot runs 46 to 626, so a second of this axis is 290 px
+        assert_eq!(
+            (l.x_of(0.0), l.x_of(1.0), l.x_of(2.0)),
+            (46.0, 336.0, 626.0)
+        );
+        // nothing sampled is nothing to hit, however wide the radius
+        assert_eq!(l.nearest(300.0, &[], 1e9), None);
+        // one sample: hit up to the radius, missed past it, the boundary
+        // counting as a hit
+        assert_eq!(l.nearest(336.0, &[1.0], 24.0), Some((0, 1.0)));
+        assert_eq!(l.nearest(360.0, &[1.0], 24.0), Some((0, 1.0)));
+        assert_eq!(l.nearest(312.0, &[1.0], 24.0), Some((0, 1.0)));
+        assert_eq!(l.nearest(360.1, &[1.0], 24.0), None);
+        assert_eq!(l.nearest(311.9, &[1.0], 24.0), None);
+        // a pointer left of the plot takes the first sample and one right
+        // of it the last, when the radius reaches that far and not before
+        let times = [0.0, 1.0, 2.0];
+        assert_eq!(l.nearest(0.0, &times, 46.0), Some((0, 0.0)));
+        assert_eq!(l.nearest(0.0, &times, 45.9), None);
+        assert_eq!(l.nearest(700.0, &times, 74.0), Some((2, 2.0)));
+        assert_eq!(l.nearest(700.0, &times, 73.9), None);
+        // and inside the plot it is the column that decides
+        assert_eq!(l.nearest(200.0, &times, 24.0), None);
+        assert_eq!(l.nearest(200.0, &times, 200.0), Some((1, 1.0)));
+    }
+
+    #[test]
+    fn a_tie_between_two_samples_goes_to_the_earlier_one() {
+        let l = Layout::sized(640.0, 240.0, 2.0);
+        // 336 is 290 px from each of the samples at 46 and at 626
+        assert_eq!(l.nearest(336.0, &[0.0, 2.0], 300.0), Some((0, 0.0)));
+        // two samples at one instant are one place, and the earlier wins
+        assert_eq!(l.nearest(500.0, &[1.0, 1.0], 400.0), Some((0, 1.0)));
+    }
+
     proptest! {
         #[test]
         fn t_at_inverts_x_of_inside_the_axis(end in 0.1f64..1000.0, t in 0.0f64..1.0) {
@@ -206,6 +266,37 @@ mod tests {
             let (lo, hi) = if a < b { (a, b) } else { (b, a) };
             prop_assert!(l.y_of(lo) >= l.y_of(hi), "{lo} at {} is above {hi} at {}", l.y_of(lo), l.y_of(hi));
             prop_assert!(l.y_of(hi) >= l.top && l.y_of(lo) <= l.plot_bottom());
+        }
+
+        /// In any box, over any non-decreasing times and from anywhere on
+        /// or off the plot: what comes back is a sample at the least
+        /// distance, the first of them where several tie, and nothing at
+        /// all exactly when that least distance is past the radius.
+        #[test]
+        fn the_nearest_sample_minimises_the_distance_and_answers_inside_the_radius(
+            w in 200.0f64..2000.0, h in 100.0f64..1000.0, end in 1.0f64..1000.0,
+            fractions in prop::collection::vec(0.0f64..1.0, 0..24),
+            fx in -0.3f64..1.3, radius in 0.0f64..300.0
+        ) {
+            let l = Layout::sized(w, h, end);
+            let mut times: Vec<f64> = fractions.iter().map(|f| f * end).collect();
+            times.sort_by(f64::total_cmp);
+            let x = l.left + fx * l.plot_width();
+            let away = |t: f64| (l.x_of(t) - x).abs();
+            // the same distances the box itself measures, so the least of
+            // them is one of them exactly
+            let least = times.iter().copied().map(away).fold(f64::INFINITY, f64::min);
+            match l.nearest(x, &times, radius) {
+                Some((i, t)) => {
+                    prop_assert!(i < times.len());
+                    prop_assert_eq!(t, times[i]);
+                    prop_assert_eq!(away(t), least, "sample {} of {:?}", i, times);
+                    prop_assert!(least <= radius);
+                    let first = times.iter().position(|t| away(*t) == least);
+                    prop_assert_eq!(Some(i), first, "a tie goes to the earlier sample");
+                }
+                None => prop_assert!(times.is_empty() || least > radius, "{least} within {radius}"),
+            }
         }
     }
 }

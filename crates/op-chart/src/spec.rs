@@ -1,4 +1,5 @@
-//! What a chart shows: series on one shared time axis, chapters, labels.
+//! What a chart shows: series on one shared time axis, chapters, the
+//! marks and band a block annotates them with, labels.
 
 /// A named point on the time axis. The first chapter is the start and
 /// draws no mark; every later one draws a vertical rule and a tick on the
@@ -6,6 +7,23 @@
 #[derive(Clone, Debug, PartialEq)]
 pub struct Chapter {
     pub t: f64,
+    pub label: String,
+}
+
+/// A labelled instant on the time axis: a thin rule across the plot with
+/// its label along the bottom edge, dropped when the edge has no room for
+/// it. Where a chapter starts a section, a mark points at one moment.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    pub t: f64,
+    pub label: String,
+}
+
+/// A labelled span of the time axis, drawn as a wash behind the series.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Band {
+    pub t0: f64,
+    pub t1: f64,
     pub label: String,
 }
 
@@ -41,5 +59,10 @@ pub struct Spec {
     pub y: (f64, f64),
     pub ylabel: String,
     pub chapters: Vec<Chapter>,
+    /// Labelled instants over the plot; empty for a chart that annotates
+    /// nothing, which is what the film passes.
+    pub marks: Vec<Mark>,
+    /// The one labelled span drawn behind the series, when there is one.
+    pub band: Option<Band>,
     pub series: Vec<Series>,
 }

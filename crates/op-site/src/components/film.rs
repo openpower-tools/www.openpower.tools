@@ -25,6 +25,12 @@
 //! reading `time`); the chart is a
 //! `role=slider` with value text naming the frame and chapter, and a
 //! polite live region announces seeks.
+//!
+//! The traffic runs the other way as well: an `opt-chart for="<film id>"`
+//! sends `opt-chart-seek`, `opt-chart-peek` and `opt-chart-toggle`, and
+//! the film applies them to its own clock. Those events are composed and
+//! bubbling, so one listener on the document hears every chart on the
+//! page and `intent_for` decides which of them address this film.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -33,7 +39,8 @@ use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement, KeyboardEvent, MouseEvent, PointerEvent};
 
-use super::chart_style::{SERIES_TOKENS, chart_rules};
+use super::chart::{PEEK_EVENT, SEEK_EVENT, TIME_FIELD, TOGGLE_EVENT};
+use super::chart_style::{CHART_CUE_CSS, CHART_SHAPE_CSS, SERIES_TOKENS, chart_rules};
 use super::{BASE_CSS, shadow_root};
 use crate::html::escape;
 
@@ -187,6 +194,61 @@ impl Data {
     }
 }
 
+// ---- chapter steps: the Page keys and the two bar buttons -------------
+/// A step by chapter, in either direction.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Chapter {
+    Prev,
+    Next,
+}
+
+/// The two chapter buttons, in bar order: the class the markup carries,
+/// the button's text (which is its accessible name), and the step it
+/// takes. `Player::chapter` takes that step for the buttons and for the
+/// keys alike.
+const CHAPTER_CONTROLS: [(&str, &str, Chapter); 2] = [
+    ("chapter-prev", "Previous chapter", Chapter::Prev),
+    ("chapter-next", "Next chapter", Chapter::Next),
+];
+
+/// Where a chapter step from `t` lands, or `None` when there is no
+/// chapter to step to that way, which is when the button for it is
+/// disabled. Both directions read the same helpers the keys landed on
+/// before there were buttons.
+fn chapter_target(d: &Data, t: f64, dir: Chapter) -> Option<f64> {
+    match dir {
+        Chapter::Next => d.next_chapter_start(t),
+        Chapter::Prev => Some(d.prev_chapter_start(t)).filter(|&c| c < t - 1e-6),
+    }
+}
+
+/// The chapter step a key asks for: Page Up and Page Down, with Ctrl or
+/// Alt and an arrow as the alias, as YouTube has it.
+fn chapter_key(key: &str, alias: bool) -> Option<Chapter> {
+    match key {
+        "PageDown" => Some(Chapter::Next),
+        "PageUp" => Some(Chapter::Prev),
+        "ArrowRight" if alias => Some(Chapter::Next),
+        "ArrowLeft" if alias => Some(Chapter::Prev),
+        _ => None,
+    }
+}
+
+/// The control bar: play, the two chapter steps, speed, the frame slider
+/// and the readout. Pure, so the markup is testable without a browser.
+fn control_bar(frames: usize) -> String {
+    let chapters: String = CHAPTER_CONTROLS
+        .iter()
+        .map(|(class, name, _)| {
+            format!("<button type=\"button\" class=\"{class}\">{name}</button>")
+        })
+        .collect();
+    format!(
+        "<div class=\"bar\"><button type=\"button\" class=\"play\">Play</button>{chapters}<select aria-label=\"speed\"><option value=\"1\">1x</option><option value=\"0.5\">0.5x</option><option value=\"0.25\">0.25x</option></select><input type=\"range\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"frame\"><span class=\"t\"></span><span class=\"n\">{frames} frames; captions give the share of pixels changed since the previous frame</span></div>",
+        frames.saturating_sub(1)
+    )
+}
+
 // ---- the chart: drawn by op-chart, moved here -------------------------
 /// The film's data as a chart spec: one axis for every series, chapters as
 /// marks, and the colours exactly as the data passes them.
@@ -206,6 +268,10 @@ fn spec_of(d: &Data) -> op_chart::Spec {
                 label: label.clone(),
             })
             .collect(),
+        // the film annotates nothing of its own: its cues are all chapters,
+        // and the marks and band belong to a chart drawn from a data block
+        marks: Vec::new(),
+        band: None,
         series: d
             .series
             .iter()
@@ -250,6 +316,8 @@ struct Dom {
     time_label: Element,
     play: Element,
     rate: Element,
+    /// The chapter buttons with the step each takes, in bar order.
+    chapters: Vec<(Chapter, Element)>,
     chart: Option<Element>,
     /// The geometry the chart was drawn with, for hit-testing and the playhead.
     layout: op_chart::Layout,
@@ -360,6 +428,11 @@ fn render(dom: &Dom, d: &Data, st: &State) {
         &JsValue::from_f64(k as f64),
     );
     dom.time_label.set_text_content(Some(&fmt(st.tc)));
+    // the clock has moved, so a chapter step may have run out of chapters
+    for (dir, button) in &dom.chapters {
+        let _ = button
+            .toggle_attribute_with_force("disabled", chapter_target(d, st.tc, *dir).is_none());
+    }
     sync_video(dom, st);
     if let Some(chart) = &dom.chart {
         let x = dom.layout.x_of(st.tc);
@@ -432,7 +505,7 @@ fn show_peek(dom: &Dom, d: &Data, t: f64, anchor_x: Option<f64>) {
         .find(|ch| ch.0 > c.0)
         .map(|ch| ch.0)
         .unwrap_or(d.end());
-    if let Some(band) = dom.q(".band") {
+    if let Some(band) = dom.q(PEEK_BAND) {
         let _ = band.set_attribute("x", &format!("{:.1}", dom.layout.x_of(c.0)));
         let _ = band.set_attribute(
             "width",
@@ -461,7 +534,7 @@ fn hide_peek(dom: &Dom) {
     if let Some(line) = dom.q(".peek-line") {
         let _ = line.set_attribute("visibility", "hidden");
     }
-    if let Some(band) = dom.q(".band") {
+    if let Some(band) = dom.q(PEEK_BAND) {
         let _ = band.set_attribute("width", "0");
     }
     set_state(&dom.host, "peeking", false);
@@ -549,20 +622,19 @@ impl Player {
         self.seek_to(t);
     }
 
-    /// Page Down: the next chapter's start, or the end when there is none.
-    fn chapter_next(&self) {
+    /// One chapter step: forward to the next chapter's start, back to this
+    /// chapter's start and then to the previous one's. The Page keys and
+    /// the two chapter buttons both take it. With no chapter left forward,
+    /// the key still runs to the end (the button for it is disabled);
+    /// with none left back, the film stays where it is.
+    fn chapter(&self, dir: Chapter) {
         self.pause();
         let t = self.state.borrow().tc;
-        let target = self.data.next_chapter_start(t).unwrap_or(self.data.end());
-        self.seek_to(target);
-    }
-
-    /// Page Up: back to the chapter start, then to the previous chapter.
-    fn chapter_prev(&self) {
-        self.pause();
-        let t = self.state.borrow().tc;
-        let target = self.data.prev_chapter_start(t);
-        self.seek_to(target);
+        match chapter_target(&self.data, t, dir) {
+            Some(target) => self.seek_to(target),
+            None if dir == Chapter::Next => self.seek_to(self.data.end()),
+            None => {}
+        }
     }
 
     fn set_pending(&self, k: usize) {
@@ -622,6 +694,52 @@ impl Player {
     }
 }
 
+// ---- what a bound chart asks of the film ------------------------------
+/// What a chart's event asks for. A seek and a peek carry the time in the
+/// detail's [`TIME_FIELD`] field (a peek with no time hides the peek); a
+/// toggle carries no detail at all.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Intent {
+    Seek,
+    Peek,
+    Toggle,
+}
+
+/// Which event a chart sends for which intent. The names are the chart's
+/// own, taken from the element that dispatches them, so a listener here
+/// can never bind to a name the sender has stopped using.
+const CHART_INTENTS: [(&str, Intent); 3] = [
+    (SEEK_EVENT, Intent::Seek),
+    (PEEK_EVENT, Intent::Peek),
+    (TOGGLE_EVENT, Intent::Toggle),
+];
+
+/// What an event of `kind` asks of this film, if anything. The events
+/// bubble and are composed, so the one listener on the document hears
+/// every chart on the page and this decides whose they are: a chart names
+/// the film it drives with `for`, and a chart with no `for` drives the
+/// film it sits inside. A chart naming another film is not ours wherever
+/// it sits, and a name we do not know asks for nothing.
+///
+/// Both answers are about the chart the event came from, which is the head
+/// of the event's composed path: `for_attr` is read off it and `descendant`
+/// says whether this film's host is on that same path. Nothing here may be
+/// read off `target`, which retargeting has moved to a wrapper by the time
+/// the document sees it.
+fn intent_for(
+    kind: &str,
+    for_attr: Option<&str>,
+    my_id: Option<&str>,
+    descendant: bool,
+) -> Option<Intent> {
+    let (_, intent) = CHART_INTENTS.iter().find(|(name, _)| *name == kind)?;
+    let ours = match for_attr.filter(|f| !f.is_empty()) {
+        Some(film) => my_id.is_some_and(|id| id == film),
+        None => descendant,
+    };
+    ours.then_some(*intent)
+}
+
 struct Wiring {
     _player: Rc<Player>,
     _closures: Vec<Closure<dyn FnMut(Event)>>,
@@ -633,6 +751,37 @@ struct Film {
 }
 
 const SPEEDS: [f64; 3] = [0.25, 0.5, 1.0];
+
+/// The rect the film widens over the chapter under the pointer, by the
+/// class the emitter writes on it. Named here because a query is a string
+/// the compiler cannot check against the markup: the test below holds the
+/// two together. It is not the block's annotation band, which is a rect of
+/// the same shape and another thing entirely.
+pub(crate) const PEEK_BAND: &str = ".peek-band";
+
+/// The film's copy of the chart rules: the blocks it shares with
+/// `<opt-chart>` whole, and the film's own colours for the parts it paints
+/// from another token than the element does. A function rather than a
+/// string inside the markup, so a test can read what the film ships and
+/// hold it to the same rules as the element's stylesheet.
+///
+/// The peek band, which the film widens over the chapter under the
+/// pointer, takes its wash here; the edge that belongs to the annotation
+/// band alone is in [`CHART_SHAPE_CSS`]. [`chart_rules`] comes last, for
+/// the reason given there.
+pub(crate) fn chart_css() -> String {
+    let rules = chart_rules();
+    format!(
+        ".chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 11px; }}
+{CHART_SHAPE_CSS}
+.chart .band, .chart .peek-band {{ fill: var(--op-accent); fill-opacity: 0.08; }}
+.chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
+{CHART_CUE_CSS}
+.chart .head {{ stroke: var(--op-accent); stroke-width: 1.5; }} .chart .head-dot {{ fill: var(--op-accent); }}
+.chart .head-t {{ fill: var(--op-accent); font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+{rules}"
+    )
+}
 
 impl CustomElement for Film {
     fn connected(&mut self) {
@@ -699,7 +848,7 @@ impl CustomElement for Film {
                 )
             })
             .collect();
-        let chart_rules = chart_rules();
+        let chart_css = chart_css();
         let layout = op_chart::Layout::film(data.t_max);
         let chart = if data.series.is_empty() {
             String::new()
@@ -744,38 +893,27 @@ impl CustomElement for Film {
 .fr figcaption {{ font-size: 0.75em; color: var(--op-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .bar {{ display: flex; gap: 0.6rem; align-items: center; margin-top: 0.4rem; flex-wrap: wrap; }}
 .bar button, .bar select {{ font: inherit; color: var(--op-text); background: var(--op-raised); border: 1px solid var(--op-border-strong); border-radius: 0.25rem; padding: 0.15rem 0.6rem; cursor: pointer; }}
-.bar button:hover {{ color: var(--op-link-hover); border-color: var(--op-link-hover); }}
+.bar button:hover:enabled {{ color: var(--op-link-hover); border-color: var(--op-link-hover); }}
+.bar button:disabled {{ color: var(--op-muted); border-color: var(--op-border); cursor: default; }}
 .bar button:focus-visible, .bar select:focus-visible, .bar input:focus-visible, .chart:focus-visible {{ outline: 2px solid var(--op-accent); outline-offset: 2px; }}
 .bar input[type=range] {{ flex: 1; min-width: 220px; accent-color: var(--op-accent); }}
 .t {{ font-variant-numeric: tabular-nums; min-width: 4.5rem; }} .n {{ color: var(--op-muted); }}
 .keys {{ font-size: 0.85em; color: var(--op-muted); margin: 0.3rem 0 0; }} .keys summary {{ cursor: pointer; }}
 .keys dl {{ display: grid; grid-template-columns: max-content 1fr; gap: 0.15rem 0.8rem; margin: 0.4rem 0; }} .keys dt {{ font-family: var(--op-font-mono); }} .keys dd {{ margin: 0; }}
 .chartbox {{ margin-top: 0.6rem; position: relative; }}
-.chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 11px; }}
-.chart .grid {{ stroke: var(--op-border); shape-rendering: crispEdges; }} .chart .tick {{ stroke: var(--op-border-strong); }} .chart .axis {{ fill: var(--op-muted); }}
-.chart .mark {{ stroke: var(--op-accent); stroke-dasharray: 3 3; }} .chart .marklabel {{ fill: var(--op-accent); }}
-.chart .endlabel {{ fill: var(--op-text); font-size: 12px; font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 3; }}
-.chart .swatch {{ stroke-width: 3; shape-rendering: crispEdges; }}
-.chart .marker {{ display: none; fill: var(--op-surface); stroke-width: 1.5; stroke-dasharray: none; }} .chart .marker.shown {{ display: inline; }}
-{chart_rules}
-@media (prefers-contrast: more) {{ .chart .grid {{ stroke: var(--op-border-strong); }} .chart path[class^=series] {{ stroke-width: 3; }} .chart .marker {{ display: inline; }} }}
-.chart .band {{ fill: var(--op-accent); opacity: 0.08; }} .chart .bar-bg {{ fill: var(--op-border); }} .chart .bar-played {{ fill: var(--op-accent); }}
-.chart .chapter {{ fill: var(--op-surface); stroke: var(--op-border-strong); stroke-width: 0.6; }}
-.chart .peek-line {{ stroke: var(--op-muted); stroke-dasharray: 3 3; }}
-.chart .head {{ stroke: var(--op-accent); stroke-width: 1.5; }} .chart .head-dot {{ fill: var(--op-accent); }}
-.chart .head-t {{ fill: var(--op-accent); font-weight: 700; paint-order: stroke; stroke: var(--op-surface); stroke-width: 4; }}
+{chart_css}
 .peek {{ position: absolute; bottom: 56px; transform: translateX(-50%); pointer-events: none; background: var(--op-raised); border: 1px solid var(--op-border-strong); border-radius: 3px; padding: 3px; z-index: 3; }}
 .peek .pframe {{ background-repeat: no-repeat; }} .peek .ptime {{ font-size: 0.8em; text-align: center; color: var(--op-text); font-variant-numeric: tabular-nums; white-space: nowrap; }}
 .sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 </style>
 <div class=\"stagebox\" part=\"stage\"><div class=\"stagewrap\"><div class=\"stage\" style=\"width:{stage_w}px;height:{stage_h}px;background-image:url('{sheet}');background-size:{}px {stage_h}px\"></div>{video_markup}</div><div class=\"stagelabel\"></div></div>
 <div class=\"reelbox\" part=\"reel\"><div class=\"gate\"></div><div class=\"reel\">{cells}</div></div>
-<div class=\"bar\"><button type=\"button\" class=\"play\">Play</button><select aria-label=\"speed\"><option value=\"1\">1x</option><option value=\"0.5\">0.5x</option><option value=\"0.25\">0.25x</option></select><input type=\"range\" min=\"0\" max=\"{}\" value=\"0\" aria-label=\"frame\"><span class=\"t\"></span><span class=\"n\">{n} frames; captions give the share of pixels changed since the previous frame</span></div>
+{bar}
 <details class=\"keys\"><summary>Keys</summary><dl><dt>Space, K</dt><dd>play / pause</dd><dt>, .</dt><dd>previous / next frame</dd><dt>← →</dt><dd>five frames back / forward</dd><dt>J L</dt><dd>ten frames back / forward</dd><dt>Shift ← →</dt><dd>one second back / forward</dd><dt>PgUp PgDn</dt><dd>previous / next chapter (also Ctrl or Alt with an arrow)</dd><dt>0-9</dt><dd>seek to 0-90 %</dd><dt>Home End</dt><dd>first / last frame</dd><dt>&lt; &gt;</dt><dd>slower / faster</dd><dt>Esc</dt><dd>cancel a pending seek on the strip</dd></dl><p>Hover the chart or the strip to peek without moving the playhead; press and drag across the strip to choose a frame and release to seek.</p></details>
 <div class=\"chartbox\">{chart}{peek}</div><span class=\"sr\" aria-live=\"polite\"></span>",
             stage_w * n as f64,
-            n - 1,
             sheet = escape(&data.sheet),
+            bar = control_bar(n),
         ));
         if self.host.get_attribute("tabindex").is_none() {
             let _ = self.host.set_attribute("tabindex", "0");
@@ -827,6 +965,10 @@ impl CustomElement for Film {
             time_label,
             play,
             rate,
+            chapters: CHAPTER_CONTROLS
+                .iter()
+                .filter_map(|(class, _, dir)| Some((*dir, q(&format!("button.{class}"))?)))
+                .collect(),
             chart: q(".chart"),
             layout,
             peek: qh(".peek"),
@@ -894,6 +1036,11 @@ impl CustomElement for Film {
                     }
                 }),
             );
+        }
+        for (dir, button) in &dom.chapters {
+            let p = player.clone();
+            let dir = *dir;
+            listen(button, "click", Closure::new(move |_| p.chapter(dir)));
         }
         {
             let p = player.clone();
@@ -1054,100 +1201,90 @@ impl CustomElement for Film {
                     // Ctrl or Alt with an arrow aliases the chapter keys, as
                     // YouTube does; Shift with an arrow is the larger jump.
                     let chapter_alias = ke.ctrl_key() || ke.alt_key();
-                    let handled = match key.as_str() {
-                        "ArrowRight" if chapter_alias => {
-                            p.chapter_next();
-                            true
-                        }
-                        "ArrowLeft" if chapter_alias => {
-                            p.chapter_prev();
-                            true
-                        }
-                        "ArrowRight" if ke.shift_key() => {
-                            p.jump_seconds(1.0);
-                            true
-                        }
-                        "ArrowLeft" if ke.shift_key() => {
-                            p.jump_seconds(-1.0);
-                            true
-                        }
-                        "PageDown" => {
-                            p.chapter_next();
-                            true
-                        }
-                        "PageUp" => {
-                            p.chapter_prev();
-                            true
-                        }
-                        " " | "k" | "K" => {
-                            if p.state.borrow().playing {
-                                p.pause()
-                            } else {
-                                p.play()
+                    let handled = if let Some(dir) = chapter_key(&key, chapter_alias) {
+                        p.chapter(dir);
+                        true
+                    } else {
+                        match key.as_str() {
+                            "ArrowRight" if ke.shift_key() => {
+                                p.jump_seconds(1.0);
+                                true
                             }
-                            true
+                            "ArrowLeft" if ke.shift_key() => {
+                                p.jump_seconds(-1.0);
+                                true
+                            }
+                            " " | "k" | "K" => {
+                                if p.state.borrow().playing {
+                                    p.pause()
+                                } else {
+                                    p.play()
+                                }
+                                true
+                            }
+                            "." => {
+                                p.step(1);
+                                true
+                            }
+                            "," => {
+                                p.step(-1);
+                                true
+                            }
+                            "ArrowRight" => {
+                                p.step(5);
+                                true
+                            }
+                            "ArrowLeft" => {
+                                p.step(-5);
+                                true
+                            }
+                            "l" | "L" => {
+                                p.step(10);
+                                true
+                            }
+                            "j" | "J" => {
+                                p.step(-10);
+                                true
+                            }
+                            "Home" => {
+                                p.step(-n);
+                                true
+                            }
+                            "End" => {
+                                p.step(n);
+                                true
+                            }
+                            "Escape" => {
+                                p.cancel();
+                                true
+                            }
+                            ">" | "<" => {
+                                let dir: i64 = if key == ">" { 1 } else { -1 };
+                                let rate = p.state.borrow().rate;
+                                let i = SPEEDS
+                                    .iter()
+                                    .position(|r| (*r - rate).abs() < 1e-9)
+                                    .unwrap_or(2) as i64;
+                                let r =
+                                    SPEEDS[(i + dir).clamp(0, SPEEDS.len() as i64 - 1) as usize];
+                                p.state.borrow_mut().rate = r;
+                                let _ = js_sys::Reflect::set(
+                                    &p.dom.rate,
+                                    &JsValue::from_str("value"),
+                                    &JsValue::from_str(&format!("{r}")),
+                                );
+                                p.dom.live.set_text_content(Some(&format!("speed {r}x")));
+                                true
+                            }
+                            k if k.len() == 1 && k.as_bytes()[0].is_ascii_digit() => {
+                                let tenth = f64::from(k.as_bytes()[0] - b'0') / 10.0;
+                                p.pause();
+                                let t = p.data.end() * tenth;
+                                p.seek_to(t);
+                                true
+                            }
+                            _ => false,
                         }
-                        "." => {
-                            p.step(1);
-                            true
-                        }
-                        "," => {
-                            p.step(-1);
-                            true
-                        }
-                        "ArrowRight" => {
-                            p.step(5);
-                            true
-                        }
-                        "ArrowLeft" => {
-                            p.step(-5);
-                            true
-                        }
-                        "l" | "L" => {
-                            p.step(10);
-                            true
-                        }
-                        "j" | "J" => {
-                            p.step(-10);
-                            true
-                        }
-                        "Home" => {
-                            p.step(-n);
-                            true
-                        }
-                        "End" => {
-                            p.step(n);
-                            true
-                        }
-                        "Escape" => {
-                            p.cancel();
-                            true
-                        }
-                        ">" | "<" => {
-                            let dir: i64 = if key == ">" { 1 } else { -1 };
-                            let rate = p.state.borrow().rate;
-                            let i = SPEEDS
-                                .iter()
-                                .position(|r| (*r - rate).abs() < 1e-9)
-                                .unwrap_or(2) as i64;
-                            let r = SPEEDS[(i + dir).clamp(0, SPEEDS.len() as i64 - 1) as usize];
-                            p.state.borrow_mut().rate = r;
-                            let _ = js_sys::Reflect::set(
-                                &p.dom.rate,
-                                &JsValue::from_str("value"),
-                                &JsValue::from_str(&format!("{r}")),
-                            );
-                            p.dom.live.set_text_content(Some(&format!("speed {r}x")));
-                            true
-                        }
-                        k if k.len() == 1 && k.as_bytes()[0].is_ascii_digit() => {
-                            let tenth = f64::from(k.as_bytes()[0] - b'0') / 10.0;
-                            p.pause();
-                            let t = p.data.end() * tenth;
-                            p.seek_to(t);
-                            true
-                        }
-                        _ => false,
                     };
                     if handled {
                         ke.prevent_default();
@@ -1166,6 +1303,82 @@ impl CustomElement for Film {
                     let _ = v.class_list().add_1("ready");
                 }),
             );
+        }
+        // A bound chart's intents. One listener on the document, taking all
+        // three names, is enough: the events are composed and bubbling, so
+        // they reach the document from any chart on the page, and the
+        // source test says which of them are addressing this film. Reading
+        // the source off the event also means a chart that upgrades later,
+        // or moves, needs no rebinding here.
+        {
+            let p = player.clone();
+            let my_id = self.host.get_attribute("id");
+            let closure = Closure::<dyn FnMut(Event)>::new(move |e: Event| {
+                // the path is the whole route the event took, innermost
+                // first, so its head is the chart `intent_for` needs and
+                // `target` is not. An event not being dispatched has an
+                // empty path, and there the retargeted target is all
+                // there is.
+                let path = e.composed_path();
+                let Some(source) = path
+                    .get(0)
+                    .dyn_into::<Element>()
+                    .ok()
+                    .or_else(|| e.target().and_then(|t| t.dyn_into::<Element>().ok()))
+                else {
+                    return;
+                };
+                // the path also carries every host it crossed on the way
+                // out, this film's own among them, which is what makes a
+                // chart inside this film's shadow root ours as surely as
+                // one slotted into its light DOM. `Node.contains` said the
+                // same only by counting a node as containing itself, after
+                // retargeting had made the chart into this host.
+                let host: &JsValue = p.dom.host.as_ref();
+                let descendant = path.iter().any(|node| node == *host);
+                let Some(intent) = intent_for(
+                    &e.type_(),
+                    source.get_attribute("for").as_deref(),
+                    my_id.as_deref(),
+                    descendant,
+                ) else {
+                    return;
+                };
+                // Reflect::get throws on a detail that is not an object,
+                // which reads here as no time at all
+                let time = e
+                    .dyn_ref::<web_sys::CustomEvent>()
+                    .and_then(|c| {
+                        js_sys::Reflect::get(&c.detail(), &JsValue::from_str(TIME_FIELD)).ok()
+                    })
+                    .and_then(|v| v.as_f64());
+                match intent {
+                    Intent::Seek => {
+                        if let Some(t) = time {
+                            p.pause();
+                            p.seek_to(t);
+                        }
+                    }
+                    Intent::Peek => match time {
+                        Some(t) => show_peek(&p.dom, &p.data, t, None),
+                        None => hide_peek(&p.dom),
+                    },
+                    Intent::Toggle => {
+                        if p.state.borrow().playing {
+                            p.pause()
+                        } else {
+                            p.play()
+                        }
+                    }
+                }
+            });
+            if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+                for (name, _) in CHART_INTENTS {
+                    let _ = document
+                        .add_event_listener_with_callback(name, closure.as_ref().unchecked_ref());
+                }
+            }
+            closures.push(closure);
         }
         player.render();
         self.wiring = Some(Wiring {
@@ -1349,11 +1562,179 @@ mod chart_reference {
     }
 
     #[test]
+    fn chart_intents_name_their_events_and_only_this_films_charts_apply() {
+        // which name means which intent: the table is read in order, so a
+        // pair swapped here would have a seek hide the preview instead.
+        // The names themselves are the chart's, pinned where they are set
+        assert_eq!(
+            CHART_INTENTS.map(|(name, _)| name),
+            ["opt-chart-seek", "opt-chart-peek", "opt-chart-toggle"]
+        );
+        let mine = Some("film-toggle");
+        // a chart naming this film: every intent arrives
+        for (name, intent) in CHART_INTENTS {
+            assert_eq!(
+                intent_for(name, Some("film-toggle"), mine, false),
+                Some(intent),
+                "{name} from a chart naming this film"
+            );
+        }
+        // a chart naming another film, wherever it sits
+        assert_eq!(
+            intent_for("opt-chart-seek", Some("film-other"), mine, false),
+            None
+        );
+        assert_eq!(
+            intent_for("opt-chart-seek", Some("film-other"), mine, true),
+            None
+        );
+        // no name: the film the chart sits inside, and no other
+        assert_eq!(
+            intent_for("opt-chart-seek", None, mine, true),
+            Some(Intent::Seek)
+        );
+        assert_eq!(intent_for("opt-chart-seek", None, mine, false), None);
+        // an empty `for` is no name at all
+        assert_eq!(
+            intent_for("opt-chart-peek", Some(""), mine, true),
+            Some(Intent::Peek)
+        );
+        assert_eq!(intent_for("opt-chart-peek", Some(""), mine, false), None);
+        // a film with no id is addressed only by what it contains
+        assert_eq!(
+            intent_for("opt-chart-toggle", Some("film-toggle"), None, false),
+            None
+        );
+        assert_eq!(
+            intent_for("opt-chart-toggle", None, None, true),
+            Some(Intent::Toggle)
+        );
+        // a name that is not one of the three asks for nothing
+        assert_eq!(
+            intent_for("opt-film-time", Some("film-toggle"), mine, true),
+            None
+        );
+        assert_eq!(intent_for("opt-chart-scrub", None, mine, true), None);
+        // a chart inside a third element's shadow root, naming another
+        // film, with that wrapper sitting in this film's light DOM. The
+        // wrapper has no `for` and this film does contain it, so reading
+        // the retargeted target would have this film apply a seek
+        // addressed to another. Read off the chart the composed path
+        // names, the `for` decides and the answer is no
+        assert_eq!(
+            intent_for("opt-chart-seek", Some("film-other"), mine, true),
+            None
+        );
+        // and the same chart, naming this film from inside that wrapper,
+        // is ours: the path carries the chart whatever tree it sits in
+        assert_eq!(
+            intent_for("opt-chart-seek", Some("film-toggle"), mine, false),
+            Some(Intent::Seek)
+        );
+        // which is only true because the caller reads the composed path.
+        // `target` is retargeted to the outermost host outside this
+        // listener's tree, and that host is the wrapper. Two needles, for
+        // two ways of losing that: reading no path at all, and reading one
+        // but asking membership of something else, as `Node.contains` did
+        // by counting a node as containing itself. Both are assembled, so
+        // these lines are not among their own matches
+        let source = include_str!("film.rs");
+        let path = ["e.composed", "_path()"].concat();
+        assert!(
+            source.contains(&path),
+            "the listener must read the event's composed path"
+        );
+        let membership = ["path.iter().any(", "|node| node == *host)"].concat();
+        assert!(
+            source.contains(&membership),
+            "this film's host must be looked for on that same path"
+        );
+    }
+
+    #[test]
+    fn the_chapter_buttons_sit_in_the_bar_and_take_the_step_the_keys_take() {
+        let bar = control_bar(8);
+        for (class, name, _) in CHAPTER_CONTROLS {
+            assert!(
+                bar.contains(&format!(
+                    "<button type=\"button\" class=\"{class}\">{name}</button>"
+                )),
+                "{class} is not in the bar: {bar}"
+            );
+        }
+        assert_eq!(
+            CHAPTER_CONTROLS.map(|(_, name, _)| name),
+            ["Previous chapter", "Next chapter"]
+        );
+        // they sit with the transport: play, back, forward, then speed
+        let at = |needle: &str| bar.find(needle).expect(needle);
+        assert!(at("class=\"play\"") < at("class=\"chapter-prev\""));
+        assert!(at("class=\"chapter-prev\"") < at("class=\"chapter-next\""));
+        assert!(at("class=\"chapter-next\"") < at("<select"));
+        // a button and a key ask for the same step, of the same type ...
+        assert_eq!(chapter_key("PageDown", false), Some(Chapter::Next));
+        assert_eq!(chapter_key("PageUp", false), Some(Chapter::Prev));
+        assert_eq!(chapter_key("ArrowRight", true), Some(Chapter::Next));
+        assert_eq!(chapter_key("ArrowLeft", true), Some(Chapter::Prev));
+        assert_eq!(chapter_key("ArrowRight", false), None);
+        assert_eq!(chapter_key("Home", true), None);
+        // ... and one helper takes it: the two call sites are the key
+        // handler and the buttons' click, and there are no others
+        let source = include_str!("film.rs");
+        // the needle is assembled, so this line is not one of its matches
+        let call = ["p.chapter", "(dir)"].concat();
+        assert_eq!(
+            source.matches(&call).count(),
+            2,
+            "the keys and the buttons must step through the same helper"
+        );
+        // where the step lands is the helper the keys landed on before
+        let d = flight(); // chapters at 0, 1.5 and 3.03; the film ends at 3.7
+        for t in [0.0, 0.4, 1.5, 1.7, 3.03, 3.6] {
+            assert_eq!(
+                chapter_target(&d, t, Chapter::Next),
+                d.next_chapter_start(t)
+            );
+            match chapter_target(&d, t, Chapter::Prev) {
+                Some(target) => {
+                    assert_eq!(target, d.prev_chapter_start(t));
+                    assert!(target < t);
+                }
+                None => assert!(
+                    (d.prev_chapter_start(t) - t).abs() <= 1e-6,
+                    "no step back from {t}, so the step must not move"
+                ),
+            }
+        }
+        // and a button is disabled exactly where there is no chapter to
+        // step to: at the start going back, in the last chapter going on
+        assert_eq!(chapter_target(&d, 0.0, Chapter::Prev), None);
+        assert_eq!(chapter_target(&d, 3.6, Chapter::Next), None);
+        assert_eq!(chapter_target(&d, 0.4, Chapter::Prev), Some(0.0));
+        assert_eq!(chapter_target(&d, 0.0, Chapter::Next), Some(1.5));
+    }
+
+    #[test]
     fn the_layout_the_film_keeps_matches_the_chart_it_drew() {
         let d = flight();
         let layout = op_chart::Layout::film(d.t_max);
         let r = op_chart::render(&spec_of(&d), layout);
         assert_eq!(r.layout, layout);
         assert_eq!(r.layout.t_at(r.layout.x_of(1.5)), 1.5);
+    }
+
+    /// The rect the peek widens is the one the emitter draws for it, and
+    /// no other: the two rects of that shape differ only by their class,
+    /// and a query for the block's band would take whichever came first.
+    #[test]
+    fn the_peek_moves_the_rect_the_emitter_draws_for_it_and_no_other() {
+        let d = flight();
+        let svg = op_chart::render(&spec_of(&d), op_chart::Layout::film(d.t_max)).svg;
+        let class = format!("class=\"{}\"", PEEK_BAND.trim_start_matches('.'));
+        assert_eq!(svg.matches(&class).count(), 1, "{class} in {svg}");
+        // and the film draws no annotation band, so nothing else is there
+        // to be taken for it
+        assert!(!svg.contains("class=\"band\""), "{svg}");
+        assert!(d.chapters.len() > 1, "a film with no chapter to peek at");
     }
 }
