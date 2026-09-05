@@ -11,6 +11,7 @@ identical samples; that is the whole point.
 """
 import base64
 import json
+import pathlib
 import subprocess
 import sys
 import threading
@@ -20,6 +21,12 @@ import urllib.request
 import websocket
 
 SHELL = sys.argv[1]
+# Somewhere to put the shell's log and the frame it ends on. Under the
+# project, because /tmp is one reboot from gone and this script opened a
+# path there without creating it, so a cleaned /tmp made it fail on its
+# first line rather than on anything to do with the experiment.
+WORK = pathlib.Path(__file__).resolve().parents[2] / ".omc" / "scratch" / "synthetic-clock"
+WORK.mkdir(parents=True, exist_ok=True)
 BASE = "http://127.0.0.1:8952"
 DPR = 1.5
 INTERVAL = 1000.0 / 60.0
@@ -35,7 +42,7 @@ class Shell:
              "--disable-checker-imaging", "--disable-image-animation-resync",
              "--window-size=1280,900", f"--force-device-scale-factor={DPR}",
              f"--remote-debugging-port={self.port}", "--remote-allow-origins=*", "about:blank"],
-            stdout=subprocess.DEVNULL, stderr=open("/tmp/vt/shell.log", "ab"))
+            stdout=subprocess.DEVNULL, stderr=open(WORK / "shell.log", "ab"))
         deadline = time.time() + 30
         while True:
             try:
@@ -205,7 +212,7 @@ print(f"blend: before {a['before']}; {changes} changes over 200 frames; last cha
 print("blend samples 0, 30, 60, 120, 180:", [a["blend"][i] for i in (0, 30, 60, 120, 180)])
 print(f"film clock identical across runs: {same_clock}; samples 0, 1, 2, 60, 199:", [a["clock"][i] for i in (0, 1, 2, 60, 199)])
 print(f"final screenshot identical across runs: {same_png} ({len(a['png'])} bytes)")
-open("/tmp/vt/final.png", "wb").write(a["png"])
+(WORK / "final.png").write_bytes(a["png"])
 
 def first_diff(x, y):
     for i, (p, q) in enumerate(zip(x, y)):

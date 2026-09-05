@@ -1,0 +1,49 @@
+
+Surface #FFFFFF: L needed per hue (C cap 0.14) for APCA Lc targets, with the WCAG ratio that results
+  Lc 45: orange L=0.75 (2.3:1)  sky L=0.73 (2.3:1)  bluish L=0.72 (2.3:1)  yellow L=0.74 (2.3:1)  blue L=0.74 (2.3:1)  vermilion L=0.75 (2.3:1)  reddish L=0.76 (2.3:1)  binding bluish green
+  Lc 60: orange L=0.65 (3.3:1)  sky L=0.64 (3.3:1)  bluish L=0.63 (3.3:1)  yellow L=0.64 (3.3:1)  blue L=0.64 (3.3:1)  vermilion L=0.66 (3.3:1)  reddish L=0.66 (3.3:1)  binding bluish green
+  Lc 75: orange L=0.54 (5.1:1)  sky L=0.53 (5.2:1)  bluish L=0.52 (5.2:1)  yellow L=0.54 (5.1:1)  blue L=0.53 (5.2:1)  vermilion L=0.55 (5.2:1)  reddish L=0.55 (5.2:1)  binding bluish green
+
+Surface #2B415F: L needed per hue (C cap 0.14) for APCA Lc targets, with the WCAG ratio that results
+  Lc 45: orange L=0.73 (4.3:1)  sky L=0.72 (4.3:1)  bluish L=0.71 (4.3:1)  yellow L=0.73 (4.3:1)  blue L=0.72 (4.3:1)  vermilion L=0.74 (4.3:1)  reddish L=0.75 (4.3:1)  binding reddish purple
+  Lc 60: orange L=0.82 (5.8:1)  sky L=0.81 (5.8:1)  bluish L=0.80 (5.8:1)  yellow L=0.81 (5.8:1)  blue L=0.81 (5.8:1)  vermilion L=0.82 (5.8:1)  reddish L=0.83 (5.8:1)  binding reddish purple
+  Lc 75: orange L=0.89 (7.5:1)  sky L=0.89 (7.5:1)  bluish L=0.87 (7.5:1)  yellow L=0.89 (7.5:1)  blue L=0.89 (7.5:1)  vermilion L=0.90 (7.5:1)  reddish L=0.90 (7.5:1)  binding reddish purple
+
+Dark theme two bands (0.75, 0.85) with APCA floor 45 (chroma cap 0.14)
+  maximin worst-case 7.9
+    band L=0.75: orange
+    band L=0.75: sky blue
+    band L=0.85: bluish green
+    band L=0.85: yellow
+    band L=0.85: blue
+    band L=0.75: reddish purple
+    orange          #DFA133  WCAG 4.58:1  APCA Lc 48
+    sky blue        #40BAFA  WCAG 4.76:1  APCA Lc 50
+    bluish green    #63EBB8  WCAG 6.94:1  APCA Lc 70
+    yellow          #DBD35C  WCAG 6.65:1  APCA Lc 68
+    blue            #A1D4FF  WCAG 6.62:1  APCA Lc 67
+    reddish purple  #ED87C0  WCAG 4.37:1  APCA Lc 46
+    normal         10.7 ('sky blue', 'blue')
+    Protanomaly     8.6 ('sky blue', 'blue')
+    Deuteranomaly   8.1 ('orange', 'yellow')
+    Tritanomaly     7.9 ('orange', 'reddish purple')
+
+Dark theme two bands (0.83, 0.92) with APCA floor 60 (chroma cap 0.14)
+  maximin worst-case 6.6
+    band L=0.83: orange
+    band L=0.83: sky blue
+    band L=0.92: bluish green
+    band L=0.92: yellow
+    band L=0.92: blue
+    band L=0.83: reddish purple
+    orange          #FABA52  WCAG 6.05:1  APCA Lc 62
+    sky blue        #86D2FF  WCAG 6.24:1  APCA Lc 64
+    bluish green    #8EFFD1  WCAG 8.58:1  APCA Lc 84
+    yellow          #F2EA74  WCAG 8.29:1  APCA Lc 82
+    blue            #CEE8FF  WCAG 8.23:1  APCA Lc 81
+    reddish purple  #FFA8D7  WCAG 5.84:1  APCA Lc 60
+    normal         11.2 ('sky blue', 'blue')
+    Protanomaly     7.1 ('sky blue', 'reddish purple')
+    Deuteranomaly   6.6 ('orange', 'yellow')
+    Tritanomaly     7.6 ('orange', 'reddish purple')
+exit 0

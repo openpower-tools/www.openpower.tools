@@ -1,0 +1,153 @@
+
+== light theme, surface #FFFFFF, bands (0.55, 0.65), chroma cap 0.14
+  six series, two bands, maximin worst-case 7.9:
+    band L=0.55: orange
+    band L=0.55: sky blue
+    band L=0.65: bluish green
+    band L=0.65: yellow
+    band L=0.65: blue
+    band L=0.55: reddish purple
+    orange          #976700  WCAG 4.94:1  APCA Lc 74
+    sky blue        #007BAD  WCAG 4.76:1  APCA Lc 72
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    yellow          #9C9300  WCAG 3.19:1  APCA Lc 59
+    blue            #3096DE  WCAG 3.20:1  APCA Lc 59
+    reddish purple  #A94B82  WCAG 5.24:1  APCA Lc 76
+    normal         11.4 ('sky blue', 'blue')
+    Protanomaly    10.6 ('sky blue', 'reddish purple')
+    Deuteranomaly  11.1 ('orange', 'yellow')
+    Tritanomaly     7.9 ('bluish green', 'blue')
+  best 4 series in ONE band (L=0.65): worst-case 7.9
+    orange          #BD8200  WCAG 3.30:1  APCA Lc 60
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    blue            #3096DE  WCAG 3.20:1  APCA Lc 59
+    reddish purple  #CA69A1  WCAG 3.47:1  APCA Lc 62
+    normal         37.5 ('bluish green', 'blue')
+    Protanomaly    12.1 ('blue', 'reddish purple')
+    Deuteranomaly  15.9 ('bluish green', 'reddish purple')
+    Tritanomaly     7.9 ('bluish green', 'blue')
+  best 5 series in ONE band (L=0.65): worst-case 4.2
+    orange          #BD8200  WCAG 3.30:1  APCA Lc 60
+    sky blue        #019AD8  WCAG 3.16:1  APCA Lc 58
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    vermilion       #D2713B  WCAG 3.40:1  APCA Lc 61
+    reddish purple  #CA69A1  WCAG 3.47:1  APCA Lc 62
+    normal         16.8 ('orange', 'vermilion')
+    Protanomaly     6.6 ('orange', 'vermilion')
+    Deuteranomaly   4.2 ('orange', 'vermilion')
+    Tritanomaly     6.0 ('orange', 'vermilion')
+
+== light theme, surface #FFFFFF, bands (0.55, 0.65), chroma cap 0.16
+  six series, two bands, maximin worst-case 8.5:
+    band L=0.55: orange
+    band L=0.55: sky blue
+    band L=0.65: bluish green
+    band L=0.65: yellow
+    band L=0.65: blue
+    band L=0.55: reddish purple
+    orange          #976700  WCAG 4.94:1  APCA Lc 74
+    sky blue        #007BAD  WCAG 4.76:1  APCA Lc 72
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    yellow          #9C9300  WCAG 3.19:1  APCA Lc 59
+    blue            #0196E8  WCAG 3.20:1  APCA Lc 58
+    reddish purple  #B04285  WCAG 5.30:1  APCA Lc 76
+    normal         11.7 ('sky blue', 'blue')
+    Protanomaly    10.9 ('sky blue', 'reddish purple')
+    Deuteranomaly  11.1 ('orange', 'yellow')
+    Tritanomaly     8.5 ('bluish green', 'blue')
+  best 4 series in ONE band (L=0.65): worst-case 8.5
+    orange          #BD8200  WCAG 3.30:1  APCA Lc 60
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    blue            #0196E8  WCAG 3.20:1  APCA Lc 58
+    reddish purple  #D261A3  WCAG 3.51:1  APCA Lc 62
+    normal         38.9 ('bluish green', 'blue')
+    Protanomaly    13.2 ('blue', 'reddish purple')
+    Deuteranomaly  16.8 ('bluish green', 'reddish purple')
+    Tritanomaly     8.5 ('bluish green', 'blue')
+  best 5 series in ONE band (L=0.65): worst-case 1.6
+    orange          #BD8200  WCAG 3.30:1  APCA Lc 60
+    sky blue        #009AD9  WCAG 3.16:1  APCA Lc 58
+    bluish green    #00A97B  WCAG 3.03:1  APCA Lc 56
+    vermilion       #DB6B27  WCAG 3.43:1  APCA Lc 61
+    reddish purple  #D261A3  WCAG 3.51:1  APCA Lc 62
+    normal         17.0 ('orange', 'vermilion')
+    Protanomaly     4.8 ('orange', 'vermilion')
+    Deuteranomaly   1.6 ('orange', 'vermilion')
+    Tritanomaly     7.0 ('sky blue', 'bluish green')
+
+== dark theme, surface #2B415F, bands (0.66, 0.76), chroma cap 0.14
+  six series, two bands, maximin worst-case 7.9:
+    band L=0.66: orange
+    band L=0.76: sky blue
+    band L=0.66: bluish green
+    band L=0.76: yellow
+    band L=0.66: blue
+    band L=0.66: reddish purple
+    orange          #C18500  WCAG 3.27:1  APCA Lc 33
+    sky blue        #44BDFE  WCAG 4.94:1  APCA Lc 52
+    bluish green    #00AC7E  WCAG 3.56:1  APCA Lc 37
+    yellow          #BFB53B  WCAG 4.90:1  APCA Lc 51
+    blue            #349AE1  WCAG 3.37:1  APCA Lc 35
+    reddish purple  #CE6CA4  WCAG 3.11:1  APCA Lc 31
+    normal         10.7 ('sky blue', 'blue')
+    Protanomaly     9.4 ('sky blue', 'blue')
+    Deuteranomaly   9.1 ('orange', 'yellow')
+    Tritanomaly     7.9 ('bluish green', 'blue')
+  best 4 series in ONE band (L=0.66): worst-case 7.9
+    orange          #C18500  WCAG 3.27:1  APCA Lc 33
+    bluish green    #00AC7E  WCAG 3.56:1  APCA Lc 37
+    blue            #349AE1  WCAG 3.37:1  APCA Lc 35
+    reddish purple  #CE6CA4  WCAG 3.11:1  APCA Lc 31
+    normal         37.6 ('bluish green', 'blue')
+    Protanomaly    12.0 ('blue', 'reddish purple')
+    Deuteranomaly  16.0 ('bluish green', 'reddish purple')
+    Tritanomaly     7.9 ('bluish green', 'blue')
+  best 5 series in ONE band (L=0.66): worst-case 4.5
+    orange          #C18500  WCAG 3.27:1  APCA Lc 33
+    sky blue        #0E9DDC  WCAG 3.41:1  APCA Lc 35
+    bluish green    #00AC7E  WCAG 3.56:1  APCA Lc 37
+    vermilion       #D6743E  WCAG 3.17:1  APCA Lc 32
+    reddish purple  #CE6CA4  WCAG 3.11:1  APCA Lc 31
+    normal         17.0 ('orange', 'vermilion')
+    Protanomaly     6.8 ('orange', 'vermilion')
+    Deuteranomaly   4.5 ('orange', 'vermilion')
+    Tritanomaly     5.8 ('orange', 'vermilion')
+
+== dark theme, surface #2B415F, bands (0.66, 0.76), chroma cap 0.16
+  six series, two bands, maximin worst-case 8.5:
+    band L=0.66: orange
+    band L=0.76: sky blue
+    band L=0.66: bluish green
+    band L=0.76: yellow
+    band L=0.66: blue
+    band L=0.66: reddish purple
+    orange          #C18500  WCAG 3.27:1  APCA Lc 33
+    sky blue        #40BEFF  WCAG 4.94:1  APCA Lc 52
+    bluish green    #00AC7E  WCAG 3.56:1  APCA Lc 37
+    yellow          #C1B508  WCAG 4.90:1  APCA Lc 51
+    blue            #0D9AEC  WCAG 3.37:1  APCA Lc 35
+    reddish purple  #D564A6  WCAG 3.07:1  APCA Lc 31
+    normal         10.9 ('sky blue', 'blue')
+    Protanomaly     9.4 ('sky blue', 'blue')
+    Deuteranomaly   9.2 ('orange', 'yellow')
+    Tritanomaly     8.5 ('bluish green', 'blue')
+  best 4 series in ONE band (L=0.66): worst-case 8.5
+    orange          #C18500  WCAG 3.27:1  APCA Lc 33
+    bluish green    #00AC7E  WCAG 3.56:1  APCA Lc 37
+    blue            #0D9AEC  WCAG 3.37:1  APCA Lc 35
+    reddish purple  #D564A6  WCAG 3.07:1  APCA Lc 31
+    normal         39.1 ('bluish green', 'blue')
+    Protanomaly    13.1 ('blue', 'reddish purple')
+    Deuteranomaly  16.9 ('bluish green', 'reddish purple')
+    Tritanomaly     8.5 ('bluish green', 'blue')
+  best 5 series in ONE band (L=0.76): worst-case 5.1
+    orange          #E9A100  WCAG 4.73:1  APCA Lc 49
+    sky blue        #40BEFF  WCAG 4.94:1  APCA Lc 52
+    bluish green    #00D099  WCAG 5.17:1  APCA Lc 54
+    vermilion       #FF8F52  WCAG 4.60:1  APCA Lc 48
+    reddish purple  #F884C6  WCAG 4.48:1  APCA Lc 47
+    normal         18.5 ('orange', 'vermilion')
+    Protanomaly     7.8 ('orange', 'vermilion')
+    Deuteranomaly   5.5 ('orange', 'vermilion')
+    Tritanomaly     5.1 ('orange', 'vermilion')
+exit 0

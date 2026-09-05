@@ -115,7 +115,11 @@ STARVATION = 100000
 CLOCK_SYNTHETIC, CLOCK_REAL = "synthetic", "real"
 # Where a chrome-headless-shell may be found when neither --shell nor
 # OP_HEADLESS_SHELL names one.
-SHELL_GLOBS = ("~/.cache/puppeteer/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
+# where the shell may be found, best first. The first is where CI installs
+# it, so a local checkout and a runner look in the same place; /tmp is last
+# because anything there is one reboot from gone.
+SHELL_GLOBS = ("~/.cache/op-headless-shell/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
+               "~/.cache/puppeteer/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
                "./chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell",
                "/tmp/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell")
 # The clock this run drives the pages with (set by main).

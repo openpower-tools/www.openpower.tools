@@ -1,6 +1,6 @@
 # opt-chart research, facet 2: accessibility and colour
 
-Facet: accessibility and colour for data charts, state of the art 2024 to 2026. Every cited page was fetched and read on 2026-09-03; bibliography entries marked [excerpt] were read through search-result excerpts of the page rather than a full fetch. Figures marked "computed here" are not from a source: they come from the scripts in /tmp/chart-research/src (refit.py to refit4.py, run with `uv run --with colour-science --with numpy python refit3.py`). Those scripts use the WCAG relative-luminance formula from the Understanding documents, Oklab matrices cross-checked against the published inverse coefficients and against colour-science to four decimals, CIEDE2000 and Machado 2009 simulation at severity 1.0 from colour-science, and the APCA-W3 0.0.98G-4g constants as transcribed in a third-party Rust port. Treat the computed numbers as reproducible estimates, not measurements.
+Facet: accessibility and colour for data charts, state of the art 2024 to 2026. Every cited page was fetched and read on 2026-09-03; bibliography entries marked [excerpt] were read through search-result excerpts of the page rather than a full fetch. Figures marked "computed here" are not from a source: they come from the scripts in docs/research/chart-element/palette (refit.py to refit4.py, run with `uv run --with colour-science --with numpy python refit3.py`). Those scripts use the WCAG relative-luminance formula from the Understanding documents, Oklab matrices cross-checked against the published inverse coefficients and against colour-science to four decimals, CIEDE2000 and Machado 2009 simulation at severity 1.0 from colour-science, and the APCA-W3 0.0.98G-4g constants as transcribed in a third-party Rust port. Treat the computed numbers as reproducible estimates, not measurements.
 
 ## Summary
 
@@ -179,7 +179,7 @@ Priority 3 (later):
 
 ## Bibliography
 
-All entries accessed 2026-09-03. Entries marked [excerpt] were read through search-result excerpts of the page rather than a full fetch. Computed figures come from /tmp/chart-research/src/refit.py, refit2.py, refit3.py and refit4.py (Python, colour-science and numpy under uv).
+All entries accessed 2026-09-03. Entries marked [excerpt] were read through search-result excerpts of the page rather than a full fetch. Computed figures come from docs/research/chart-element/palette/refit.py, refit2.py, refit3.py and refit4.py (Python, colour-science and numpy under uv).
 
 - Understanding SC 1.4.11 Non-text Contrast. W3C WAI, WCAG 2.2. https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html. Graphical objects, line-chart and pie examples, anti-aliasing note, testing principles.
 - Understanding SC 1.4.1 Use of Color. W3C WAI. https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html. Colour not the only cue; 3:1 lightness counts as a second cue; G111, G14, F13.
