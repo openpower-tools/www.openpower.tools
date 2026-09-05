@@ -798,3 +798,78 @@ because the state it guards is real but Chrome repairs it before the next
 frame, and the film's cue press has no pre-fix evidence at all, because the
 rebuild replaced the tree before that run could be staged and no such
 evidence was made up to fill the gap.
+
+## Phase 5 close-out (2026-09-05)
+
+Phase 5 gave decision 14 its measurement. The emitter had reserved 6.5 px
+a character, which is right for no string the chart draws. `op-assets`
+now reads the served woff2 with ttf-parser and emits an advance table per
+weight into `op-chart` as a generated source, so the renderer measures
+without a font file, a build script or a dependency of its own. A test
+regenerates the table and compares it byte for byte, and a second test
+measures the strings the chart draws straight out of the woff2 again and
+asks the two for the same number. The table records the family, weight
+and style it was read from, so the element can ask a browser for exactly
+that face and the check cannot drift from the widths it stands in for.
+
+With real widths the tick labels no longer need the `alt` class or the
+container query that hid every second one below 480 px. Every row of
+labels now goes through one function, and the time labels are thinned by
+whether a label clears its neighbour rather than by counting. Where the
+box has room every tick keeps its label; where it does not, the ones that
+cannot clear are dropped and the survivors stay on their own rules, which
+a test proves by comparing each one's x against the rule it belongs to.
+`textLength` is emitted only on the gridline values, which must fit the
+axis gutter.
+
+The runtime fallback is decision 14's last clause. The element asks
+`FontFaceSet.check` for the face the tables record and, when it is
+missing, waits for `fonts.ready`, measures its own strings with
+`measureText` on an offscreen canvas and re-lays out once against the
+ratio it finds. The decision is a pure function of two facts, and its
+flag goes up when the element leaves to wait rather than when the
+measurement lands, so a tick, a re-render, a theme change or a resize
+arriving in between is told to wait instead of starting a second
+measurement.
+
+What the phase actually established is larger than the stories asked for,
+and is written up in `font-metrics-2026-09.md` with its sources. In
+short: a De Bruijn sweep of order 2 over the 95 characters the tables
+cover proved them exact to inside the engine's own sixty-fourth-pixel
+grid over all 9025 ordered pairs; kerning tightens far more often than it
+loosens, so the summed advances are always the wider number and a label
+placed by them is reserved generously rather than crowded; a shaper
+reproduces the browser to 0.0074 px; and reading GPOS by hand is a trap,
+because OpenType applies the first matching subtable within a lookup and
+the obvious class expansion gets four pairs wrong.
+
+Three checks watch it from outside. The specimen sheets set every string
+the chart draws with the face's own metrics drawn over them, which
+settles what a number cannot: ink is narrower than advance by the side
+bearings, so the two are not comparable and the sound comparison is the
+browser's own laid-out width. The label check reads the chart's labels
+out of the built site's own page at 900 px, at 360 px, and at 360 px
+reached by resizing, measures each box from the glyphs the browser laid
+out, and finds nothing overlapping at any of them, the closest being 1.4
+px apart. With the served faces blocked, all five gridline values stayed
+pinned to their `textLength` slot to the hundredth of a pixel. And the
+gate now emits every page twice and requires the same bytes, since the
+pre-rendered chart is what a reader without scripts is served and every
+step that produces it is a pure function.
+
+Two things were got wrong first and are worth recording. `:state(hydrated)`
+is not the signal for "the element drew this": the element only reports it
+when it adopts the pre-render it was served, and when the served one is
+the wrong width it draws its own while the state stays false. And a
+comparator that prints the first 160 characters of a differing line tells
+a reader nothing when the line is 22,000 characters of markup, all of
+which is identical up to the change.
+
+One thing the phase found and did not fix. The specimen and sweep runs
+drive Chrome's new headless, which keeps a glyph's advance; the
+interaction report drives chrome-headless-shell, whose default rounds
+every advance to a whole pixel. Nothing published is wrong, but the two
+harnesses do not measure text the same way, and aligning them changes
+rendered pixels, so the frame comparator's baselines move in the same
+commit. That is a deliberate change to make on its own, not a side effect
+of the first text check that needs it.
