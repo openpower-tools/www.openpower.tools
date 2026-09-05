@@ -8,12 +8,21 @@
 //! frame, and [`frames`] holds the artefacts to what a reader would
 //! notice rather than to their bytes.
 //!
+//! [`specimens`] asks a different question of the same browser: the chart
+//! places its labels from a table of advances, and only pixels can say
+//! whether that sum is the width the browser lays out and how much ink a
+//! label puts on its surface. It lays out the specimen page, measures a
+//! capture of it, and [`sheet`] draws the contact sheet a person reads.
+//!
 //! Native only, and dependency-light on purpose: the JSON comes from
 //! op-chart's reader and the colour maths from op-colour, so the numbers
 //! here are the ones the site itself is built and tested with.
 
 pub mod checks;
 pub mod frames;
+pub mod sheet;
+pub mod specimens;
+pub mod sweep;
 
 /// What a comparison found: a line for each thing that differed, a closing
 /// line for the reader, and whether the run should fail.

@@ -18,3 +18,15 @@ path = "src/bin/compare_checks.rs"
 [[bin]]
 name = "compare-frames"
 path = "src/bin/compare_frames.rs"
+
+[[bin]]
+name = "specimen-page"
+path = "src/bin/specimen_page.rs"
+
+[[bin]]
+name = "specimen-measure"
+path = "src/bin/specimen_measure.rs"
+
+[[bin]]
+name = "sweep-measure"
+path = "src/bin/sweep_measure.rs"
