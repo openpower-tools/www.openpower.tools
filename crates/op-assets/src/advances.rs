@@ -71,6 +71,64 @@ pub const DRAWN: &[Drawn] = &[
     },
 ];
 
+/// A table whose presence means a table of per-character advances cannot
+/// say what an engine will draw, with why and what to do instead.
+struct CannotStandFor {
+    tag: &'static str,
+    because: &'static str,
+    instead: &'static str,
+}
+
+/// The faces this crate refuses to measure.
+///
+/// A table of advances is a claim about what every engine will draw. For
+/// a static face carrying neither of these the claim holds to inside the
+/// grid a browser rounds to, which the sweep measured over every ordered
+/// pair. These two break it in ways no table can express, so the honest
+/// thing is to refuse rather than emit numbers that are wrong on some
+/// platform and right on the one they were generated on.
+const CANNOT_STAND_FOR: &[CannotStandFor] = &[
+    CannotStandFor {
+        tag: "trak",
+        because: "CoreText applies an AAT tracking table automatically, adjusting every \
+                  glyph's advance by the size it is drawn at, so Safari would set this \
+                  face at widths no fixed table can predict",
+        instead: "serve a copy with the tracking table removed, or measure this face in \
+                  the browser at runtime instead of from a table",
+    },
+    CannotStandFor {
+        tag: "fvar",
+        because: "a variable face's advances depend on the instance drawn, so a table \
+                  read at one instance is wrong for every other",
+        instead: "serve a static instance, which is what this crate already carries for \
+                  every face, and generate from that",
+    },
+];
+
+/// Refuse a face whose engine will not do what a table of advances says.
+///
+/// `face` is how the refusal names it to whoever has to act on it.
+pub fn refuse_unsupported(ttf: &[u8], face: &str) -> Result<(), String> {
+    let font = harfrust::FontRef::from_index(ttf, 0).map_err(|e| format!("{face}: {e}"))?;
+    for unsupported in CANNOT_STAND_FOR {
+        let tag = harfrust::Tag::new(
+            unsupported
+                .tag
+                .as_bytes()
+                .try_into()
+                .expect("a four character tag"),
+        );
+        if font.table_data(tag).is_some() {
+            return Err(format!(
+                "{face} carries a `{}` table, so an advance table cannot stand for it: {}. \
+                 To fix it, {}.",
+                unsupported.tag, unsupported.because, unsupported.instead
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The bytes of a face, decoded from the served woff2 to the TrueType
 /// `ttf-parser` reads.
 fn face_ttf(assets: &Path, drawn: &Drawn) -> Vec<u8> {
@@ -81,8 +139,13 @@ fn face_ttf(assets: &Path, drawn: &Drawn) -> Vec<u8> {
     let path = assets.join(entry.path);
     let woff2 =
         std::fs::read(&path).unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-    woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
-        .unwrap_or_else(|e| panic!("cannot decode {}: {e:?}", entry.path))
+    let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
+        .unwrap_or_else(|e| panic!("cannot decode {}: {e:?}", entry.path));
+    // every path that measures a face comes through here, so this is where
+    // a face the tables cannot stand for has to stop
+    let named = format!("{} {} {}", drawn.family, drawn.weight, drawn.style);
+    refuse_unsupported(&ttf, &named).unwrap_or_else(|e| panic!("{e}"));
+    ttf
 }
 
 /// The advance of every covered character, in thousandths of the em, read
@@ -440,6 +503,77 @@ mod tests {
         let mut once = claimed.clone();
         once.dedup();
         assert_eq!(claimed, once, "two faces share one table: {claimed:?}");
+    }
+
+    /// A copy of `ttf` in which the table tagged `from` is tagged `to`
+    /// instead, which is how a face carrying a table none of ours has can
+    /// be tested against without carrying such a face in the repository.
+    ///
+    /// Only the four bytes of the tag in the table directory move, so
+    /// every offset and length stays valid and the face is otherwise the
+    /// one it was made from. The directory must stay in tag order, since
+    /// that is what a reader is entitled to assume, and this asserts it
+    /// rather than hoping: a rename that broke the order would make the
+    /// test pass for the wrong reason, by hiding the table instead of
+    /// adding it.
+    fn with_table_renamed(ttf: &[u8], from: &str, to: &str) -> Vec<u8> {
+        let mut out = ttf.to_vec();
+        let count = usize::from(u16::from_be_bytes([out[4], out[5]]));
+        let record = |i: usize| 12 + i * 16;
+        let tag_at = |bytes: &[u8], i: usize| {
+            String::from_utf8_lossy(&bytes[record(i)..record(i) + 4]).into_owned()
+        };
+        let found = (0..count)
+            .find(|i| tag_at(&out, *i) == from)
+            .unwrap_or_else(|| panic!("no {from} table to rename"));
+        out[record(found)..record(found) + 4].copy_from_slice(to.as_bytes());
+        let tags: Vec<String> = (0..count).map(|i| tag_at(&out, i)).collect();
+        let mut sorted = tags.clone();
+        sorted.sort();
+        assert_eq!(
+            tags, sorted,
+            "renaming {from} to {to} broke the directory's order"
+        );
+        out
+    }
+
+    /// The guard fires, names the face and the table, and says what to do.
+    ///
+    /// The face is synthesised rather than found, because the point of the
+    /// guard is faces this repository does not carry: a test that waited
+    /// for one to arrive would never run.
+    #[test]
+    fn a_face_the_tables_cannot_stand_for_is_refused() {
+        let ttf = face_ttf(&assets(), &DRAWN[0]);
+        // prep is the last table by tag in these faces and trak sorts after
+        // it, so the rename leaves the directory in order
+        for (from, to, expect) in [("prep", "trak", "CoreText"), ("gasp", "fvar", "instance")] {
+            let doctored = with_table_renamed(&ttf, from, to);
+            let refused = refuse_unsupported(&doctored, "a synthesised face")
+                .expect_err("a face carrying {to} must be refused");
+            assert!(refused.contains("a synthesised face"), "{refused}");
+            assert!(refused.contains(to), "{refused}");
+            assert!(refused.contains(expect), "{refused}");
+            assert!(refused.contains("To fix it"), "{refused}");
+        }
+    }
+
+    /// And the guard is not simply always unhappy: every face this crate
+    /// serves passes it, including the ones the chart never draws in.
+    #[test]
+    fn every_served_face_is_one_the_tables_can_stand_for() {
+        let assets = assets();
+        let mut checked = 0usize;
+        for entry in MANIFEST {
+            let path = assets.join(entry.path);
+            let woff2 = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let ttf = woff2_patched::convert_woff2_to_ttf(&mut woff2.as_slice())
+                .unwrap_or_else(|e| panic!("{}: {e:?}", entry.path));
+            let named = format!("{} {} {}", entry.family, entry.weight, entry.style);
+            refuse_unsupported(&ttf, &named).unwrap_or_else(|e| panic!("{e}"));
+            checked += 1;
+        }
+        assert!(checked >= 12, "only {checked} faces checked");
     }
 
     /// Every covered character exists in every measured face and carries a
