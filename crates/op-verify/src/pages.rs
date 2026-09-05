@@ -97,44 +97,58 @@ fn first_divergence(a: &str, b: &str) -> usize {
         + 1
 }
 
-/// Every `<slug>/index.html` under `root`, keyed by the slug, so two
-/// directories can be compared by what they emitted rather than by
-/// walking them in step.
+/// The slugs the page build owns, asked of `op-pages` itself rather than
+/// discovered by walking a directory.
+///
+/// Walking was the first version and it was wrong. The built site also
+/// carries `index.html` files nothing in the page build emits, because the
+/// interaction report publishes itself into `dist/reports/interactions/`,
+/// and a comparison that counted those called every one of them a page
+/// the second emission had lost. Asking the crate that emits the pages
+/// cannot drift from what it emits.
+pub fn owned_slugs() -> Vec<String> {
+    let mut out: Vec<String> = op_pages::PAGES
+        .iter()
+        .map(|p| p.slug.to_owned())
+        .chain(op_pages::generated_pages().into_iter().map(|p| p.slug))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Where each owned slug's page sits under `root`, for the slugs that are
+/// there at all.
 pub fn pages(root: &Path) -> Result<BTreeMap<String, PathBuf>, String> {
-    let mut out = BTreeMap::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.file_name().is_some_and(|n| n == "index.html") {
-                let slug = path
-                    .parent()
-                    .and_then(|p| p.strip_prefix(root).ok())
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                out.insert(
-                    if slug.is_empty() {
-                        ".".to_owned()
-                    } else {
-                        slug
-                    },
-                    path,
-                );
-            }
-        }
-    }
-    Ok(out)
+    Ok(found(root, &owned_slugs()))
+}
+
+/// The same over a stated set of slugs, which is what lets this be tested
+/// without standing up the real page build.
+fn found(root: &Path, slugs: &[String]) -> BTreeMap<String, PathBuf> {
+    slugs
+        .iter()
+        .filter_map(|slug| {
+            let path = root.join(slug).join("index.html");
+            path.is_file().then(|| (slug.clone(), path))
+        })
+        .collect()
 }
 
 /// Compare what two directories emitted. An empty result is two identical
 /// emissions.
 pub fn compare(first: &Path, second: &Path) -> Result<Vec<Difference>, String> {
-    let a = pages(first)?;
-    let b = pages(second)?;
+    compare_slugs(first, second, &owned_slugs())
+}
+
+/// The same, over a stated set of slugs.
+pub fn compare_slugs(
+    first: &Path,
+    second: &Path,
+    slugs: &[String],
+) -> Result<Vec<Difference>, String> {
+    let a = found(first, slugs);
+    let b = found(second, slugs);
     let mut out = Vec::new();
     for (slug, path) in &a {
         let Some(other) = b.get(slug) else {
@@ -177,14 +191,23 @@ pub fn compare(first: &Path, second: &Path) -> Result<Vec<Difference>, String> {
 /// What the gate prints: the count that was compared and every
 /// difference, or the count and that they matched.
 pub fn verdict(first: &Path, second: &Path) -> Result<(Vec<String>, bool), String> {
-    let counted = pages(first)?.len();
+    verdict_over(first, second, &owned_slugs())
+}
+
+/// The same, over a stated set of slugs.
+pub fn verdict_over(
+    first: &Path,
+    second: &Path,
+    slugs: &[String],
+) -> Result<(Vec<String>, bool), String> {
+    let counted = found(first, slugs).len();
     if counted == 0 {
         return Err(format!(
             "{}: no <slug>/index.html to compare, so nothing was checked",
             first.display()
         ));
     }
-    let differences = compare(first, second)?;
+    let differences = compare_slugs(first, second, slugs)?;
     let mut lines = vec![format!(
         "{counted} pages emitted twice, from {} and {}.",
         first.display(),
@@ -203,6 +226,11 @@ pub fn verdict(first: &Path, second: &Path) -> Result<(Vec<String>, bool), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slugs a test wrote, as `compare_slugs` wants them.
+    fn slugs(pages: &[(&str, &str)]) -> Vec<String> {
+        pages.iter().map(|(slug, _)| (*slug).to_owned()).collect()
+    }
 
     /// A directory of pages, written under a fresh temporary root.
     fn emitted(name: &str, pages: &[(&str, &str)]) -> PathBuf {
@@ -231,8 +259,9 @@ mod tests {
             "same-b",
             &[("component/chart", body), ("about", "<p>x</p>")],
         );
-        assert_eq!(compare(&a, &b).expect("compare"), vec![]);
-        let (lines, ok) = verdict(&a, &b).expect("verdict");
+        let set = slugs(&[("component/chart", ""), ("about", "")]);
+        assert_eq!(compare_slugs(&a, &b, &set).expect("compare"), vec![]);
+        let (lines, ok) = verdict_over(&a, &b, &set).expect("verdict");
         assert!(ok);
         assert!(lines[0].starts_with("2 pages emitted twice"), "{lines:?}");
         let _ = std::fs::remove_dir_all(&a);
@@ -257,7 +286,7 @@ mod tests {
                 "<title>a</title>\n<text x=\"46.1\">0s</text>",
             )],
         );
-        let found = compare(&a, &b).expect("compare");
+        let found = compare_slugs(&a, &b, &slugs(&[("component/chart", "")])).expect("compare");
         assert_eq!(found.len(), 1, "{found:?}");
         match &found[0] {
             Difference::Differs {
@@ -303,7 +332,7 @@ mod tests {
                 &(head.clone() + "<text x=\"46.1\">0s</text>"),
             )],
         );
-        let found = compare(&a, &b).expect("compare");
+        let found = compare_slugs(&a, &b, &slugs(&[("component/chart", "")])).expect("compare");
         assert_eq!(found.len(), 1, "{found:?}");
         let said = found[0].to_string();
         assert!(said.contains("46.0") && said.contains("46.1"), "{said}");
@@ -322,7 +351,8 @@ mod tests {
     fn a_page_emitted_only_once_is_reported_either_way() {
         let a = emitted("miss-a", &[("about", "<p>x</p>"), ("gone", "<p>y</p>")]);
         let b = emitted("miss-b", &[("about", "<p>x</p>"), ("new", "<p>z</p>")]);
-        let found = compare(&a, &b).expect("compare");
+        let set = slugs(&[("about", ""), ("gone", ""), ("new", "")]);
+        let found = compare_slugs(&a, &b, &set).expect("compare");
         assert!(
             found.contains(&Difference::Missing("gone".to_owned())),
             "{found:?}"
@@ -335,13 +365,47 @@ mod tests {
         let _ = std::fs::remove_dir_all(&b);
     }
 
+    /// The built site carries `index.html` files the page build never
+    /// emits: the interaction report publishes itself into
+    /// `dist/reports/interactions/`. The first version of this walked the
+    /// directory and called every one of them a page the second emission
+    /// had lost, which is how it failed in CI while passing locally, where
+    /// the report had not been published yet. Only the slugs the page
+    /// build owns are compared.
+    #[test]
+    fn a_report_published_into_the_site_is_not_a_page_the_build_lost() {
+        let a = emitted(
+            "pub-a",
+            &[
+                ("about", "<p>x</p>"),
+                ("reports/interactions/opt-button", "<p>report</p>"),
+                ("reports/interactions/opt-chart", "<p>report</p>"),
+            ],
+        );
+        let b = emitted("pub-b", &[("about", "<p>x</p>")]);
+        let owned = slugs(&[("about", "")]);
+        assert_eq!(compare_slugs(&a, &b, &owned).expect("compare"), vec![]);
+        // and it is not vacuous: name one of them and it is missing again
+        let named = slugs(&[("about", ""), ("reports/interactions/opt-button", "")]);
+        let found = compare_slugs(&a, &b, &named).expect("compare");
+        assert_eq!(
+            found,
+            vec![Difference::Missing(
+                "reports/interactions/opt-button".to_owned()
+            )],
+            "{found:?}"
+        );
+        let _ = std::fs::remove_dir_all(&a);
+        let _ = std::fs::remove_dir_all(&b);
+    }
+
     /// A trailing newline is a difference the line walk cannot see, so it
     /// is reported by length rather than passed over.
     #[test]
     fn a_change_the_lines_agree_on_is_still_a_difference() {
         let a = emitted("len-a", &[("about", "<p>x</p>")]);
         let b = emitted("len-b", &[("about", "<p>x</p>\n")]);
-        let found = compare(&a, &b).expect("compare");
+        let found = compare_slugs(&a, &b, &slugs(&[("about", "")])).expect("compare");
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(matches!(found[0], Difference::Length { .. }), "{found:?}");
         let _ = std::fs::remove_dir_all(&a);
@@ -356,7 +420,7 @@ mod tests {
         std::fs::create_dir_all(&a).expect("root");
         let b = emitted("empty-b", &[]);
         std::fs::create_dir_all(&b).expect("root");
-        assert!(verdict(&a, &b).is_err());
+        assert!(verdict_over(&a, &b, &slugs(&[("nothing", "")])).is_err());
         let _ = std::fs::remove_dir_all(&a);
         let _ = std::fs::remove_dir_all(&b);
     }

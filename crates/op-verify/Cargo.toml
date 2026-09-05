@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 op-chart.workspace = true
+op-pages.workspace = true
 op-colour.workspace = true
 png.workspace = true
 
