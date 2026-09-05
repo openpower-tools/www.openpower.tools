@@ -103,6 +103,20 @@ jobs:
           uv run tools/interaction_report/report.py --dist dist --out /tmp/rep-again --clock synthetic --only opt-theme-toggle,opt-switch,opt-chart --checks-json /tmp/rep-again/checks.json
           target/release/compare-checks reports/interactions/checks.json /tmp/rep-again/checks.json
           target/release/compare-frames reports/interactions /tmp/rep-again
+      - name: Reproducibility (the page build emits the same bytes twice)
+        # The pre-rendered chart is what a reader without scripts is served,
+        # and it comes out of op-pages rather than the element. Every step
+        # from the data block to the markup is a pure function, so a second
+        # emission must be byte identical; anything else means something on
+        # that path is reading a clock, an iteration order or the filesystem.
+        # op-pages writes into TRUNK_STAGING_DIR and reads only index.html
+        # from it, so a second emission needs nothing but that file copied.
+        run: |
+          set -e
+          mkdir -p /tmp/pages-again
+          cp dist/index.html /tmp/pages-again/
+          TRUNK_STAGING_DIR=/tmp/pages-again cargo run --quiet --release -p op-pages
+          target/release/compare-pages dist /tmp/pages-again
       - uses: actions/upload-artifact@v7
         if: always()
         with:

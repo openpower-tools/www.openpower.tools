@@ -34,3 +34,7 @@ path = "src/bin/sweep_measure.rs"
 [[bin]]
 name = "labels-measure"
 path = "src/bin/labels_measure.rs"
+
+[[bin]]
+name = "compare-pages"
+path = "src/bin/compare_pages.rs"

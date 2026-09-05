@@ -21,6 +21,7 @@
 pub mod checks;
 pub mod frames;
 pub mod labels;
+pub mod pages;
 pub mod sheet;
 pub mod specimens;
 pub mod sweep;
