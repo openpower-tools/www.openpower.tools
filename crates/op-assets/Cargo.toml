@@ -6,6 +6,9 @@ edition.workspace = true
 publish.workspace = true
 license.workspace = true
 repository.workspace = true
+# Two bins now: the Trunk hook and the advance-table generator. The hook is
+# what `cargo run -p op-assets` means, since Trunk.toml runs it that way.
+default-run = "op-assets"
 
 [dependencies]
 base64 = "0.22"
@@ -14,3 +17,12 @@ sha2 = "0.10"
 ttf-parser = "0.25"
 wasm2map = "0.1.0"
 woff2-patched = "0.4"
+
+[dev-dependencies]
+# The consumer of the generated tables, so the measurement they exist for
+# can be checked against the faces they were read from.
+op-chart.workspace = true
+
+[[bin]]
+name = "emit-advances"
+path = "src/bin/emit_advances.rs"

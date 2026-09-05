@@ -16,7 +16,7 @@
 //! widget's slider or the decoration a film's control bar leaves it -
 //! arrives in [`Aria`].
 
-use crate::{Layout, Mark, Series, Spec};
+use crate::{Face, Layout, Mark, Series, Spec, TEXT_PX, Wanted};
 
 /// The emitted markup and the geometry it was drawn with.
 #[derive(Clone, Debug, PartialEq)]
@@ -171,8 +171,10 @@ fn tick_text(v: f64, step: f64) -> String {
     format!("{v:.places$}")
 }
 
-/// Minimum vertical distance between end labels (12 px text plus a gap).
-const LABEL_GAP: f64 = 14.0;
+/// Clear space between two end labels, one above the other. With the line
+/// box at [`TEXT_PX`] this leaves 14 px between their baselines, which is
+/// what the film has always drawn.
+const END_LABEL_GAP: f64 = 2.0;
 /// The side of a pointer target in CSS px: the 24 by 24 minimum SC 2.5.8
 /// asks of every target a pointer must hit.
 const TARGET: f64 = 24.0;
@@ -194,63 +196,63 @@ const THUMB_NAME: &str = "Time";
 /// hangs past the viewport is clipped: a ring that lost its lower half
 /// would be the focus indicator drawn at 1 px.
 const RING_WIDTH: f64 = 2.0;
-/// Room a label takes per character. A static emitter has no font
-/// metrics, so the width is estimated: 6.5 px is generous for the 12 px
-/// face the stylesheet sets, which is the safe direction when the estimate
-/// is what decides whether two labels collide.
-const LABEL_ADVANCE: f64 = 6.5;
 /// Clear space between two labels that share a row: the mark labels along
-/// the bottom edge, and the cue labels along the top.
+/// the bottom edge, the tick labels under the axis, and the cue labels
+/// along the top.
 const ROW_LABEL_GAP: f64 = 8.0;
 /// How far back from a series' last point its end label is anchored. The
 /// swatch runs from 16 to 4 px behind that point, and the label ends 4 px
 /// before the swatch.
 const END_LABEL_X: f64 = 20.0;
+/// How far below the swatch its end label's baseline sits, so the text
+/// reads on the line the swatch draws.
+const END_LABEL_BASELINE: f64 = 4.0;
 /// How far right of its own rule a chapter's label starts.
 const CHAPTER_LABEL_X: f64 = 4.0;
-/// The room a label takes, at [`LABEL_ADVANCE`] to the character.
-fn label_width(text: &str) -> f64 {
-    text.chars().count() as f64 * LABEL_ADVANCE
-}
+/// How far a label's box reaches above its baseline at the size the chart
+/// is set in: the em box, which is what the drawing's rows are spaced by.
+const LABEL_ABOVE: f64 = TEXT_PX * crate::labels::ASCENT;
+/// How far it reaches below its baseline, with [`LABEL_ABOVE`].
+const LABEL_BELOW: f64 = TEXT_PX * crate::labels::DESCENT;
 
 /// Markers per series at most, spread over the samples.
 const MAX_MARKERS: usize = 8;
 
+/// A label centred on the cue it names, which may slide by half its own
+/// width and still cover it: the mark labels along the bottom edge and the
+/// band's label over the middle of its span.
+fn centred(at: f64, width: f64) -> Wanted {
+    Wanted {
+        at,
+        back: width / 2.0,
+        ahead: width / 2.0,
+        reach: width / 2.0,
+    }
+}
+
 /// Where each mark's label sits along the bottom edge, and `None` for a
 /// mark that keeps its rule and loses its label. Every label wants the
-/// middle of its own rule; the spreader shifts them apart by the widest
-/// label's slot and pulls the run inside the plot, as it spreads the end
-/// labels down the right-hand side. A label the spreader had to push clear
-/// of its own rule points at nothing, so it is dropped rather than drawn
-/// where it misleads: decision 24's greedy removal. Which of two colliding
-/// marks keeps its label is the spreader's answer, not a rule of this
-/// function's own, and it is not always the earlier mark. The first sweep
-/// pushes later labels away from earlier ones, so where the run fits, the
-/// earlier mark keeps its place and the later one is moved and dropped;
-/// but a run that overflows the right-hand end is pinned there by the
-/// second sweep and pulled left, and then it is an earlier label that is
-/// carried off its own mark and dropped. Two marks at one instant are
-/// moved alike, and the spreader's stable order leaves the label with
-/// whichever the block lists first. One pass, with no reshuffle into the
-/// room a dropped label leaves.
-fn mark_labels(marks: &[Mark], l: &Layout) -> Vec<Option<f64>> {
-    let widths: Vec<f64> = marks.iter().map(|m| label_width(&m.label)).collect();
-    let widest = widths.iter().copied().fold(0.0, f64::max);
-    let wanted: Vec<f64> = marks.iter().map(|m| l.x_of(m.t)).collect();
-    let placed = crate::labels::spread(
-        &wanted,
-        widest + ROW_LABEL_GAP,
-        l.left + widest / 2.0,
-        l.width - l.right - widest / 2.0,
-    );
-    marks
+/// middle of its own rule and will slide by half its own width to clear a
+/// neighbour, which leaves it over the rule it names; further than that it
+/// would point at nothing, so it is dropped instead (decision 24's greedy
+/// removal). Which of two colliding marks keeps its label is the row's
+/// answer and not a rule of this function's own: the row is placed left to
+/// right, so the earlier mark keeps its place, and where two marks fall at
+/// one instant the label goes to whichever the block lists first.
+///
+/// `edge` is the end labels' column, which this row stops clear of as the
+/// top row does: an end label sits anywhere in the plot's height,
+/// including the row a mark label runs along, and it names a series, which
+/// is the one thing colour alone may not say.
+fn mark_labels(marks: &[Mark], l: &Layout, edge: f64) -> Vec<Option<f64>> {
+    let row: Vec<Option<Wanted>> = marks
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let moved = (placed[i] - wanted[i]).abs();
-            (!m.label.is_empty() && moved <= widths[i] / 2.0).then_some(placed[i])
+        .map(|m| {
+            (!m.label.is_empty())
+                .then(|| centred(l.x_of(m.t), l.label_width(&m.label, Face::Regular)))
         })
-        .collect()
+        .collect();
+    crate::labels::place(&row, ROW_LABEL_GAP, l.left, edge - ROW_LABEL_GAP)
 }
 
 /// Keep min and max per pixel column, and only when a series carries more
@@ -366,55 +368,40 @@ fn path_d(points: &[Option<(f64, f64)>], l: &Layout) -> String {
     d
 }
 
-/// The left edge of the column the direct end labels take in the top right
-/// corner, and the plot's own right edge where no series carries one. The
-/// labels along the top row stop clear of it: an end label is what tells
-/// one series from another where colour cannot, so it is never moved and
-/// never covered (decision 24).
-fn end_label_edge(spec: &Spec, drawn: &[Drawn], l: &Layout) -> f64 {
+/// Where each end label came to rest: its baseline, and the left edge of
+/// the room it takes. A series with no name, no samples or no room left in
+/// the column is not here, because what is not drawn is in nobody's way.
+fn end_label_boxes(
+    spec: &Spec,
+    drawn: &[Drawn],
+    placed: &[Option<f64>],
+    l: &Layout,
+) -> Vec<(f64, f64)> {
     spec.series
         .iter()
         .zip(drawn)
-        .filter(|(s, dr)| !s.label.is_empty() && !dr.present.is_empty())
-        .map(|(s, dr)| {
-            let (t, _) = dr.present[dr.present.len() - 1];
-            l.x_of(t) - END_LABEL_X - label_width(&s.label)
+        .zip(placed)
+        .filter_map(|((s, dr), at)| {
+            let (&at, &(t, _)) = ((*at).as_ref()?, dr.present.last()?);
+            Some((
+                at,
+                l.x_of(t) - END_LABEL_X - l.label_width(&s.label, Face::Bold),
+            ))
         })
-        .fold(l.width - l.right, f64::min)
+        .collect()
 }
 
-/// Which of a row's labels are drawn. `boxes` is the horizontal extent each
-/// label wants, `None` for a cue with nothing to say, and `edge` is the
-/// first x the row may not reach into.
-///
-/// One greedy pass along the row with [`ROW_LABEL_GAP`] of clear space
-/// between neighbours, which is decision 24's greedy placement and removal:
-/// a label that cannot take the place it wants is dropped rather than drawn
-/// over its neighbour, because a label shifted off its own cue points at
-/// nothing. Two contests are settled here. Against another cue label the
-/// earlier one wins, always: the pass runs left to right, nothing is ever
-/// moved, and so the label nearer the playhead at the axis origin is the
-/// one that keeps its place. Against the end labels the end labels win,
-/// always: `edge` is reserved before the pass begins, so a cue label near
-/// the end of the timeline is the one that goes.
-fn place_row(boxes: &[Option<(f64, f64)>], edge: f64) -> Vec<bool> {
-    // a label with no box sorts last and is never placed, so it can never
-    // stand in the way of one with something to draw
-    let lefts: Vec<f64> = boxes
-        .iter()
-        .map(|b| b.map_or(f64::INFINITY, |(a, _)| a))
-        .collect();
-    let mut drawn = vec![false; boxes.len()];
-    let mut taken = f64::NEG_INFINITY;
-    for i in crate::labels::order_by(&lefts) {
-        let Some((a, b)) = boxes[i] else { continue };
-        if a < taken + ROW_LABEL_GAP || b + ROW_LABEL_GAP > edge {
-            continue;
-        }
-        drawn[i] = true;
-        taken = taken.max(b);
-    }
-    drawn
+/// The first x a row of labels on `baseline` may not reach into: the
+/// leftmost end label that shares that row's band, and the plot's own
+/// right edge where none of them does. An end label tells one series from
+/// another where colour cannot, so it is never moved and never covered
+/// (decision 24); an end label a hundred pixels higher up the column is
+/// not over this row at all, and reserves nothing from it.
+fn row_edge(baseline: f64, ends: &[(f64, f64)], l: &Layout) -> f64 {
+    ends.iter()
+        .filter(|(at, _)| (at - baseline).abs() < LABEL_ABOVE + LABEL_BELOW)
+        .map(|(_, left)| *left)
+        .fold(l.width - l.right, f64::min)
 }
 
 /// Draw `spec` in the box and scales `l` describes, naming nothing beyond
@@ -489,33 +476,69 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
             l.left,
             l.width - l.right
         ));
+        // The one slot in the drawing a label must fit: the left margin,
+        // which the layout fixes at `left` and no measurement can widen.
+        // A gridline's value is written into the room between the box's
+        // own edge and the plot's, so a face wider than the one measured
+        // here would run it off the viewBox, where it is clipped and read
+        // by nobody. `textLength` pins the drawn advance to the measured
+        // one, which is the guard decision 14 keeps for a fixed slot and
+        // for nothing else: every other label is placed from its width and
+        // dropped when it does not fit, and pinning those would stretch
+        // short words to no purpose.
+        let value = tick_text(*v, vstep);
         out.push_str(&format!(
-            "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\">{}</text>",
+            "<text class=\"axis\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" textLength=\"{:.1}\">{value}</text>",
             l.left - 6.0,
             y + 4.0,
-            tick_text(*v, vstep)
+            l.label_width(&value, Face::Regular)
         ));
     }
+    // The time axis: a rule at every step and as many of their labels as
+    // the row has room for, thinned left to right from the measured widths
+    // (decision 14). The first label keeps its place, and one that cannot
+    // clear the last one drawn by [`ROW_LABEL_GAP`] is dropped; a tick
+    // label may not be moved at all, since it names the rule it is centred
+    // on. The row is the whole box, not the plot: the axis band runs the
+    // full width under the margins.
+    //
+    // The thinning holds however the box is scaled, because the labels and
+    // the gaps between them scale together, which is what let the
+    // container query that used to drop every second label go.
     let step = if l.end <= 5.0 { 0.5 } else { 1.0 };
+    let mut times: Vec<f64> = Vec::new();
     let mut t = 0.0;
-    // every second time label is `alt`, so a narrow box can drop half of
-    // them (a container query in the consumer's stylesheet) and keep the
-    // axis readable without the emitter knowing the rendered width
-    let mut k = 0usize;
     while t <= l.end + 1e-9 {
-        let x = l.x_of(t);
+        times.push(t);
+        t += step;
+    }
+    let row: Vec<Option<Wanted>> = times
+        .iter()
+        .map(|t| {
+            let width = l.label_width(&format!("{t}s"), Face::Regular);
+            Some(Wanted {
+                at: l.x_of(*t),
+                back: width / 2.0,
+                ahead: width / 2.0,
+                reach: 0.0,
+            })
+        })
+        .collect();
+    let ticks = crate::labels::place(&row, ROW_LABEL_GAP, 0.0, l.width);
+    for (t, at) in times.iter().zip(&ticks) {
+        let x = l.x_of(*t);
         out.push_str(&format!(
             "<line class=\"tick\" x1=\"{x:.1}\" x2=\"{x:.1}\" y1=\"{:.1}\" y2=\"{:.1}\"{ns}/>",
             l.plot_bottom(),
             l.plot_bottom() + 4.0
         ));
-        let alt = if k % 2 == 1 { " alt" } else { "" };
-        out.push_str(&format!(
-            "<text class=\"axis tick-label{alt}\" x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{t}s</text>",
-            l.axis_label_y()
-        ));
-        t += step;
-        k += 1;
+        // a rule with no room for its label keeps the rule
+        if let Some(x) = at {
+            out.push_str(&format!(
+                "<text class=\"axis tick-label\" x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\">{t}s</text>",
+                l.axis_label_y()
+            ));
+        }
     }
     let mid_y = (l.plot_bottom() + l.top) / 2.0;
     out.push_str(&format!(
@@ -534,20 +557,60 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
         .iter()
         .map(|s| drawn_of(&decimate(&s.points, &l), &l))
         .collect();
+    // The end labels are a row too, placed down the right-hand column
+    // rather than along a line: each wants the baseline that sits on its
+    // series' last point, and one with a neighbour in the way moves by
+    // whole rows, down before up, until it clears. A label may be moved
+    // anywhere in the plot's height, because what says which series it
+    // names is the swatch drawn beside it rather than where it sits, so it
+    // is dropped only when the column itself is full.
+    //
+    // Settled first, though drawn far below this: they name the series,
+    // which is the one thing colour alone may not say, so the rows that
+    // share a band with one of them stop clear of it (decision 24).
+    let ends: Vec<Option<Wanted>> = spec
+        .series
+        .iter()
+        .zip(&drawn)
+        .map(|(s, dr)| {
+            (!s.label.is_empty())
+                .then(|| dr.present.last())
+                .flatten()
+                .map(|(_, v)| Wanted {
+                    at: l.y_of(*v) - 5.0 + END_LABEL_BASELINE,
+                    back: LABEL_ABOVE,
+                    ahead: LABEL_BELOW,
+                    reach: l.plot_height(),
+                })
+        })
+        .collect();
+    let placed = crate::labels::place(&ends, END_LABEL_GAP, l.top, l.plot_bottom());
+    let end_boxes = end_label_boxes(spec, &drawn, &placed, &l);
     // the top row: the band's label over the middle of its span, then one
     // per chapter just right of its own rule, all placed in one pass so no
-    // two of them overlap and none reaches into the end labels' column
+    // two of them overlap and none reaches into the end labels' column.
+    // The band's label is centred on its span and slides like a mark's; a
+    // chapter's is drawn from its own rule and will not be moved at all,
+    // since any move takes it off the rule it names.
     let row_y = l.top + 10.0;
-    let mut row_boxes: Vec<Option<(f64, f64)>> = vec![spec.band.as_ref().and_then(|band| {
-        let half = label_width(&band.label) / 2.0;
+    let mut row: Vec<Option<Wanted>> = vec![spec.band.as_ref().and_then(|band| {
         let mid = (l.x_of(band.t0) + l.x_of(band.t1)) / 2.0;
-        (!band.label.is_empty()).then_some((mid - half, mid + half))
+        (!band.label.is_empty()).then(|| centred(mid, l.label_width(&band.label, Face::Regular)))
     })];
-    row_boxes.extend(spec.chapters.iter().skip(1).map(|ch| {
-        let left = l.x_of(ch.t) + CHAPTER_LABEL_X;
-        (!ch.label.is_empty()).then_some((left, left + label_width(&ch.label)))
+    row.extend(spec.chapters.iter().skip(1).map(|ch| {
+        (!ch.label.is_empty()).then(|| Wanted {
+            at: l.x_of(ch.t) + CHAPTER_LABEL_X,
+            back: 0.0,
+            ahead: l.label_width(&ch.label, Face::Regular),
+            reach: 0.0,
+        })
     }));
-    let top_row = place_row(&row_boxes, end_label_edge(spec, &drawn, &l));
+    let top_row = crate::labels::place(
+        &row,
+        ROW_LABEL_GAP,
+        l.left,
+        row_edge(row_y, &end_boxes, &l) - ROW_LABEL_GAP,
+    );
 
     // the band is a wash under everything else the chart draws, so it goes
     // in a group of its own before the marks and the series. It carries no
@@ -571,10 +634,9 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
         ));
         // a label with no room of its own on the top row is dropped; the
         // wash still shows the span it named
-        if top_row[0] {
+        if let Some(x) = top_row[0] {
             out.push_str(&format!(
-                "<text class=\"band-label\" x=\"{:.1}\" y=\"{row_y:.1}\" text-anchor=\"middle\">{}</text>",
-                (a + b) / 2.0,
+                "<text class=\"band-label\" x=\"{x:.1}\" y=\"{row_y:.1}\" text-anchor=\"middle\">{}</text>",
                 escape(&band.label)
             ));
         }
@@ -588,7 +650,11 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
     // edge, where they cross no gridline label and no chapter label.
     let mark_row = l.plot_bottom() - 4.0;
     out.push_str("<g class=\"marks\">");
-    for (m, at) in spec.marks.iter().zip(mark_labels(&spec.marks, &l)) {
+    for (m, at) in spec.marks.iter().zip(mark_labels(
+        &spec.marks,
+        &l,
+        row_edge(mark_row, &end_boxes, &l),
+    )) {
         let x = l.x_of(m.t);
         // the rule carries its own time, as its target does, so the
         // element can name the mark a pointer or a key has reached
@@ -616,10 +682,9 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
             l.plot_bottom()
         ));
         // as with a mark, a label with no room is dropped and the rule stays
-        if *at {
+        if let Some(x) = at {
             out.push_str(&format!(
-                "<text class=\"marklabel\" x=\"{:.1}\" y=\"{row_y:.1}\">{}</text>",
-                x + CHAPTER_LABEL_X,
+                "<text class=\"marklabel\" x=\"{x:.1}\" y=\"{row_y:.1}\">{}</text>",
                 escape(&ch.label)
             ));
         }
@@ -629,16 +694,6 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
     out.push_str("</g></g></g>");
 
     out.push_str("<g class=\"series\">");
-    // end labels first, so their vertical placement can be settled together
-    let wanted: Vec<f64> = spec
-        .series
-        .iter()
-        .zip(&drawn)
-        .filter(|(s, _)| !s.label.is_empty())
-        .filter_map(|(_, dr)| dr.present.last().map(|(_, v)| l.y_of(*v) - 5.0))
-        .collect();
-    let mut placed =
-        crate::labels::spread(&wanted, LABEL_GAP, l.top + 10.0, l.plot_bottom() - 3.0).into_iter();
     for (i, (s, dr)) in spec.series.iter().zip(&drawn).enumerate() {
         // one graphics-object per series, named from the samples the block
         // carried, so a reader is told what each line holds without being
@@ -688,10 +743,13 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
                 crate::labels::marker_path(s.index)
             ));
         }
-        if labelled {
+        // the baseline the column left this series, and nothing where the
+        // column was full: a swatch with no name beside it says less than
+        // the markers the series already carries
+        if let Some(baseline) = placed[i] {
             let (t, _) = dr.present[dr.present.len() - 1];
             let x = l.x_of(t);
-            let y = placed.next().unwrap_or(l.top + 10.0);
+            let y = baseline - END_LABEL_BASELINE;
             out.push_str(&format!(
                 "<line class=\"swatch series-{}\" x1=\"{:.1}\" x2=\"{:.1}\" y1=\"{y:.1}\" y2=\"{y:.1}\"{ns}/>",
                 s.index,
@@ -701,9 +759,8 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
             // the end label draws the name the group already carries, so
             // it is hidden rather than announced a second time
             out.push_str(&format!(
-                "<text class=\"endlabel\" x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" aria-hidden=\"true\">{}</text>",
+                "<text class=\"endlabel\" x=\"{:.1}\" y=\"{baseline:.1}\" text-anchor=\"end\" aria-hidden=\"true\">{}</text>",
                 x - END_LABEL_X,
-                y + 4.0,
                 escape(&s.label)
             ));
         }
@@ -1053,6 +1110,47 @@ pub(crate) mod fixtures {
             .collect()
     }
 
+    /// More to say than a narrow box has room for: three series whose
+    /// names are longer than the space beside them, six marks over three
+    /// seconds, a band and two chapters over the top of them. Every row of
+    /// labels the emitter writes is drawn here, and one series ends at the
+    /// bottom of the domain, where its end label meets the mark row.
+    pub fn crowded() -> Spec {
+        let t: Vec<f64> = (0..=30).map(|i| f64::from(i) * 0.1).collect();
+        let rise: Vec<f64> = t.iter().map(|x| 100.0 * (1.0 - (-x * 1.6).exp())).collect();
+        let middle: Vec<f64> = t.iter().map(|x| 20.0 + 40.0 * x / 3.0).collect();
+        let fall: Vec<f64> = t.iter().map(|x| 100.0 * (1.0 - x / 3.0)).collect();
+        Spec {
+            end: 3.0,
+            duration: 3.0,
+            y: crate::layout::PERCENT,
+            ylabel: "% (opacity, left)".to_owned(),
+            chapters: vec![
+                chapter(0.0, "start"),
+                chapter(1.1, "settle"),
+                chapter(2.4, "done"),
+            ],
+            marks: vec![
+                mark(0.2, "first frame"),
+                mark(0.55, "handover"),
+                mark(0.9, "steady"),
+                mark(1.35, "abort"),
+                mark(1.8, "reversal"),
+                mark(2.7, "last frame"),
+            ],
+            band: Some(Band {
+                t0: 1.5,
+                t1: 2.2,
+                label: "warm up".to_owned(),
+            }),
+            series: vec![
+                series("ghost opacity per cent", 3, &t, &rise, 2.4),
+                series("palette blend per cent", 1, &t, &middle, 1.8),
+                series("thumb travel per cent", 2, &t, &fall, 2.0),
+            ],
+        }
+    }
+
     /// Far more samples than the pre-render's plot is wide: about three to
     /// each of its 581 pixel columns, so the emitter really does thin them
     /// down to the two the column needs.
@@ -1071,7 +1169,7 @@ pub(crate) mod fixtures {
 
 #[cfg(test)]
 mod tests {
-    use super::fixtures::{annotated, demo, empty, flight, gaps, many, one_point, ramp};
+    use super::fixtures::{annotated, crowded, demo, empty, flight, gaps, many, one_point, ramp};
     use super::*;
     use crate::{Band, Chapter, Mark, Series};
     use std::collections::{BTreeMap, BTreeSet};
@@ -1182,34 +1280,48 @@ mod tests {
         assert!(svg.contains(">8s</text>") && !svg.contains(">0.5s</text>"));
     }
 
-    /// Every time label carries `tick-label`, and every second one `alt`,
-    /// starting with the second: a narrow box drops the alternates and the
-    /// axis still begins with a label at zero.
+    /// The time labels are thinned from their measured widths, left to
+    /// right, and not by a rule of arithmetic: where the row has room every
+    /// tick is labelled, and where it has not the first label keeps its
+    /// place and the ones that cannot clear it are dropped. Every label
+    /// left is centred on a rule of its own, and the axis always begins
+    /// with a label at zero.
     #[test]
-    fn time_labels_alternate_so_a_narrow_box_can_drop_half_of_them() {
+    fn time_labels_are_thinned_by_what_they_measure_and_not_by_counting() {
         for spec in [demo(), flight()] {
             let svg = film(&spec).svg;
-            let labels: Vec<&str> = svg
-                .match_indices("<text class=\"axis tick-label")
-                .map(|(i, _)| {
-                    let rest = &svg[i + "<text class=\"axis ".len()..];
-                    &rest[..rest.find('"').expect("a closing quote")]
-                })
-                .collect();
-            // one per tick, and no time label escapes the class
+            let labels = labels_of(&svg, "axis tick-label");
+            // the film's box has room for every one of them
             let ticks = svg.matches("<line class=\"tick\"").count();
             assert_eq!(labels.len(), ticks, "{labels:?}");
             assert!(ticks >= 7, "only {ticks} ticks");
-            for (k, class) in labels.iter().enumerate() {
-                let want = if k % 2 == 1 {
-                    "tick-label alt"
-                } else {
-                    "tick-label"
-                };
-                assert_eq!(*class, want, "label {k} of {labels:?}");
-            }
+            assert_eq!(labels[0], "0s");
             // the value-axis labels are not time labels and keep their class
             assert!(svg.contains("<text class=\"axis\" x=\"40.0\""));
+        }
+        // a box too narrow for them all drops the ones that cannot clear
+        // their neighbour and keeps the rest on their own rules
+        let mut long = demo();
+        long.end = 30.0;
+        let l = Layout::sized(360.0, 135.0, long.end);
+        let svg = render(&long, l).svg;
+        let kept = labels_of(&svg, "axis tick-label");
+        assert_eq!(svg.matches("<line class=\"tick\"").count(), 31);
+        assert!(
+            kept.len() > 2 && kept.len() < 31,
+            "31 rules and {} labels",
+            kept.len()
+        );
+        assert_eq!(kept[0], "0s");
+        for text in &kept {
+            let t: f64 = text.trim_end_matches('s').parse().expect("a time");
+            assert!(
+                svg.contains(&format!(
+                    "<text class=\"axis tick-label\" x=\"{:.1}\"",
+                    l.x_of(t)
+                )),
+                "{text} is not on its own rule"
+            );
         }
         // and the chapter cues are grouped so one rule hides them all
         let svg = film(&flight()).svg;
@@ -2254,14 +2366,15 @@ mod tests {
         assert_eq!(svg.matches("<text class=\"mark-label\"").count(), 2);
     }
 
-    /// The other half of the mark row's contest, which the spreader and
-    /// not the emitter decides: a run of labels that overflows the
-    /// right-hand end is pinned there and pulled left, so it is the later
-    /// mark that stays on its rule and the earlier one that is carried off
-    /// its own and dropped. The reverse of the case above, and the reason
-    /// the emitter claims no rule of its own about which mark wins.
+    /// The same contest against the right-hand end of the row, where the
+    /// spreader this replaced used to reverse itself: it pinned an
+    /// overflowing run to the end and pulled it left, so there and only
+    /// there the later mark kept its label. One rule now holds everywhere
+    /// on the row, because the row is placed from the low end and nothing
+    /// pins it: the earlier mark keeps its label and the later one slides
+    /// as far as half its own width, then goes.
     #[test]
-    fn a_run_of_mark_labels_against_the_right_end_drops_the_earlier_one() {
+    fn a_run_of_mark_labels_against_the_right_end_keeps_the_earlier_one() {
         let spec = Spec {
             marks: vec![
                 Mark {
@@ -2276,23 +2389,27 @@ mod tests {
             ..demo()
         };
         let l = Layout::sized(640.0, 240.0, spec.end);
-        // the two want the same room, and the slot the earlier one takes
-        // pushes the later past the last place a label may sit
+        // the two want the same room, and the room the earlier one takes
+        // runs past the last place the later one may slide to
         let (a, b) = (l.x_of(2.7), l.x_of(2.8));
-        let widest = label_width("first frame");
-        let hi = l.width - l.right - widest / 2.0;
-        assert!(b - a < widest + ROW_LABEL_GAP, "{a} and {b} are clear");
-        assert!(a + widest + ROW_LABEL_GAP > hi, "the run fits after all");
+        let (first, second) = (
+            l.label_width("first frame", Face::Regular),
+            l.label_width("steady", Face::Regular),
+        );
+        assert!(
+            b - a < (first + second) / 2.0 + ROW_LABEL_GAP,
+            "{a} and {b} are clear"
+        );
         let svg = render(&spec, l).svg;
-        // both rules are drawn, and the label left is the later mark's
+        // both rules are drawn, and the label left is the earlier mark's
         assert_eq!(own_marks(&svg).matches("<line class=\"mark\"").count(), 2);
-        assert_eq!(labels_of(&svg, "mark-label"), ["steady"]);
+        assert_eq!(labels_of(&svg, "mark-label"), ["first frame"]);
         // it is still over its own rule, within half its own width
         let x = number(&svg, "<text class=\"mark-label\"", "x");
-        assert!(
-            (x - b).abs() <= label_width("steady") / 2.0,
-            "{x} is not on {b}"
-        );
+        assert!((x - a).abs() <= first / 2.0, "{x} is not on {a}");
+        // and it is the last label of the row that runs past the box's
+        // own edge, not the first: the run is placed from the low end
+        assert!(x + first / 2.0 <= l.width - l.right, "{x} is off the plot");
     }
 
     /// The text of every label written with `class`, in the order drawn.
@@ -2338,8 +2455,9 @@ mod tests {
         // the two boxes the emitter's own ruler asks for, overlapping by
         // far more than the clear space a shared row needs
         let chapter = l.x_of(1.2) + CHAPTER_LABEL_X;
-        let ends = chapter + label_width("settle");
-        let opens = (l.x_of(1.2) + l.x_of(1.6)) / 2.0 - label_width("settle") / 2.0;
+        let ends = chapter + l.label_width("settle", Face::Regular);
+        let opens =
+            (l.x_of(1.2) + l.x_of(1.6)) / 2.0 - l.label_width("settle", Face::Regular) / 2.0;
         assert!(opens < ends, "{opens} is clear of {ends}");
         let svg = render(&spec, l).svg;
         // the chapter's draws and the band's is dropped: the pass runs left
@@ -2390,11 +2508,11 @@ mod tests {
         let svg = render(&spec, l).svg;
         // the column the one end label takes: its own anchor back by the
         // room its text needs, read off the markup
-        let column =
-            number(&svg, "<text class=\"endlabel\"", "x") - label_width(&spec.series[0].label);
+        let column = number(&svg, "<text class=\"endlabel\"", "x")
+            - l.label_width(&spec.series[0].label, Face::Bold);
         // the chapter label wants a box that ends well inside the plot and
         // runs into that column, so the column is what drops it
-        let right = l.x_of(2.3) + CHAPTER_LABEL_X + label_width("settled");
+        let right = l.x_of(2.3) + CHAPTER_LABEL_X + l.label_width("settled", Face::Regular);
         assert!(
             right + ROW_LABEL_GAP < l.width - l.right,
             "{right} is off the plot, not into the column"
@@ -2428,19 +2546,20 @@ mod tests {
             }),
             ..demo()
         };
+        // the nameless chapter opens on the middle of the band's own
+        // span, which is a contested place and not an empty one: named, it
+        // is the one that goes, so what keeps the band's label below is
+        // the chapter's silence and not the room it stands in
         spec.chapters.push(Chapter {
-            t: 2.1,
+            t: (1.9 + 2.6) / 2.0,
             label: String::new(),
         });
         let l = Layout::sized(640.0, 240.0, spec.end);
-        // the nameless chapter is where a label of any width at all would
-        // be placed before the band's and leave it no room
-        let empty = l.x_of(2.1) + CHAPTER_LABEL_X;
-        let opens = (l.x_of(1.9) + l.x_of(2.6)) / 2.0 - label_width("settle") / 2.0;
-        assert!(
-            empty < opens && opens - empty < ROW_LABEL_GAP,
-            "{empty} does not crowd {opens}"
-        );
+        let mut named = spec.clone();
+        named.chapters.last_mut().expect("the chapter").label = "crowd".to_owned();
+        let svg = render(&named, l).svg;
+        assert_eq!(labels_of(&svg, "band-label"), ["settle"]);
+        assert_eq!(labels_of(&svg, "marklabel"), ["settle"], "{svg}");
         let svg = render(&spec, l).svg;
         // so the band keeps its label, and the row carries no empty text
         assert_eq!(labels_of(&svg, "band-label"), ["settle"]);
@@ -2626,7 +2745,6 @@ mod tests {
         "axis",
         "tick",
         "tick-label",
-        "alt",
         "bands",
         "band-label",
         "marks",
@@ -2748,5 +2866,326 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains("</script")
         );
+    }
+
+    /// Every `<text>` element in the markup: the attributes it opens with,
+    /// and the text it draws with the entities the emitter wrote turned
+    /// back into the characters a browser draws, since what a measurement
+    /// has to cover is the glyphs and never the markup.
+    fn text_elements(svg: &str) -> Vec<(&str, String)> {
+        svg.split("<text ")
+            .skip(1)
+            .map(|piece| {
+                let (head, rest) = piece.split_once('>').expect("a text element");
+                let body = rest
+                    .split_once('<')
+                    .expect("a closing tag")
+                    .0
+                    .replace("&lt;", "<")
+                    .replace("&gt;", ">")
+                    .replace("&quot;", "\"")
+                    .replace("&#39;", "'")
+                    .replace("&amp;", "&");
+                (head, body)
+            })
+            .collect()
+    }
+
+    /// One attribute of an element's opening tag, empty where it carries
+    /// none.
+    fn head_attr(head: &str, name: &str) -> String {
+        let key = format!("{name}=\"");
+        head.find(&key).map_or(String::new(), |i| {
+            let rest = &head[i + key.len()..];
+            rest[..rest.find('"').expect("a closing quote")].to_owned()
+        })
+    }
+
+    /// The text of every `<text>` node in the markup.
+    fn text_nodes(svg: &str) -> Vec<String> {
+        text_elements(svg).into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// A label as the overlap check reads it: the class it carries, the
+    /// room it takes along x, and the room it takes down the page.
+    type LabelBox = (String, (f64, f64), (f64, f64));
+
+    /// The room every label in the markup takes: its class, the span it
+    /// covers along x, and the span it covers down the page. Measured the
+    /// way the emitter measured it, and boxed by the em box the rows are
+    /// spaced by. The value axis' own name is turned on its side, where a
+    /// width along x means nothing, so it is not one of these.
+    fn label_boxes(svg: &str, l: &Layout) -> Vec<LabelBox> {
+        let mut out = Vec::new();
+        for (head, body) in text_elements(svg) {
+            if !head_attr(head, "transform").is_empty() {
+                continue;
+            }
+            let class = head_attr(head, "class");
+            // the two the stylesheets set in bold
+            let face = if class == "endlabel" || class == "head-t" {
+                Face::Bold
+            } else {
+                Face::Regular
+            };
+            let width = l.label_width(&body, face);
+            let x: f64 = head_attr(head, "x").parse().expect("a number");
+            // the readout travels with the playhead, whose group carries
+            // the offset it is drawn at; a render parks that at zero
+            let x = if class == "head-t" {
+                x + l.x_of(0.0)
+            } else {
+                x
+            };
+            let across = match head_attr(head, "text-anchor").as_str() {
+                "end" => (x - width, x),
+                "middle" => (x - width / 2.0, x + width / 2.0),
+                _ => (x, x + width),
+            };
+            let y: f64 = head_attr(head, "y").parse().expect("a number");
+            out.push((class, across, (y - LABEL_ABOVE, y + LABEL_BELOW)));
+        }
+        out
+    }
+
+    /// How much two spans share.
+    fn overlap((a, b): (f64, f64), (c, d): (f64, f64)) -> f64 {
+        b.min(d) - a.max(c)
+    }
+
+    /// Two boxes that meet edge to edge are not two boxes over each other,
+    /// and a hundredth of a pixel is nothing a screen can draw.
+    const TOUCHING: f64 = 0.01;
+
+    /// The point of decision 14's placement: no two labels the chart draws
+    /// overlap, whatever the box, for a chart with more to say than the
+    /// box has room for. The widths are the element's own: the narrow
+    /// pre-render's, the one its container query drops the chapter cues
+    /// at, and the wide pre-render's, each at the ratio the element is
+    /// drawn on.
+    ///
+    /// The boxes are the measured widths by the em box the rows are spaced
+    /// by, which is the ruler the emitter placed them with. What that
+    /// catches, checked by breaking each of them: a row measured at a size
+    /// the chart is not drawn at (two mark labels 2 px too close at 360
+    /// px), a row that forgets to clear another row (a mark label over an
+    /// end label at 360 px), and a label written outside the placement
+    /// altogether. What it cannot catch is the ruler itself: that the
+    /// tables are the served faces is asserted where the font parser is
+    /// (`op_assets::advances`), against the face rather than against this.
+    #[test]
+    fn no_two_labels_overlap_at_any_of_the_widths_the_element_draws() {
+        let spec = crowded();
+        let mut every_row: BTreeSet<String> = BTreeSet::new();
+        for width in [360.0, 480.0, 640.0] {
+            let l = Layout::sized(width, width / (16.0 / 6.0), spec.end);
+            let svg = render(&spec, l).svg;
+            let boxes = label_boxes(&svg, &l);
+            // the rows that draw at every width are all here, so this is
+            // never quietly comparing two labels and calling it a chart
+            let drawn: BTreeSet<String> = boxes.iter().map(|(c, _, _)| c.clone()).collect();
+            for row in [
+                "axis",
+                "axis tick-label",
+                "endlabel",
+                "head-t",
+                "mark-label",
+            ] {
+                assert!(drawn.contains(row), "no {row} at {width}: {drawn:?}");
+            }
+            assert!(boxes.len() >= 16, "only {} labels at {width}", boxes.len());
+            every_row.extend(drawn);
+            for (i, (class, across, down)) in boxes.iter().enumerate() {
+                assert!(
+                    across.0 >= 0.0 && across.1 <= l.width,
+                    "a {class} runs from {} to {} outside the {width} px box",
+                    across.0,
+                    across.1
+                );
+                assert!(down.0 >= 0.0 && down.1 <= l.height);
+                for (other, theirs, below) in &boxes[i + 1..] {
+                    assert!(
+                        overlap(*across, *theirs) <= TOUCHING || overlap(*down, *below) <= TOUCHING,
+                        "at {width} px a {class} at {across:?} {down:?} lies over \
+                         a {other} at {theirs:?} {below:?}"
+                    );
+                }
+            }
+        }
+        // and over the three boxes every row of labels the emitter writes
+        // was drawn at least once, the band's and the chapters' included
+        assert_eq!(
+            every_row.iter().map(String::as_str).collect::<Vec<&str>>(),
+            [
+                "axis",
+                "axis tick-label",
+                "band-label",
+                "endlabel",
+                "head-t",
+                "mark-label",
+                "marklabel",
+            ]
+        );
+    }
+
+    /// `textLength` pins a label's drawn advance to the measured one, and
+    /// decision 14 emits it only where a label has a slot it must fit. The
+    /// one such slot in this drawing is the left margin, which the layout
+    /// fixes and no measurement can widen, so the gridline values carry it
+    /// and nothing else does: every other label is placed from its own
+    /// width and dropped where it does not fit, and pinning those would
+    /// stretch a short word to no purpose.
+    #[test]
+    fn only_the_gridline_values_are_pinned_to_their_measured_width() {
+        for spec in [crowded(), annotated(), flight()] {
+            let l = Layout::sized(640.0, 240.0, spec.end);
+            let svg = render(&spec, l).svg;
+            let mut pinned = 0;
+            for (head, body) in text_elements(&svg) {
+                let length = head_attr(head, "textLength");
+                if length.is_empty() {
+                    continue;
+                }
+                pinned += 1;
+                // a gridline value, in the margin, pinned to the width the
+                // emitter measured and to no other number
+                assert_eq!(head_attr(head, "class"), "axis");
+                assert_eq!(head_attr(head, "text-anchor"), "end");
+                let x: f64 = head_attr(head, "x").parse().expect("a number");
+                assert!(x <= l.left, "{body} is not in the margin");
+                assert_eq!(
+                    length,
+                    format!("{:.1}", l.label_width(&body, Face::Regular)),
+                    "{body} is pinned to something else"
+                );
+            }
+            // one per gridline, and the only ones in the markup
+            assert_eq!(pinned, value_ticks(&l).len());
+            assert_eq!(svg.matches("textLength").count(), pinned);
+        }
+    }
+
+    /// The correction a consumer applies when the browser is not setting
+    /// the chart in the face the tables were measured from (decision 14):
+    /// the box is told its text measures wider and the drawing reserves
+    /// the wider room. Both of the places a width reaches have to answer,
+    /// so both are read back out of the markup: the `textLength` that pins
+    /// a gridline value to its slot, and the row of tick labels, which is
+    /// placed from the widths and thinned when they no longer clear each
+    /// other.
+    #[test]
+    fn a_box_told_its_text_is_wider_reserves_the_wider_room() {
+        let spec = annotated();
+        let l = Layout::sized(640.0, 240.0, spec.end);
+        let pinned = |l: Layout| -> Vec<f64> {
+            text_elements(&render(&spec, l).svg)
+                .into_iter()
+                .filter_map(|(head, _)| head_attr(head, "textLength").parse().ok())
+                .collect()
+        };
+        let (plain, wide) = (pinned(l), pinned(l.with_text_scale(1.6)));
+        assert!(!plain.is_empty(), "no gridline value was pinned");
+        assert_eq!(plain.len(), wide.len());
+        for (a, b) in plain.iter().zip(&wide) {
+            // the pin is written to a tenth of a pixel, so the corrected
+            // width is the measured one times the scale to that rounding
+            assert!((b - a * 1.6).abs() <= 0.05, "{a} pinned at {b}");
+        }
+        // and the row of tick labels: at some width the row cannot hold
+        // them all, and the ones it cannot hold are dropped rather than
+        // written over their neighbours
+        let ticks = |l: Layout| labels_of(&render(&spec, l).svg, "axis tick-label").len();
+        assert!(ticks(l) > 0);
+        assert!(
+            ticks(l.with_text_scale(4.0)) < ticks(l),
+            "{} labels either way",
+            ticks(l)
+        );
+    }
+
+    /// Decision 14's advance tables are only a measurement if they cover
+    /// what the renderer draws; a character they miss is a guess. Every
+    /// `<text>` node of every fixture, and the axis and clock formatting
+    /// the fixtures never reach (a signed domain, a domain of fractions, a
+    /// four-figure value and a hundredth of a second), falls inside the
+    /// covered block and carries a positive advance in both faces.
+    ///
+    /// This is the renderer's side of the contract. That the numbers are
+    /// the served faces is the generator's, asserted where the font parser
+    /// is (`op_assets::advances`).
+    #[test]
+    fn the_advance_tables_cover_every_character_the_chart_draws() {
+        let mut drawn: Vec<String> = Vec::new();
+        for r in [
+            film(&demo()),
+            film(&flight()),
+            sized(&annotated()),
+            sized(&empty()),
+            sized(&one_point()),
+            sized(&gaps()),
+            sized(&many()),
+        ] {
+            drawn.extend(text_nodes(&r.svg));
+        }
+        assert!(drawn.len() > 30, "the fixtures drew no text: {drawn:?}");
+        // the value axis over domains the fixtures do not reach
+        for (v, step) in [(-12.5, 0.5), (0.125, 0.001), (1234.0, 100.0)] {
+            drawn.push(tick_text(v, step));
+        }
+        // the time axis at both of its steps, and what the readout spells
+        for t in [0.0f64, 0.5, 12.0] {
+            drawn.push(format!("{t}s"));
+        }
+        drawn.push(format!("{:.2}s", 3.297));
+        // and what a name says, the one place a raw f64 is written out
+        drawn.push(announced(0.300_000_000_000_000_04));
+        drawn.push(announced(-42.5));
+
+        let at = |c: char| c as usize - crate::advances::FIRST as usize;
+        let faces: [(&str, &[u16; crate::advances::COUNT]); 2] = [
+            ("400", &crate::advances::PLEX_SANS_400),
+            ("700", &crate::advances::PLEX_SANS_700),
+        ];
+        for text in &drawn {
+            for c in text.chars() {
+                assert!(
+                    (crate::advances::FIRST..=crate::advances::LAST).contains(&c),
+                    "{c:?} in {text:?} is outside the covered block"
+                );
+                for (weight, table) in faces {
+                    assert!(
+                        table[at(c)] > 0,
+                        "{c:?} has no advance in Plex Sans {weight}"
+                    );
+                }
+            }
+        }
+        // a label of more than one word is measured across its spaces, and
+        // a zero there would close every gap in the measured width
+        for (weight, table) in faces {
+            assert!(table[at(' ')] > 0, "Plex Sans {weight} has no space");
+            // the ten digits share one advance in both served faces, which
+            // is decision 14's tabular figures: they are the faces' own
+            // default here, so the drawing declares no `font-variant` and
+            // the stylesheets need no rule of their own
+            let widths: BTreeSet<u16> = ('0'..='9').map(|c| table[at(c)]).collect();
+            assert_eq!(widths.len(), 1, "Plex Sans {weight} figures: {widths:?}");
+        }
+        // and what that buys, said through the measurement rather than
+        // through the table: a tick label's width follows the count of its
+        // digits and never which digits they are, so the axis is placed on
+        // one number whatever the clock reads and a playhead crossing from
+        // 0.99 to 1.00 never moves a label. Measured through a box, which
+        // is how the emitter measures, and this one asks for no correction
+        let l = Layout::sized(640.0, 240.0, 3.0);
+        for face in [Face::Regular, Face::Bold] {
+            for (a, b) in [("0.00s", "8.88s"), ("100", "999"), ("-12.5", "-90.7")] {
+                let (a, b) = (l.label_width(a, face), l.label_width(b, face));
+                assert!((a - b).abs() < 1e-12, "{a} against {b}");
+            }
+            // a digit more is wider, so this is not a measurement that
+            // ignores its input
+            assert!(l.label_width("100", face) > l.label_width("10", face));
+        }
     }
 }

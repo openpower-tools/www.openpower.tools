@@ -1186,8 +1186,12 @@ pub(crate) const PEEK_BAND: &str = ".peek-band";
 pub(crate) fn chart_css() -> String {
     let rules = chart_rules();
     let cues = cue_indicator_css();
+    // the size the renderer measured its labels at, so the two cannot
+    // drift: a stylesheet that set another size would leave every label
+    // placed against a width the browser does not draw (decision 14)
+    let text = op_chart::TEXT_PX;
     format!(
-        ".chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: 12px; }}
+        ".chart {{ max-width: 100%; height: auto; cursor: ew-resize; display: block; touch-action: none; font-family: var(--op-font-sans); font-size: {text}px; }}
 .charttitle {{ font-size: 12px; color: var(--op-text); margin-bottom: 0.25rem; }}
 {CHART_SHAPE_CSS}
 .chart .band, .chart .peek-band {{ fill: var(--op-accent); fill-opacity: 0.08; }}
@@ -2436,30 +2440,35 @@ mod chart_reference {
         assert_eq!(svg.matches("role=\"button\"").count(), d.chapters.len() - 1);
     }
 
-    /// Decision 24's floor: no text in a chart is under 12 px. The film drew
-    /// 11 px into a layout whose label widths the emitter estimates for a
-    /// 12 px face, so the two agree now, as the film and the element do.
-    /// At that size the labels still fit the film's fixed 900 by 268 box.
+    /// Decision 24's floor: no text in a chart is under 12 px. The film
+    /// drew 11 px into a layout whose labels the emitter measures for a 12
+    /// px face, so the two agree now, as the film and the element do: both
+    /// stylesheets take the size from the renderer that measured against
+    /// it. At that size the labels still fit the film's fixed 900 by 268
+    /// box, and no two of them share a row.
     #[test]
     fn the_chart_text_is_twelve_px_and_the_labels_still_fit_the_film_box() {
-        /// The room a character takes at 12 px, the emitter's own estimate.
-        const ADVANCE: f64 = 6.5;
         let sizes = |css: &str| -> Vec<f64> {
             css.split("font-size: ")
                 .skip(1)
                 .filter_map(|rest| rest.split("px").next()?.parse::<f64>().ok())
                 .collect()
         };
+        assert_eq!(op_chart::TEXT_PX, 12.0);
         let ours = sizes(&chart_css());
         assert!(
-            ours.contains(&12.0) && ours.iter().all(|px| *px >= 12.0),
+            ours.contains(&op_chart::TEXT_PX) && ours.iter().all(|px| *px >= op_chart::TEXT_PX),
             "{ours:?}"
         );
         // and the element's chart is drawn at that same size, so a reader
-        // who meets both meets one size of text
-        let theirs = sizes(include_str!("chart.rs"));
+        // who meets both meets one size of text. The rendered stylesheet
+        // rather than this file's source, since both now write the size
+        // the renderer holds and neither spells it out
+        let theirs = sizes(&super::super::chart::stylesheet(
+            super::super::chart::DEFAULT_RATIO,
+        ));
         assert!(
-            theirs.contains(&12.0) && theirs.iter().all(|px| *px >= 12.0),
+            theirs.contains(&op_chart::TEXT_PX) && theirs.iter().all(|px| *px >= op_chart::TEXT_PX),
             "{theirs:?}"
         );
         for d in [demo(), flight()] {
@@ -2476,12 +2485,16 @@ mod chart_reference {
                 let x: f64 = attr(head, "x").parse().expect("a number");
                 // the readout travels with the playhead, whose group
                 // carries the offset it is written at
-                let x = x + if attr(head, "class") == "head-t" {
-                    l.x_of(0.0)
+                let class = attr(head, "class");
+                let x = x + if class == "head-t" { l.x_of(0.0) } else { 0.0 };
+                // measured in the face the stylesheet sets it in, which is
+                // the ruler the emitter placed it with (decision 14)
+                let face = if class == "endlabel" || class == "head-t" {
+                    op_chart::Face::Bold
                 } else {
-                    0.0
+                    op_chart::Face::Regular
                 };
-                let w = body.chars().count() as f64 * ADVANCE;
+                let w = op_chart::text_width(body, op_chart::TEXT_PX, face);
                 let (left, right) = match attr(head, "text-anchor").as_str() {
                     "end" => (x - w, x),
                     "middle" => (x - w / 2.0, x + w / 2.0),

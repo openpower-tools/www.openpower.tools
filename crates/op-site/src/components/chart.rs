@@ -75,7 +75,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use op_chart::{Data, Layout};
+use op_chart::{Data, Face, Layout};
 use op_webc::{CustomElement, ElementDefinition, set_state};
 use wasm_bindgen::prelude::*;
 use web_sys::{Element, Event, HtmlElement, ShadowRoot};
@@ -117,10 +117,18 @@ pub(crate) const NARROW_WIDTH: f64 = 360.0;
 /// container width its 12 px labels, scaled by the viewBox, fall under the
 /// 10 px floor.
 pub(crate) const NARROW_AT: f64 = 532.0;
-/// Below this container width every second time label and the chapter cues
-/// are dropped: they cannot be read at that size and they overprint. The
-/// cue's button goes with its tick, so a chapter that is not drawn is not
-/// named to a reader and not hittable by a pointer either.
+/// Below this container width the chapter cues are dropped: a rule, a tick
+/// on the track and a 24 px target every one of which stands within a few
+/// pixels of the next at that size. The cue's button goes with its tick, so
+/// a chapter that is not drawn is not named to a reader and not hittable by
+/// a pointer either.
+///
+/// The time labels used to go with them, every second one carrying `alt`
+/// for this rule to hide. The renderer measures them now and thins them
+/// itself (decision 14), and that thinning holds at every size the box is
+/// drawn at, because a label and the gap beside it scale together: what a
+/// container query could add here is dropping labels that do fit. So the
+/// rule keeps the cues and has given up the labels.
 const DROP_AT: f64 = 480.0;
 /// What a chapter cue's rect and its button both carry in `data-cue`, and
 /// what the rule that drops them below [`DROP_AT`] names them by. One
@@ -202,6 +210,144 @@ pub(crate) fn tick_change(prev_x: f64, x: f64, prev_label: &str, label: &str) ->
 /// what a listener hears.
 pub(crate) fn readout(t: f64) -> String {
     format!("{t:.2}s")
+}
+
+// ---- the face the widths were measured from ----------------------------
+
+/// How far the drawn text has to measure from the tables before the chart
+/// is worth drawing again. A face within a hundredth of what was measured
+/// moves the widest label the chart writes by about a pixel, well inside
+/// the clear space a row keeps between neighbours, so a re-render for it
+/// would cost a frame and move nothing.
+const TEXT_SCALE_SLACK: f64 = 0.01;
+
+/// The CSS `font` shorthand for a face the advance tables were measured
+/// from: what `FontFaceSet.check` is asked about, and what a canvas is set
+/// to before it measures. Style, weight, size, family, with the family
+/// quoted, because a family of several words is one family and not a list
+/// of them.
+///
+/// Every part of it comes out of the generated tables' own record of what
+/// was measured ([`op_chart::Face::measured`]), so the face asked for
+/// cannot drift from the face the widths describe (decision 14).
+pub(crate) fn css_font(face: Face) -> String {
+    let measured = face.measured();
+    format!(
+        "{} {} {}px \"{}\"",
+        measured.style,
+        measured.weight,
+        op_chart::TEXT_PX,
+        measured.family
+    )
+}
+
+/// What the element does about the face its widths were measured from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Fallback {
+    /// Wait for the fonts and then measure what the browser is really
+    /// setting the chart in.
+    Measure,
+    /// Leave the drawing as it is.
+    Wait,
+}
+
+/// Whether to measure the drawn text now, and the flag the element keeps
+/// afterwards. `present` is what `FontFaceSet.check` answered for the
+/// faces the tables cover, and `decided` whether a measurement has already
+/// been settled on.
+///
+/// The pair is what makes the correction happen once. The flag does not
+/// mean "the drawing has been corrected" but "the decision has been
+/// taken": it goes up when the element leaves to wait for the fonts, not
+/// when the measurement lands, so a tick, a re-render, a theme change or a
+/// resize arriving in between comes back through here and is told to wait.
+/// Nothing that happens after the first answer can ask for a second one,
+/// which is what keeps this off the per-tick path (decision 14).
+pub(crate) fn measure_or_wait(present: bool, decided: bool) -> (Fallback, bool) {
+    if present || decided {
+        (Fallback::Wait, decided)
+    } else {
+        (Fallback::Measure, true)
+    }
+}
+
+/// The correction to every measured width, from what a browser said the
+/// chart's own strings measure. `pairs` is, for each string, what the
+/// browser measured beside what the tables measure.
+///
+/// The ratio of the totals, not the mean of the ratios: widths add along a
+/// row, so the totals are what the drawing is laid out from, and a long
+/// string should count for more than a short one. One number is all the
+/// layout carries anyway ([`op_chart::Layout::with_text_scale`]), so it
+/// stands for both weights and every string in them.
+///
+/// [`None`] where there is nothing to compare, or where what came back is
+/// not a measurement: a browser that measured everything as nothing, or
+/// answered with something that is not a number, leaves the drawing as it
+/// was rather than collapsing it.
+pub(crate) fn text_scale(pairs: &[(f64, f64)]) -> Option<f64> {
+    let drawn: f64 = pairs.iter().map(|(drawn, _)| drawn).sum();
+    let tables: f64 = pairs.iter().map(|(_, tables)| tables).sum();
+    let scale = drawn / tables;
+    (tables > 0.0 && scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
+/// The text a chart is about to draw, each run with the face it is set in:
+/// the series' end labels and the playhead readout in bold, the value
+/// axis' name and the cue labels in regular. The spec is the one the
+/// renderer is handed, so this is the drawing's own text and not a sample
+/// of prose chosen here; the readout is taken at the end of the film,
+/// which is its longest reading and the one place digits are certain to
+/// be in the list whatever a block is labelled.
+fn drawn_text(spec: &op_chart::Spec) -> Vec<(Face, String)> {
+    let mut out: Vec<(Face, String)> = Vec::new();
+    for series in &spec.series {
+        if !series.label.is_empty() {
+            out.push((Face::Bold, series.label.clone()));
+        }
+    }
+    out.push((Face::Bold, readout(spec.end)));
+    // the first chapter starts the film and draws no label of its own
+    let cues = spec
+        .chapters
+        .iter()
+        .skip(1)
+        .map(|c| &c.label)
+        .chain(spec.marks.iter().map(|m| &m.label))
+        .chain(spec.band.iter().map(|b| &b.label))
+        .chain(std::iter::once(&spec.ylabel));
+    for label in cues {
+        if !label.is_empty() {
+            out.push((Face::Regular, label.clone()));
+        }
+    }
+    out
+}
+
+/// What a browser measures each of those runs at, beside what the advance
+/// tables measure it at, in the order [`drawn_text`] listed them.
+///
+/// The canvas is asked for the same face the tables were read from
+/// ([`css_font`]). Where the browser has that face the two numbers agree
+/// and there is nothing to correct. Where it has not, the canvas
+/// substitutes a face of its own, which need not be the one the page falls
+/// back to, so the ratio that comes of this is an estimate for a
+/// substituted face and not a measurement of it. That is enough: the
+/// tables are exact whenever the site's own face is used, which is every
+/// load but a blocked or failed font, and what the estimate buys in the
+/// load that is left is room reserved on the right order rather than
+/// labels written over each other.
+fn measured_against_tables(text: &[(Face, String)]) -> Option<Vec<(f64, f64)>> {
+    let canvas = web_sys::OffscreenCanvas::new(1, 1).ok()?;
+    let context: web_sys::OffscreenCanvasRenderingContext2d =
+        canvas.get_context("2d").ok()??.dyn_into().ok()?;
+    let mut out = Vec::with_capacity(text.len());
+    for (face, run) in text {
+        context.set_font(&css_font(*face));
+        let drawn = context.measure_text(run).ok()?.width();
+        out.push((drawn, op_chart::text_width(run, op_chart::TEXT_PX, *face)));
+    }
+    Some(out)
 }
 
 /// Names as a sentence joins them: commas between all but the last two,
@@ -915,6 +1061,10 @@ pub fn prerender(block: &str, initial_width: f64, ratio: f64) -> Result<Prerende
 pub(crate) fn stylesheet(ratio: f64) -> String {
     let rules = chart_rules();
     let cues = cue_indicator_css();
+    // the size the renderer measured its labels at, so the two cannot
+    // drift: a stylesheet that set another size would leave every label
+    // placed against a width the browser does not draw (decision 14)
+    let text = op_chart::TEXT_PX;
     // the default box is written as the fraction it was designed as
     let ratio = if ratio == DEFAULT_RATIO {
         "16 / 6".to_owned()
@@ -927,7 +1077,7 @@ pub(crate) fn stylesheet(ratio: f64) -> String {
 :host([hidden]) {{ display: none; }}
 figure.chart {{ margin: 0; }}
 .live {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
-svg.chart {{ display: block; width: 100%; height: auto; aspect-ratio: var(--op-chart-ratio, {ratio}); font-family: var(--op-font-sans); font-size: 12px; touch-action: pan-y; }}
+svg.chart {{ display: block; width: 100%; height: auto; aspect-ratio: var(--op-chart-ratio, {ratio}); font-family: var(--op-font-sans); font-size: {text}px; touch-action: pan-y; }}
 svg.chart.narrow {{ display: none; }}
 {CHART_SHAPE_CSS}
 .chart .band, .chart .peek-band {{ fill: var(--op-band); fill-opacity: 0.5; }}
@@ -948,7 +1098,7 @@ details.data summary {{ cursor: pointer; color: var(--op-muted); }}
 details.data table {{ border-collapse: collapse; margin-top: 0.4rem; font-variant-numeric: tabular-nums; }}
 details.data th, details.data td {{ border-bottom: 1px solid var(--op-border); padding: 0.1rem 0.5rem 0.1rem 0; text-align: left; }}
 @container (max-width: {NARROW_AT}px) {{ svg.chart.wide {{ display: none; }} svg.chart.narrow {{ display: block; }} }}
-@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} .chart .targets g[data-cue=\"{CHAPTER_CUE}\"] {{ display: none; }} }}"
+@container (max-width: {DROP_AT}px) {{ .chapters {{ display: none; }} .chart .targets g[data-cue=\"{CHAPTER_CUE}\"] {{ display: none; }} }}"
     )
 }
 
@@ -1582,6 +1732,9 @@ struct Live {
     ratio: f64,
     /// The width to draw at when the host cannot be measured.
     fallback_width: f64,
+    /// The correction the text measurement left, 1 until there is one
+    /// ([`Follower::correct_text`]).
+    text_scale: f64,
     /// The clock the last tick delivered.
     time: f64,
     /// An animation frame is already asked for.
@@ -1595,6 +1748,16 @@ struct Live {
     label: String,
     /// The element whose ticks reach us, once it has been resolved.
     bound: Option<Element>,
+}
+
+impl Live {
+    /// The box to draw in at `width`: the ratio the element was given, the
+    /// data's own end, and whatever correction the text measurement left.
+    /// Every box this element draws or hit-tests against is built here, so
+    /// a correction reaches all of them.
+    fn layout_at(&self, width: f64) -> Layout {
+        Layout::sized(width, width / self.ratio, self.data.end()).with_text_scale(self.text_scale)
+    }
 }
 
 /// The listener that reads a film's tick, shared so that the document-level
@@ -1647,6 +1810,12 @@ struct Follower {
     /// The markup the build wrote is still on screen, so a re-layout at the
     /// width it was drawn for can keep it.
     hydrated: Cell<bool>,
+    /// Whether the fallback measurement has been decided on. It goes up
+    /// when the element leaves to wait for the fonts and is never lowered,
+    /// so the text is measured at most once in an element's life however
+    /// many ticks, re-renders, theme changes and resizes follow
+    /// ([`measure_or_wait`]).
+    text_measured: Cell<bool>,
     /// Whether this chart's thumb is the widget's slider ([`owns_slider`]),
     /// answered once from the tree the host was connected into.
     slider: bool,
@@ -1785,7 +1954,7 @@ impl Follower {
         let refocus = self.holds_focus();
         let (markup, layout) = {
             let live = self.live.borrow();
-            let layout = Layout::sized(width, width / live.ratio, live.data.end());
+            let layout = live.layout_at(width);
             (
                 shadow_markup(&live.data, layout, None, live.ratio, BY_SITE, self.slider),
                 layout,
@@ -1841,10 +2010,7 @@ impl Follower {
     /// the caller draws its own.
     fn keep(&self, width: f64) -> bool {
         let refocus = self.holds_focus();
-        let (ratio, wide, end) = {
-            let live = self.live.borrow();
-            (live.ratio, live.fallback_width, live.data.end())
-        };
+        let wide = self.live.borrow().fallback_width;
         let Some(variant) = keep_prerender(self.hydrated.get(), width, wide, NARROW_WIDTH) else {
             return false;
         };
@@ -1861,7 +2027,8 @@ impl Follower {
         }
         // the box the survivor was drawn in, not the measured width: they
         // agree to within a pixel, and the viewBox is in those units
-        self.live.borrow_mut().layout = Layout::sized(drawn, drawn / ratio, end);
+        let layout = self.live.borrow().layout_at(drawn);
+        self.live.borrow_mut().layout = layout;
         self.capture(Some(svg), refocus);
         true
     }
@@ -1881,7 +2048,7 @@ impl Follower {
         }
         let (markup, layout) = {
             let live = self.live.borrow();
-            let layout = Layout::sized(width, width / live.ratio, live.data.end());
+            let layout = live.layout_at(width);
             (
                 svg_of(
                     &live.data.to_spec(),
@@ -1928,6 +2095,75 @@ impl Follower {
             self.root.query_selector("svg.chart").ok().flatten(),
             refocus,
         );
+    }
+
+    /// Ask the browser whether it has the faces the widths in this markup
+    /// were measured from, and where it has not, go and find out what it
+    /// is setting the chart in instead (decision 14's runtime fallback).
+    ///
+    /// `check` answers about the faces the page registered, which is where
+    /// the site's own are: a family the page never registered is answered
+    /// for as present, so what this catches is the site's own face failing
+    /// to arrive, which is the one case there is a correction for. A check
+    /// that throws is taken as a yes, since a browser that cannot answer
+    /// is not a browser that has said no.
+    ///
+    /// Asked at the upgrade and again on every resize, since a check taken
+    /// before the page had registered its faces answered about a family it
+    /// had not yet heard of. What holds the measurement to one is the flag
+    /// and not the number of times this is called: a later ask costs a
+    /// look at a font set the browser already has and stops there. Nothing
+    /// here is on the tick path.
+    fn correct_text(self: &Rc<Self>) {
+        let Some(fonts) = document().map(|d| d.fonts()) else {
+            return;
+        };
+        let present = Face::ALL
+            .iter()
+            .all(|face| fonts.check(&css_font(*face)).unwrap_or(true));
+        let (what, decided) = measure_or_wait(present, self.text_measured.get());
+        self.text_measured.set(decided);
+        if what == Fallback::Wait {
+            return;
+        }
+        let Ok(ready) = fonts.ready() else {
+            return;
+        };
+        let follower = self.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
+            follower.correct_from_measurement();
+        });
+    }
+
+    /// The fonts have settled: measure the text this chart draws, and if
+    /// what is on screen is not what the tables describe, draw the chart
+    /// again at the corrected scale.
+    ///
+    /// The correction is a scale on the layout, so it reaches the drawing
+    /// the way a resize does: the flag the frame reads is set and one
+    /// frame is asked for. A pre-render is dropped first, because markup
+    /// laid out for a face this browser has not got is not markup worth
+    /// keeping.
+    fn correct_from_measurement(&self) {
+        let text = drawn_text(&self.live.borrow().data.to_spec());
+        let Some(scale) = measured_against_tables(&text)
+            .as_deref()
+            .and_then(text_scale)
+        else {
+            return;
+        };
+        if (scale - 1.0).abs() < TEXT_SCALE_SLACK {
+            return;
+        }
+        self.hydrated.set(false);
+        set_state(&self.host, "hydrated", false);
+        {
+            let mut live = self.live.borrow_mut();
+            live.text_scale = scale;
+            live.resize = true;
+        }
+        self.request_frame();
     }
 
     /// Put the playhead, its readout and the played bar at the stored time,
@@ -2956,6 +3192,9 @@ impl CustomElement for Chart {
             layout: Layout::sized(initial_width, initial_width / ratio, end),
             ratio,
             fallback_width: initial_width,
+            // the build measured the served faces, and until a browser
+            // says it has not got them that measurement stands
+            text_scale: 1.0,
             time: 0.0,
             pending: false,
             raf: None,
@@ -2980,6 +3219,7 @@ impl CustomElement for Chart {
             peek: Cell::new(None),
             following: Cell::new(false),
             hydrated: Cell::new(false),
+            text_measured: Cell::new(false),
             // one slider per widget: a chart in a film's shadow tree leaves
             // the slider to the film's own range input (decision 15)
             slider: owns_slider(host_tag(&self.host).as_deref()),
@@ -3047,7 +3287,8 @@ impl CustomElement for Chart {
                     (pick("svg.chart.wide"), initial_width)
                 };
                 let svg = svg.or_else(|| pick("svg.chart"));
-                follower.live.borrow_mut().layout = Layout::sized(width, width / ratio, end);
+                let layout = follower.live.borrow().layout_at(width);
+                follower.live.borrow_mut().layout = layout;
                 follower.capture(svg, None);
                 // the build wrote the caption this names; a render would
                 // have written its own
@@ -3057,6 +3298,11 @@ impl CustomElement for Chart {
             }
             Action::Render => follower.render(),
         }
+        // Whatever was drawn was laid out from the advance tables, which
+        // measure the faces the site serves. Whether this browser has them
+        // is asked once, here, and answered for the whole of this
+        // element's life (decision 14).
+        follower.correct_text();
 
         {
             let f = follower.clone();
@@ -3124,6 +3370,10 @@ impl CustomElement for Chart {
         let on_resize = {
             let f = follower.clone();
             Closure::<dyn FnMut(js_sys::Array)>::new(move |_: js_sys::Array| {
+                // a box that changed size is drawn again, and it is drawn
+                // from the tables, so the faces are asked about again
+                // here; the flag is what lets one measurement through
+                f.correct_text();
                 f.live.borrow_mut().resize = true;
                 f.request_frame();
             })
@@ -3317,6 +3567,161 @@ mod tests {
         // and the readout is the film's own format
         assert_eq!(readout(0.0), "0.00s");
         assert_eq!(readout(3.297), "3.30s");
+    }
+
+    /// The fallback measurement is decided once and never again
+    /// (decision 14). Every case of the decision, and then the sequence a
+    /// live element lives through: the check at the upgrade, and the
+    /// resizes, ticks, theme changes and re-renders after it, each asking
+    /// again with whatever `FontFaceSet.check` says at the time. Exactly
+    /// one of them measures.
+    #[test]
+    fn the_missing_face_is_measured_for_once_and_never_again() {
+        // the face is there, so there is nothing to measure and the
+        // element is no more decided afterwards than before
+        assert_eq!(measure_or_wait(true, false), (Fallback::Wait, false));
+        // it is missing: measure, and the flag goes up with the decision
+        // rather than with the measurement, so the wait cannot be entered
+        // twice while it is on
+        assert_eq!(measure_or_wait(false, false), (Fallback::Measure, true));
+        // and with the flag up nothing asks again, whatever the check says
+        assert_eq!(measure_or_wait(false, true), (Fallback::Wait, true));
+        assert_eq!(measure_or_wait(true, true), (Fallback::Wait, true));
+        let run = |answers: &[bool]| {
+            let mut decided = false;
+            let mut measured = 0;
+            for present in answers {
+                let (what, next) = measure_or_wait(*present, decided);
+                decided = next;
+                measured += usize::from(what == Fallback::Measure);
+            }
+            (measured, decided)
+        };
+        // a face missing at the upgrade and still missing through four
+        // more answers, then a load that brings it: one measurement
+        assert_eq!(run(&[false, false, false, false, true]), (1, true));
+        // and a face that was there all along: none, and nothing decided
+        assert_eq!(run(&[true, true, true]), (0, false));
+    }
+
+    /// The correction is the ratio of the totals of what a browser
+    /// measures the chart's own strings at to what the tables measure them
+    /// at, and nothing that is not a measurement is taken for one.
+    #[test]
+    fn the_text_scale_is_the_ratio_of_the_totals() {
+        // a face that measures what the tables do asks for no correction
+        assert_eq!(text_scale(&[(40.0, 40.0), (12.0, 12.0)]), Some(1.0));
+        // and one that sets every string half again as wide
+        assert_eq!(text_scale(&[(60.0, 40.0), (18.0, 12.0)]), Some(1.5));
+        // the totals, not the mean of the ratios: a long string weighs
+        // more than a short one, because a row is measured across
+        let scale = text_scale(&[(80.0, 40.0), (12.0, 12.0)]).expect("a ratio");
+        assert!((scale - 92.0 / 52.0).abs() < 1e-12, "{scale}");
+        assert!(scale > 1.5, "{scale} is the mean of 2 and 1");
+        // nothing to compare, nothing measured either way, and an answer
+        // that is not a number are all no correction at all
+        assert_eq!(text_scale(&[]), None);
+        assert_eq!(text_scale(&[(40.0, 0.0)]), None);
+        assert_eq!(text_scale(&[(0.0, 40.0)]), None);
+        assert_eq!(text_scale(&[(f64::NAN, 40.0)]), None);
+    }
+
+    /// What the element asks a browser about is the face the widths in its
+    /// markup were measured from, and that face is the one the chart is
+    /// really set in.
+    ///
+    /// The first half is structural: the shorthand is built from the
+    /// generated tables' own record of what was measured, and a test in
+    /// `op-assets` holds that record to the woff2 it was read from. What
+    /// could still drift is the second half, so it is read out of the two
+    /// stylesheets that decide it: the site's sans stack, whose first
+    /// family is the one a browser will use, and the chart's own rules for
+    /// the two runs it sets in bold.
+    #[test]
+    fn the_font_asked_for_is_the_face_the_chart_is_set_in() {
+        let theme = include_str!("../../../../styles/theme.css");
+        for face in op_chart::Face::ALL {
+            let measured = face.measured();
+            // a CSS font shorthand: style, weight, size, quoted family
+            assert_eq!(
+                css_font(face),
+                format!(
+                    "{} {} {}px \"{}\"",
+                    measured.style,
+                    measured.weight,
+                    op_chart::TEXT_PX,
+                    measured.family
+                )
+            );
+            // and the family is the one the site's own stack asks a
+            // browser for first
+            assert!(
+                theme.contains(&format!("--op-font-sans: \"{}\",", measured.family)),
+                "{} does not open the sans stack",
+                measured.family
+            );
+        }
+        // the two weights are asked for as two faces
+        assert_ne!(css_font(Face::Regular), css_font(Face::Bold));
+        // and the bold one is the weight the chart's own stylesheet sets,
+        // in the two places it sets it: the end labels and the readout
+        let css = stylesheet(DEFAULT_RATIO);
+        let bold = Face::Bold.measured().weight;
+        assert_eq!(css.matches(&format!("font-weight: {bold};")).count(), 2);
+        let regular = Face::Regular.measured().weight;
+        assert_eq!(css.matches(&format!("font-weight: {regular};")).count(), 0);
+    }
+
+    /// The text a correction is formed from is text the chart really
+    /// draws, in the face it draws it in: nothing measured that is not on
+    /// screen, and nothing on screen whose width decides a placement left
+    /// out.
+    #[test]
+    fn the_measured_text_is_the_text_the_chart_draws() {
+        let spec = data().to_spec();
+        let text = drawn_text(&spec);
+        let svg = op_chart::render(&spec, Layout::sized(DEFAULT_WIDTH, 240.0, spec.end)).svg;
+        let head = readout(spec.end);
+        for (face, run) in &text {
+            // the two the stylesheet sets in bold are the series' own end
+            // labels and the readout, and everything else is regular
+            let bold = spec.series.iter().any(|s| &s.label == run) || run == &head;
+            assert_eq!(*face == Face::Bold, bold, "{run:?} is measured in {face:?}");
+            // the readout is the one run a render does not hold: the clock
+            // writes it, and what is measured is its longest reading
+            // rather than the one a fresh render is parked at
+            if run == &head {
+                assert!(svg.contains(&format!(">{}<", readout(0.0))), "no readout");
+                assert!(head.len() >= readout(0.0).len(), "{head} is the shorter");
+                continue;
+            }
+            assert!(
+                svg.contains(&format!(">{}<", escape(run))),
+                "{run:?} is measured and not drawn"
+            );
+        }
+        let runs: Vec<&String> = text.iter().map(|(_, run)| run).collect();
+        // every label the block carries, and the readout beside them
+        for wanted in [
+            "palette",
+            "solid thumb",
+            "half",
+            "settle",
+            "settle",
+            &readout(spec.end),
+        ] {
+            assert!(
+                runs.contains(&&wanted.to_owned()),
+                "{wanted:?} is not measured"
+            );
+        }
+        // the chapter that opens the film draws no label and is not
+        // measured, and neither is a label that is not there
+        assert!(!runs.contains(&&"flight".to_owned()), "{runs:?}");
+        assert!(runs.iter().all(|run| !run.is_empty()));
+        // and a digit string is always in the list, whatever a block is
+        // labelled, since that is what the axis is written in
+        assert!(runs.iter().any(|run| run.contains('0')));
     }
 
     /// The text between the emitted script's tags, as a browser hands it to
@@ -4602,7 +5007,7 @@ mod tests {
         // with them: an invisible chapter with a name and a 24 px target
         // is a control a reader can reach and cannot see
         assert!(css.contains(&format!(
-            "@container (max-width: {DROP_AT}px) {{ .tick-label.alt {{ display: none; }} .chapters {{ display: none; }} .chart .targets g[data-cue=\"chapter\"] {{ display: none; }} }}"
+            "@container (max-width: {DROP_AT}px) {{ .chapters {{ display: none; }} .chart .targets g[data-cue=\"chapter\"] {{ display: none; }} }}"
         )));
         // the thumb is the tab stop and its ring is a rect in the drawing,
         // shown on `:focus-visible` alone: a press must not ring the chart
@@ -4772,10 +5177,21 @@ mod tests {
     }
 
     /// The classes the emitter writes that carry no paint of their own: the
-    /// groups, which exist to be z-ordered and hidden whole, and `target`,
-    /// which no rule may reach at all.
+    /// groups, which exist to be z-ordered and hidden whole; `target`,
+    /// which no rule may reach at all; and `tick-label`, which is written
+    /// beside `axis` and painted by it, and is here so the interaction
+    /// report can ask a browser what size the time labels came out at.
     const UNPAINTED: &[&str] = &[
-        "axes", "bands", "marks", "series", "track", "cursor", "playhead", "targets", "target",
+        "axes",
+        "bands",
+        "marks",
+        "series",
+        "track",
+        "cursor",
+        "playhead",
+        "targets",
+        "target",
+        "tick-label",
     ];
 
     /// The class of every label the emitter draws inside the plot, where a
@@ -4924,7 +5340,6 @@ mod tests {
             "peek-band",
             "chapter",
             "shown",
-            "alt",
             "target",
         ] {
             assert!(emitted.contains(want), "the fixtures draw no {want}");

@@ -21,9 +21,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256, Sha384};
 
-mod manifest;
 mod sourcemap;
-use manifest::{
+use op_assets::manifest::{
     FitTarget, MANIFEST, ManifestEntry, PLEX_SANS_TARGET, PRAGMATA_TARGET, REF_STRING, SYS_TARGET,
 };
 

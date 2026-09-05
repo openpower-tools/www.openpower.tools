@@ -1,5 +1,10 @@
 //! The chart box and its scales, shared by the emitter and by the element
-//! for hit-testing, so both agree on where a time is.
+//! for hit-testing, so both agree on where a time is. The text scale is
+//! one of them: what a label measures is what the drawing has to leave
+//! room for, so the correction for a face the browser never got belongs
+//! beside the geometry it changes.
+
+use crate::labels::{Face, TEXT_PX};
 
 /// The percent scale the film's chart is drawn on: 0 to 100 with a little
 /// room below and rather more above, where the end labels sit. A box takes
@@ -25,6 +30,11 @@ pub struct Layout {
     /// container: true for a box measured in CSS px, which a stylesheet may
     /// then scale, false for the film's fixed chart.
     pub non_scaling: bool,
+    /// What every measured text width is multiplied by before the drawing
+    /// reserves room for it: 1 wherever the text is set in the face the
+    /// advance tables were read from, which is every load but one where
+    /// that face never arrives ([`Self::with_text_scale`]).
+    pub text_scale: f64,
 }
 
 impl Layout {
@@ -45,6 +55,7 @@ impl Layout {
             y_min: PERCENT.0,
             y_max: PERCENT.1,
             non_scaling: true,
+            text_scale: 1.0,
         }
     }
 
@@ -58,6 +69,46 @@ impl Layout {
             self.y_max = hi;
         }
         self
+    }
+
+    /// The same box with every text measurement scaled by `scale`.
+    ///
+    /// The advance tables are a measurement of the face the site serves,
+    /// so they are exact wherever a browser draws with it and this is 1.
+    /// Where that face is blocked or fails to load the browser sets the
+    /// chart in something else, and a consumer that can see what that
+    /// something else measures passes the ratio it found. That ratio is an
+    /// estimate for a substituted face and not a measurement of it: one
+    /// number stands for every string and for both weights, and the face
+    /// a canvas substitutes need not be the one the page falls back to.
+    /// It is enough because it is only ever reached when the drawing would
+    /// otherwise be laid out for a face nothing on screen is set in, and
+    /// what it buys is room on the right order rather than labels written
+    /// over each other.
+    ///
+    /// A scale that is not a positive finite number is no measurement and
+    /// leaves the box as it was, so a browser that answers with nothing
+    /// cannot collapse the drawing.
+    #[must_use]
+    pub fn with_text_scale(mut self, scale: f64) -> Self {
+        if scale.is_finite() && scale > 0.0 {
+            self.text_scale = scale;
+        }
+        self
+    }
+
+    /// The room `text` takes in this box: its advances at the size both
+    /// consumers' stylesheets set (decision 14), corrected by
+    /// [`Self::text_scale`]. Every width the emitter reserves and every
+    /// `textLength` it pins comes through here, so a drawing laid out for
+    /// a substituted face is corrected in one place.
+    ///
+    /// The estimate this replaced was 6.5 px to the character, which is
+    /// wrong in both directions and by more than the clear space a row
+    /// asks for: it claims 71.5 px for "first frame", which sets in 55.9,
+    /// and 13 px for "WW", which sets in 21.4.
+    pub fn label_width(&self, text: &str, face: Face) -> f64 {
+        crate::labels::text_width(text, TEXT_PX, face) * self.text_scale
     }
 
     /// The film's chart: 900 by 268, scaled to the page by `max-width`, so
@@ -175,6 +226,39 @@ mod tests {
         // an empty or inverted domain is not a domain: the box keeps its own
         let kept = l.with_y(5.0, 5.0).with_y(9.0, 2.0);
         assert_eq!((kept.y_min, kept.y_max), (0.0, 1000.0));
+    }
+
+    /// The text scale multiplies what a label measures and nothing else
+    /// about the box, and only a positive finite number is a measurement.
+    #[test]
+    fn a_box_scales_its_text_by_a_measurement_and_refuses_anything_else() {
+        let l = Layout::sized(640.0, 240.0, 3.0);
+        assert_eq!(l.text_scale, 1.0);
+        for face in [Face::Regular, Face::Bold] {
+            // an unscaled box measures the tables, and a scaled one
+            // measures them times the scale
+            let table = crate::labels::text_width("first frame", TEXT_PX, face);
+            assert!(table > 0.0);
+            assert!((l.label_width("first frame", face) - table).abs() < 1e-9);
+            let wide = l.with_text_scale(1.25).label_width("first frame", face);
+            assert!((wide - table * 1.25).abs() < 1e-9, "{wide} for {table}");
+        }
+        // nothing that is not a measurement is taken for one
+        for bad in [0.0, -1.5, f64::NAN, f64::INFINITY] {
+            assert_eq!(l.with_text_scale(bad).text_scale, 1.0, "{bad}");
+        }
+        // the box is otherwise the box it was: a correction to the text is
+        // not a change to the geometry
+        let scaled = l.with_text_scale(1.25);
+        assert_eq!(
+            Layout {
+                text_scale: 1.0,
+                ..scaled
+            },
+            l
+        );
+        // and it survives a re-domained box, since that is one drawing
+        assert_eq!(scaled.with_y(0.0, 10.0).text_scale, 1.25);
     }
 
     #[test]
