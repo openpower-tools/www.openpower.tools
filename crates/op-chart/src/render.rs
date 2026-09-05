@@ -368,6 +368,17 @@ fn path_d(points: &[Option<(f64, f64)>], l: &Layout) -> String {
     d
 }
 
+/// The left edge of the room a series' end label takes, for a series
+/// whose last point is at `t`. The label ends [`END_LABEL_X`] back from
+/// that point and is drawn backwards from there, so its whole box is
+/// fixed by the series: unlike every other row's, an end label's x cannot
+/// be moved, since moving it would take it off the line it ends beside.
+/// Both the row that decides whether it fits and the rows that keep clear
+/// of it ask this, so neither can measure it differently from the other.
+fn end_label_left(label: &str, t: f64, l: &Layout) -> f64 {
+    l.x_of(t) - END_LABEL_X - l.label_width(label, Face::Bold)
+}
+
 /// Where each end label came to rest: its baseline, and the left edge of
 /// the room it takes. A series with no name, no samples or no room left in
 /// the column is not here, because what is not drawn is in nobody's way.
@@ -383,10 +394,7 @@ fn end_label_boxes(
         .zip(placed)
         .filter_map(|((s, dr), at)| {
             let (&at, &(t, _)) = ((*at).as_ref()?, dr.present.last()?);
-            Some((
-                at,
-                l.x_of(t) - END_LABEL_X - l.label_width(&s.label, Face::Bold),
-            ))
+            Some((at, end_label_left(&s.label, t, l)))
         })
         .collect()
 }
@@ -568,6 +576,13 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
     // Settled first, though drawn far below this: they name the series,
     // which is the one thing colour alone may not say, so the rows that
     // share a band with one of them stop clear of it (decision 24).
+    //
+    // A name too long for the room between the plot's left edge and the
+    // point it ends beside is dropped here rather than placed, because the
+    // column can only move it up and down: drawn where it stands it would
+    // run back over the value axis, whose gridline values sit in a margin
+    // no measurement can widen, and off the left of the box. What still
+    // says which line it is, is the series group's own name.
     let ends: Vec<Option<Wanted>> = spec
         .series
         .iter()
@@ -576,6 +591,7 @@ pub fn render_with(spec: &Spec, l: Layout, aria: &Aria) -> Rendered {
             (!s.label.is_empty())
                 .then(|| dr.present.last())
                 .flatten()
+                .filter(|(t, _)| end_label_left(&s.label, *t, &l) >= l.left)
                 .map(|(_, v)| Wanted {
                     at: l.y_of(*v) - 5.0 + END_LABEL_BASELINE,
                     back: LABEL_ABOVE,
@@ -1184,6 +1200,18 @@ mod tests {
         render(spec, Layout::sized(640.0, 240.0, spec.end))
     }
 
+    /// The three boxes decision 14's placement is read in: the narrow
+    /// pre-render's, the one the element's container query drops the
+    /// chapter cues at, and the wide pre-render's. The snapshots below are
+    /// taken at these and the overlap check computes its boxes from the
+    /// same markup, so what a reader can read is what was measured.
+    const PLACED_WIDTHS: [f64; 3] = [360.0, 480.0, 640.0];
+
+    /// A spec in one of those boxes, at the ratio the element is drawn on.
+    fn at_width(spec: &Spec, width: f64) -> Rendered {
+        render(spec, Layout::sized(width, width / (16.0 / 6.0), spec.end))
+    }
+
     #[test]
     fn demo_chart_snapshot() {
         insta::assert_snapshot!(film(&demo()).svg);
@@ -1222,6 +1250,27 @@ mod tests {
     #[test]
     fn sized_film_chart_snapshot() {
         insta::assert_snapshot!(sized(&flight()).svg);
+    }
+
+    /// The crowded fixture at each of [`PLACED_WIDTHS`]: the one spec that
+    /// draws every row of labels the emitter writes, in the three boxes
+    /// the placement is read in. Each is the markup
+    /// [`no_two_labels_overlap_at_any_of_the_widths_the_element_draws`]
+    /// computes its boxes from, so a label that moves between two of these
+    /// widths moves in a diff a reader can see.
+    #[test]
+    fn crowded_at_360_snapshot() {
+        insta::assert_snapshot!(at_width(&crowded(), PLACED_WIDTHS[0]).svg);
+    }
+
+    #[test]
+    fn crowded_at_480_snapshot() {
+        insta::assert_snapshot!(at_width(&crowded(), PLACED_WIDTHS[1]).svg);
+    }
+
+    #[test]
+    fn crowded_at_640_snapshot() {
+        insta::assert_snapshot!(at_width(&crowded(), PLACED_WIDTHS[2]).svg);
     }
 
     /// Every `fill=` and `stroke=` value in the markup.
@@ -1518,6 +1567,32 @@ mod tests {
         assert!(svg.contains("class=\"marker series-2 shown\""));
         assert!(!svg.contains("endlabel"));
         assert_eq!(svg.matches("class=\"marker series-2 shown\"").count(), 8);
+    }
+
+    /// An end label's x is the one thing its column cannot move: it is
+    /// drawn back from the point its series ends at, so a name longer than
+    /// the room between the plot's left edge and that point can only be
+    /// dropped. Left where it stands it would run back over the value
+    /// axis, whose gridline values sit in a margin no measurement can
+    /// widen, and off the left of the box.
+    #[test]
+    fn an_end_label_with_no_room_beside_its_line_is_dropped_and_its_point_stays() {
+        // one sample a fifth of the way along, named longer than the room
+        // behind it at the narrow pre-render
+        let spec = one_point();
+        let r = at_width(&spec, PLACED_WIDTHS[0]);
+        assert!(!r.svg.contains("endlabel"), "the label was drawn anyway");
+        assert!(!r.svg.contains("class=\"swatch"), "a swatch with no name");
+        // the sample is drawn either way, and shows its marker because it
+        // has no neighbour to be seen by
+        assert!(r.svg.contains("class=\"marker series-1 shown\""));
+        // the wide pre-render has the room, and what it draws there begins
+        // inside the plot
+        let r = at_width(&spec, PLACED_WIDTHS[2]);
+        let left = number(&r.svg, "<text class=\"endlabel\"", "x")
+            - r.layout.label_width(&spec.series[0].label, Face::Bold);
+        assert!(left >= r.layout.left, "the label begins at {left}");
+        assert!(r.svg.contains("class=\"swatch series-1\""));
     }
 
     /// The value of `attr` on the first element opening with `head`.
@@ -2958,31 +3033,39 @@ mod tests {
     const TOUCHING: f64 = 0.01;
 
     /// The point of decision 14's placement: no two labels the chart draws
-    /// overlap, whatever the box, for a chart with more to say than the
-    /// box has room for. The widths are the element's own: the narrow
-    /// pre-render's, the one its container query drops the chapter cues
-    /// at, and the wide pre-render's, each at the ratio the element is
-    /// drawn on.
+    /// overlap, in any of [`PLACED_WIDTHS`], for any spec the fixtures
+    /// hold. The crowded one has more to say than the narrow box has room
+    /// for, and the rest are here so that a chart with little to say is
+    /// not left unchecked: an emitter that placed nothing at all would
+    /// pass a test that only ever read the hardest case.
     ///
-    /// The boxes are the measured widths by the em box the rows are spaced
-    /// by, which is the ruler the emitter placed them with. What that
-    /// catches, checked by breaking each of them: a row measured at a size
-    /// the chart is not drawn at (two mark labels 2 px too close at 360
-    /// px), a row that forgets to clear another row (a mark label over an
-    /// end label at 360 px), and a label written outside the placement
-    /// altogether. What it cannot catch is the ruler itself: that the
-    /// tables are the served faces is asserted where the font parser is
-    /// (`op_assets::advances`), against the face rather than against this.
+    /// The boxes are advance boxes and not painted ink, which is the
+    /// stronger claim and the honest description of what is compared. A
+    /// box here is the sum of the face's advances by the em box the rows
+    /// are spaced by, which is the ruler the emitter placed them with; the
+    /// ink inside it stops at the last mark, so a painted string sits
+    /// between 1.56 px narrower and 0.13 px wider than its box over the
+    /// specimen set. Two boxes that clear each other therefore have paint
+    /// that clears by at least as much, and this asserts nothing about
+    /// where the paint lands inside its own box.
+    ///
+    /// What that catches, checked by breaking each of them: a row measured
+    /// at a size the chart is not drawn at (two mark labels 2 px too close
+    /// at 360 px), a row that forgets to clear another row (a mark label
+    /// over an end label at 360 px), a row whose boxes are reserved a few
+    /// pixels narrower than the text drawn in them, and a label written
+    /// outside the placement altogether. What it cannot catch is the ruler
+    /// itself: that the tables are the served faces is asserted where the
+    /// font parser is (`op_assets::advances`), against the face rather
+    /// than against this.
     #[test]
     fn no_two_labels_overlap_at_any_of_the_widths_the_element_draws() {
-        let spec = crowded();
-        let mut every_row: BTreeSet<String> = BTreeSet::new();
-        for width in [360.0, 480.0, 640.0] {
-            let l = Layout::sized(width, width / (16.0 / 6.0), spec.end);
-            let svg = render(&spec, l).svg;
-            let boxes = label_boxes(&svg, &l);
-            // the rows that draw at every width are all here, so this is
-            // never quietly comparing two labels and calling it a chart
+        // the crowded fixture draws every row the emitter writes at every
+        // one of the three widths, so what follows is never quietly
+        // comparing two labels and calling it a chart
+        for width in PLACED_WIDTHS {
+            let r = at_width(&crowded(), width);
+            let boxes = label_boxes(&r.svg, &r.layout);
             let drawn: BTreeSet<String> = boxes.iter().map(|(c, _, _)| c.clone()).collect();
             for row in [
                 "axis",
@@ -2994,26 +3077,43 @@ mod tests {
                 assert!(drawn.contains(row), "no {row} at {width}: {drawn:?}");
             }
             assert!(boxes.len() >= 16, "only {} labels at {width}", boxes.len());
-            every_row.extend(drawn);
-            for (i, (class, across, down)) in boxes.iter().enumerate() {
-                assert!(
-                    across.0 >= 0.0 && across.1 <= l.width,
-                    "a {class} runs from {} to {} outside the {width} px box",
-                    across.0,
-                    across.1
-                );
-                assert!(down.0 >= 0.0 && down.1 <= l.height);
-                for (other, theirs, below) in &boxes[i + 1..] {
+        }
+        let mut every_row: BTreeSet<String> = BTreeSet::new();
+        for spec in [
+            crowded(),
+            demo(),
+            flight(),
+            annotated(),
+            gaps(),
+            many(),
+            one_point(),
+            empty(),
+        ] {
+            for width in PLACED_WIDTHS {
+                let r = at_width(&spec, width);
+                let boxes = label_boxes(&r.svg, &r.layout);
+                every_row.extend(boxes.iter().map(|(c, _, _)| c.clone()));
+                for (i, (class, across, down)) in boxes.iter().enumerate() {
                     assert!(
-                        overlap(*across, *theirs) <= TOUCHING || overlap(*down, *below) <= TOUCHING,
-                        "at {width} px a {class} at {across:?} {down:?} lies over \
-                         a {other} at {theirs:?} {below:?}"
+                        across.0 >= 0.0 && across.1 <= r.layout.width,
+                        "a {class} runs from {} to {} outside the {width} px box",
+                        across.0,
+                        across.1
                     );
+                    assert!(down.0 >= 0.0 && down.1 <= r.layout.height);
+                    for (other, theirs, below) in &boxes[i + 1..] {
+                        assert!(
+                            overlap(*across, *theirs) <= TOUCHING
+                                || overlap(*down, *below) <= TOUCHING,
+                            "at {width} px a {class} at {across:?} {down:?} lies over \
+                             a {other} at {theirs:?} {below:?}"
+                        );
+                    }
                 }
             }
         }
-        // and over the three boxes every row of labels the emitter writes
-        // was drawn at least once, the band's and the chapters' included
+        // and over those boxes every row of labels the emitter writes was
+        // drawn at least once, the band's and the chapters' included
         assert_eq!(
             every_row.iter().map(String::as_str).collect::<Vec<&str>>(),
             [

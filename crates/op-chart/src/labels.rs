@@ -65,7 +65,10 @@ impl Face {
 /// The width `text` takes at `px` in `face`: the sum of its characters'
 /// advances (decision 14). Exact for the digits, which both faces set on
 /// one advance, and within a fraction of a pixel for the short words the
-/// chart draws, since neither face kerns the pairs a label can hold.
+/// chart draws: the sweep over all 9025 ordered pairs of the covered
+/// block found that both faces do kern, but almost always inwards, so
+/// over the strings this chart draws the browser's own layout is never
+/// wider than this sum and at worst 0.30 px narrower.
 ///
 /// A character outside the covered block is measured as a full em, which
 /// is wider than every advance in either face, so a label the tables
@@ -157,6 +160,13 @@ pub struct Wanted {
 ///
 /// `lo` and `hi` carry whatever clearance the caller wants at the ends of
 /// the row: the gap is between neighbours, not against the edge.
+///
+/// `gap` is clear space between two boxes and holds no allowance for the
+/// type inside them. A box here is a sum of advances, and the sweep found
+/// the browser's own layout of every string the chart draws to be no
+/// wider than that sum and at worst 0.30 px narrower, so a label reserved
+/// by its advances is reserved generously and never crowded. Slack for
+/// kerning would be room no measurement asks for.
 pub fn place(row: &[Option<Wanted>], gap: f64, lo: f64, hi: f64) -> Vec<Option<f64>> {
     // a label with nothing to draw sorts last and is never placed, so it
     // can never stand in the way of one with something to say
