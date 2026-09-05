@@ -2489,7 +2489,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
       const vis = svgs.find(s => s.getBoundingClientRect().width > 0) || svgs[0];
       const vb = vis ? vis.viewBox.baseVal : null, r = vis ? vis.getBoundingClientRect() : null;
       const scale = vis && vb.width ? r.width / vb.width : 0;
-      const px = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none').map(t => parseFloat(getComputedStyle(t).fontSize));
+      const shown = sel => [...vis.querySelectorAll(sel)].filter(t => getComputedStyle(t).display !== 'none');
+      const px = sel => shown(sel).map(t => parseFloat(getComputedStyle(t).fontSize));
       const eff = sel => px(sel).map(v => +(v * scale).toFixed(2));
       const head = vis && vis.querySelector('g.playhead'), ht = vis && vis.querySelector('.head-t'), bar = vis && vis.querySelector('.bar-bg'), played = vis && vis.querySelector('.bar-played');
       const tx = head ? (head.getAttribute('transform') || '').match(/translate\\(([-\\d.]+)/) : null;
@@ -2499,6 +2500,9 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
       return {{root: true, defined: !!customElements.get('opt-chart'), hydrated: st('hydrated'), following: st('following'),
         svgs: svgs.length, by: vis ? vis.dataset.renderedBy : null, vbw: vb ? vb.width : null, cssw: r ? +r.width.toFixed(1) : null,
         ticks: vis ? eff('.tick-label') : [], ends: vis ? eff('.endlabel') : [], tick_px: vis ? px('.tick-label') : [],
+        tick_at: vis ? shown('.tick-label').map(t => +(+t.getAttribute('x')).toFixed(2)) : [],
+        tick_w: vis ? shown('.tick-label').map(t => +t.getComputedTextLength().toFixed(2)) : [],
+        rules: vis ? [...vis.querySelectorAll('line.tick')].map(l => +(+l.getAttribute('x1')).toFixed(2)) : [],
         summary: summary ? summary.textContent.trim().length : 0, rows: table ? table.querySelectorAll('tbody tr').length : 0,
         status: (n => n ? [n.getAttribute('aria-live'), n.textContent] : null)(sr.querySelector('[role="status"]')),
         hash: c.getAttribute('data-hash'), block: (c.querySelector('script[type="application/json"]') || {{}}).textContent || '',
@@ -2625,7 +2629,8 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     # E4 resize: the live chart re-lays out at the measured width and thins its labels when narrow
     e4 = Edge(("Following", "Resize", "Following"), "Resize: the live chart re-lays out",
               "Loaded at a 900 px viewport and then narrowed to 360 px without a reload, the svg's viewBox equals its CSS width at both widths, "
-              "tick labels keep their 12 px token size, the narrowed chart is a live render, and below 480 px every second tick label is hidden.")
+              "tick labels keep their 12 px token size, the narrowed chart is a live render, and the tick labels are thinned by what they measure: "
+              "narrowing can only drop labels, never add them, every label kept still sits on its own rule, and no two of them overlap.")
     counts = {}
     try:
         for i, w in enumerate((900, 360)):
@@ -2641,7 +2646,23 @@ def run_chart(b: Browser, base: str, ctrl: dict, out: Path) -> ControlReport:
     finally:
         b.call("Emulation.clearDeviceMetricsOverride")
     wide, narrow = len(counts.get(900, {}).get("tick_px") or []), len(counts.get(360, {}).get("tick_px") or [])
-    e4.checks.append(Check("every second tick label hidden when narrow", wide > 0 and 0 < narrow <= (wide + 1) // 2, f"{wide} labels wide, {narrow} narrow"))
+    e4.checks.append(Check("narrowing a chart never adds tick labels", wide > 0 and 0 < narrow <= wide, f"{wide} labels wide, {narrow} narrow"))
+    thin = counts.get(360, {})
+    at, widths, rules = thin.get("tick_at") or [], thin.get("tick_w") or [], thin.get("rules") or []
+    # a label that survived the thinning was not moved to make it fit: it is
+    # still drawn on the rule it belongs to, which is what tells thinning from
+    # nudging. Half a pixel of slack because the emitter writes one decimal.
+    on_rules = bool(at) and bool(rules) and all(any(abs(x - r) <= 0.51 for r in rules) for x in at)
+    e4.checks.append(Check("every tick label the narrow chart keeps sits on its own rule", on_rules,
+                           f"{len(at)} labels over {len(rules)} rules"))
+    # the labels are middle anchored, so the room between two of them is the
+    # distance between their rules less half of each. The width is the
+    # browser's own measurement; under this headless path it comes back
+    # rounded to whole pixels, which is far inside the 8 px the emitter keeps
+    # between labels, so the comparison stands.
+    gaps = [round((at[i + 1] - at[i]) - (widths[i] + widths[i + 1]) / 2, 2) for i in range(len(at) - 1)]
+    e4.checks.append(Check("no two tick labels overlap when narrow", bool(gaps) and min(gaps) > 0,
+                           f"tightest gap {min(gaps):.2f} px over {len(gaps)} pairs" if gaps else "fewer than two labels kept"))
     rep.edges.append(e4)
 
     # ---- the gestures: real pointer and key input, answered by the film ------
