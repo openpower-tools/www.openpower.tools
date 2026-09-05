@@ -90,17 +90,12 @@ fn face_ttf(assets: &Path, drawn: &Drawn) -> Vec<u8> {
 /// the chart sets no prose, and a per-character table is exact for the
 /// digits and within a fraction of a pixel for the short words it draws.
 pub fn advances(ttf: &[u8]) -> Vec<u16> {
-    let face = ttf_parser::Face::parse(ttf, 0).expect("parse font");
-    let upem = f64::from(face.units_per_em());
+    let shaper = shaper_for(ttf);
+    let upem = f64::from(shaper.units_per_em());
     (FIRST..=LAST)
         .map(|c| {
-            let glyph = face
-                .glyph_index(c)
-                .unwrap_or_else(|| panic!("the face lacks {c:?}"));
-            let advance = face
-                .glyph_hor_advance(glyph)
-                .unwrap_or_else(|| panic!("no advance for {c:?}"));
-            let per_em = f64::from(advance) / upem * PER_EM;
+            let advance = shaped_advance(&shaper, &c.to_string());
+            let per_em = advance / upem * PER_EM;
             assert!(
                 per_em <= f64::from(u16::MAX),
                 "{c:?} advance {per_em} overflows"
@@ -108,6 +103,60 @@ pub fn advances(ttf: &[u8]) -> Vec<u16> {
             per_em.round() as u16
         })
         .collect()
+}
+
+/// A shaper over `ttf`, built once so a caller measuring many strings pays
+/// the table setup once.
+///
+/// The generator shapes rather than reading `hmtx` directly. For these
+/// faces the two agree on every character of the covered block, checked by
+/// [`tests::shaping_a_character_alone_is_reading_its_advance`], but they
+/// are not the same question: `hmtx` is what the file says a glyph
+/// advances, and shaping is what an engine does with the file, which is
+/// what a browser will do and therefore what the tables have to predict.
+/// Going through the shaper also means the same code path measures a run,
+/// where kerning and ligatures are the whole point.
+pub fn shaper_for(ttf: &[u8]) -> ShaperHandle<'_> {
+    let font = harfrust::FontRef::from_index(ttf, 0).expect("parse font");
+    let data = harfrust::ShaperData::new(&font);
+    ShaperHandle { font, data }
+}
+
+/// A shaper and the tables it borrows, kept together because the shaper
+/// borrows both and neither can outlive the other.
+pub struct ShaperHandle<'a> {
+    font: harfrust::FontRef<'a>,
+    data: harfrust::ShaperData,
+}
+
+impl ShaperHandle<'_> {
+    /// The em this face is drawn in. The shaper reports it as a signed
+    /// scale, so a face claiming a nonsensical one is caught here rather
+    /// than by wrapping into a plausible number further down.
+    pub fn units_per_em(&self) -> u16 {
+        let upem = self.data.shaper(&self.font).build().units_per_em();
+        u16::try_from(upem).unwrap_or_else(|_| panic!("the face reports an em of {upem}"))
+    }
+}
+
+/// What `text` advances when this face shapes it, in font units.
+///
+/// HarfBuzz infers direction and script from the text; HarfRust asserts
+/// instead of guessing, so the buffer is asked to work them out before it
+/// is handed over. Everything this crate measures is Latin left to right,
+/// but saying so here rather than assuming it means a caller that one day
+/// passes something else gets the right answer instead of a panic.
+pub fn shaped_advance(handle: &ShaperHandle<'_>, text: &str) -> f64 {
+    let shaper = handle.data.shaper(&handle.font).build();
+    let mut buffer = harfrust::UnicodeBuffer::new();
+    buffer.push_str(text);
+    buffer.guess_segment_properties();
+    let shaped = shaper.shape(buffer, harfrust::ShapeOptions::new());
+    shaped
+        .glyph_positions()
+        .iter()
+        .map(|p| f64::from(p.x_advance))
+        .sum()
 }
 
 /// The face a table was measured from, as the generated source writes it:
@@ -415,5 +464,108 @@ mod tests {
             let space = table[index(' ')];
             assert!(space > 0, "{} {} space is zero", drawn.family, drawn.weight);
         }
+    }
+
+    /// The size a browser draws the chart's text at, which is the size the
+    /// measurement below was taken at.
+    const TEXT_PX: f64 = 12.0;
+    /// The grid Chromium snaps its layout to, and so the closest two
+    /// measurements of the same text can be expected to agree.
+    const GRID: f64 = 1.0 / 64.0;
+
+    /// The pairs a browser really kerned, as the sweep read them out of
+    /// Chrome, one line per pair. Parsed positionally rather than by
+    /// splitting on whitespace, because a pair can contain a space.
+    fn browser_kerns() -> Vec<(String, char, char, f64)> {
+        let text = include_str!("../fixtures/browser-kerns.txt");
+        let mut out = Vec::new();
+        for line in text
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.is_empty())
+        {
+            let space = line.find(' ').expect("a face and a pair");
+            let (face, rest) = line.split_at(space);
+            let mut chars = rest[1..].chars();
+            let a = chars.next().expect("a first character");
+            let b = chars.next().expect("a second character");
+            let kern: f64 = rest[1 + a.len_utf8() + b.len_utf8()..]
+                .trim()
+                .parse()
+                .expect("a kern");
+            out.push((face.to_owned(), a, b, kern));
+        }
+        out
+    }
+
+    /// The point of shaping rather than reading `hmtx`: the generator can
+    /// be held to what a browser did with the same file, pair by pair,
+    /// rather than to its own arithmetic.
+    ///
+    /// Every pair the sweep saw kern is shaped here and asked for the same
+    /// number, within the sixty-fourth of a pixel Chrome rounds its layout
+    /// to. The check runs the other way too: a pair the shaper kerns and
+    /// the browser did not is a disagreement, and would mean the generator
+    /// is applying something the engine does not.
+    ///
+    /// The one pair that ligates is counted rather than compared. Where
+    /// two characters become one glyph there is no pair advance to
+    /// subtract, and the browser's per-character split of a single advance
+    /// is a convention rather than a measurement.
+    #[test]
+    fn the_pairs_a_browser_kerned_are_the_pairs_this_shapes() {
+        let assets = assets();
+        let fixture = browser_kerns();
+        assert!(fixture.len() > 2000, "only {} pairs", fixture.len());
+        let mut compared = 0usize;
+        let mut ligated = Vec::new();
+        for drawn in DRAWN {
+            let ttf = face_ttf(&assets, drawn);
+            let handle = shaper_for(&ttf);
+            let upem = f64::from(handle.units_per_em());
+            let px = |units: f64| units / upem * TEXT_PX;
+            let solo: std::collections::BTreeMap<char, f64> = (FIRST..=LAST)
+                .map(|c| (c, shaped_advance(&handle, &c.to_string())))
+                .collect();
+            let theirs: std::collections::BTreeMap<(char, char), f64> = fixture
+                .iter()
+                .filter(|(face, ..)| face == drawn.weight)
+                .map(|(_, a, b, kern)| ((*a, *b), *kern))
+                .collect();
+            assert!(!theirs.is_empty(), "no fixture pairs for {}", drawn.weight);
+            for a in FIRST..=LAST {
+                for b in FIRST..=LAST {
+                    let pair = format!("{a}{b}");
+                    if glyph_count(&handle, &pair) != 2 {
+                        ligated.push(pair);
+                        continue;
+                    }
+                    let ours = px(shaped_advance(&handle, &pair) - solo[&a] - solo[&b]);
+                    let theirs = theirs.get(&(a, b)).copied().unwrap_or(0.0);
+                    assert!(
+                        (ours - theirs).abs() <= GRID,
+                        "{}: {a:?}{b:?} shapes to {ours:.5} px and the browser measured {theirs:.5}",
+                        drawn.weight
+                    );
+                    compared += 1;
+                }
+            }
+        }
+        // both faces, every ordered pair of the block, less the ligature
+        assert_eq!(compared, 2 * COUNT * COUNT - ligated.len(), "{ligated:?}");
+        assert_eq!(
+            ligated,
+            vec!["fi".to_owned(), "fi".to_owned()],
+            "{ligated:?}"
+        );
+    }
+
+    /// How many glyphs `text` shapes to, which is how a run where two
+    /// characters became one is told from a run where they did not.
+    fn glyph_count(handle: &ShaperHandle<'_>, text: &str) -> usize {
+        let shaper = handle.data.shaper(&handle.font).build();
+        let mut buffer = harfrust::UnicodeBuffer::new();
+        buffer.push_str(text);
+        buffer.guess_segment_properties();
+        shaper.shape(buffer, harfrust::ShapeOptions::new()).len()
     }
 }
