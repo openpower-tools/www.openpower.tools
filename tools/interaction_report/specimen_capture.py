@@ -107,8 +107,11 @@ def serve_root(dist: Path, pages: list[Path], work: Path) -> Path:
     return root
 
 
-def start_server(root: Path) -> tuple[subprocess.Popen, str]:
-    """A plain static server on the specimen's root, and its base URL."""
+def start_server(root: Path, probe: str = "specimen.html") -> tuple[subprocess.Popen, str]:
+    """A plain static server on `root`, and its base URL. `probe` is a path
+    the root really has, since a server that answers 404 to everything is
+    not a server that is up. The process is killed if it never answers, so
+    a failed start leaves nothing behind."""
     port = report.free_port()
     proc = subprocess.Popen([sys.executable, "-m", "http.server", str(port)], cwd=root,
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -116,13 +119,14 @@ def start_server(root: Path) -> tuple[subprocess.Popen, str]:
     deadline = time.time() + 30
     while True:
         try:
-            urllib.request.urlopen(f"{base}/specimen.html", timeout=2).read()
+            urllib.request.urlopen(f"{base}/{probe}", timeout=2).read()
             return proc, base
         except (urllib.error.URLError, OSError):
             if proc.poll() is not None:
-                sys.exit(f"the specimen server exited early (code {proc.returncode})")
+                sys.exit(f"the server on {root} exited early (code {proc.returncode})")
             if time.time() > deadline:
-                sys.exit("the specimen server did not answer within 30s")
+                proc.kill()
+                sys.exit(f"the server on {root} did not answer for /{probe} within 30s")
             time.sleep(0.2)
 
 
@@ -371,6 +375,121 @@ def sweep(b: report.Browser, base: str, spec: dict, out: Path, binary: str, name
     return record
 
 
+LABEL_WIDTHS = (900, 360)
+"""The viewports the chart's labels are read at: one where the wide
+pre-render is what the container query keeps, and one below the width the
+element switches at."""
+
+CHART_READY = ("!!document.querySelector('opt-chart')?.shadowRoot?.querySelector('svg.chart')"
+               " && document.readyState === 'complete'")
+
+READ_LABELS = """(() => {
+  const c = document.querySelector('opt-chart'), sr = c && c.shadowRoot;
+  if (!sr) return null;
+  const svgs = [...sr.querySelectorAll('svg.chart')];
+  const vis = svgs.find(s => s.getBoundingClientRect().width > 0) || svgs[0];
+  if (!vis) return null;
+  const labels = [];
+  for (const t of vis.querySelectorAll('text')) {
+    if (getComputedStyle(t).display === 'none') continue;
+    // the value axis' own name is turned on its side, where a width along
+    // x is not what keeps it clear of anything
+    if (/rotate/.test(t.getAttribute('transform') || '')) continue;
+    const n = t.getNumberOfChars();
+    if (!n) continue;
+    // the drawn advance, read off the glyphs themselves rather than from
+    // getComputedTextLength, because a label pinned by textLength is
+    // exactly the case this has to tell apart and the two disagree there
+    const m = t.getCTM();
+    const at = p => ({x: m.a * p.x + m.c * p.y + m.e, y: m.b * p.x + m.d * p.y + m.f});
+    const start = at(t.getStartPositionOfChar(0)), end = at(t.getEndPositionOfChar(n - 1));
+    const bb = t.getBBox(), ink = at({x: bb.x, y: bb.y});
+    labels.push({
+      class: t.getAttribute('class') || '', text: t.textContent,
+      left: +start.x.toFixed(4), right: +end.x.toFixed(4), baseline: +start.y.toFixed(4),
+      ink_left: +ink.x.toFixed(4), ink_right: +(ink.x + bb.width * m.a).toFixed(4),
+      ink_top: +ink.y.toFixed(4), ink_bottom: +(ink.y + bb.height * m.d).toFixed(4),
+      measured: +t.getComputedTextLength().toFixed(4),
+      pinned: t.hasAttribute('textLength') ? +t.getAttribute('textLength') : null,
+    });
+  }
+  const r = vis.getBoundingClientRect();
+  return {hydrated: c.matches(':state(hydrated)'), rendered_by: vis.dataset.renderedBy || '',
+          chart_width: +r.width.toFixed(2), labels: labels};
+})()"""
+
+
+def label_view(b: report.Browser, base: str, width: int, blocked: bool, load_at: int = 0) -> dict:
+    """Load the chart's own page at `width` and read every label the
+    browser drew, in the svg's own coordinates.
+
+    The positions come from the glyphs rather than from the markup, so a
+    label carried by a transformed group lands in the same coordinate
+    system as the rest and a label pinned by `textLength` is measured as
+    drawn and not as asked for."""
+    # loading at one width and then narrowing without a reload is what makes
+    # the element re-render in place, where loading narrow lets it keep the
+    # pre-render it was served. Both are what a reader can meet.
+    b.call("Emulation.setDeviceMetricsOverride", width=load_at or width, height=1000,
+           deviceScaleFactor=DPR, mobile=False)
+    b.goto(f"{base}/component/chart/", CHART_READY)
+    b.js("document.fonts.ready.then(() => { window.__op_fonts = true; }); true")
+    for _ in range(600):
+        b.frame() if b.synthetic else b.wait(0.05)
+        if b.js("window.__op_fonts === true"):
+            break
+    else:
+        sys.exit(f"document.fonts.ready never settled on the chart page at {width} px")
+    # the element re-lays out once when the face it measures with is
+    # missing, so give that its frames before reading anything
+    for _ in range(30):
+        b.frame() if b.synthetic else b.wait(0.02)
+    if load_at and load_at != width:
+        b.call("Emulation.setDeviceMetricsOverride", width=width, height=1000,
+               deviceScaleFactor=DPR, mobile=False)
+        for _ in range(60):
+            b.frame() if b.synthetic else b.wait(0.02)
+    read = b.js(READ_LABELS)
+    if not read:
+        sys.exit(f"no chart on the page at {width} px")
+    return {"width": float(width), "hydrated": bool(read["hydrated"]), "blocked": blocked,
+            "rendered_by": read["rendered_by"], "chart_width": read["chart_width"],
+            "labels": read["labels"]}
+
+
+def label_boxes(b: report.Browser, dist: Path, out: Path, binary: str, name: str, text_px: float) -> dict:
+    """Every label the chart draws, measured by the browser, at the widths
+    the element switches between, and once more with the served faces
+    blocked.
+
+    The blocked load is the one the advance tables are wrong for: the
+    element measures what it is really set in and re-lays out, and the
+    labels that must fit a fixed slot stay pinned by `textLength`."""
+    # the specimen's own root holds only the pages and the faces, so the
+    # chart's page needs the built site served as it is deployed
+    server, base = start_server(dist, probe="component/chart/")
+    try:
+        views = [label_view(b, base, width, blocked=False) for width in LABEL_WIDTHS]
+        # and the narrow width reached by resizing, which is the live
+        # re-render rather than the pre-render the server sent
+        views.append(label_view(b, base, LABEL_WIDTHS[-1], blocked=False, load_at=LABEL_WIDTHS[0]))
+        b.call("Network.enable")
+        try:
+            # the served faces, by the names the build gives them
+            b.call("Network.setBlockedURLs", urls=["*plexsans*"])
+            views.append(label_view(b, base, LABEL_WIDTHS[-1], blocked=True))
+        finally:
+            b.call("Network.setBlockedURLs", urls=[])
+            b.call("Emulation.clearDeviceMetricsOverride")
+    finally:
+        server.kill()
+    record = {"browser": name, "binary": f"{binary} ({report.binary_version(binary)})",
+              "text_px": text_px, "views": views}
+    path = out / "labels-capture.json"
+    path.write_text(json.dumps(record) + "\n")
+    return record
+
+
 def png_size(data: bytes) -> tuple[int, int]:
     """A PNG's pixel size, read from its IHDR, so this script needs no
     image library to hold the capture to the size it asked for."""
@@ -389,8 +508,8 @@ def main():
     ap.add_argument("--chrome", help="the Chrome or Chromium binary to drive")
     ap.add_argument("--shell", help="the chrome-headless-shell to drive")
     ap.add_argument("--themes", default=",".join(THEMES), help="comma-separated themes to capture")
-    ap.add_argument("--only", choices=("specimen", "sweep", "both"), default="both",
-                    help="which page to capture (default: both)")
+    ap.add_argument("--only", choices=("specimen", "sweep", "labels", "both", "all"), default="both",
+                    help="which page to capture: both is the specimen and the sweep, all adds the labels (default: both)")
     args = ap.parse_args()
 
     dist = Path(args.dist)
@@ -403,7 +522,7 @@ def main():
         sys.exit(f"the manifest wants a device pixel ratio of {spec['dpr']} and this captures at {DPR}")
     sweep_page = out / "sweep.html"
     sweep_spec = json.loads((out / "sweep.json").read_text()) if sweep_page.exists() else None
-    if args.only in ("sweep", "both") and sweep_spec is None:
+    if args.only in ("sweep", "both", "all") and sweep_spec is None:
         sys.exit(f"no {sweep_page}: run the page generator first")
 
     if args.browser == "shell":
@@ -424,7 +543,7 @@ def main():
     b = report.Browser(binary, work, synthetic=(args.browser == "shell"))
     written = []
     try:
-        for theme in (args.themes.split(",") if args.only in ("specimen", "both") else []):
+        for theme in (args.themes.split(",") if args.only in ("specimen", "both", "all") else []):
             record = capture(b, base, spec, theme, out, binary, args.browser)
             proof = record["fonts"]
             digits = ", ".join(f"{w} {proof['digits'][w]:.3f} px, {proof['positioning'][w]}"
@@ -432,10 +551,16 @@ def main():
             print(f"{theme}: {out / record['image']}  faces proved by {proof['probe']!r} "
                   f"against {proof['digits_exact']:.3f} px ({digits})", flush=True)
             written.append(record)
-        if args.only in ("sweep", "both"):
+        if args.only in ("sweep", "both", "all"):
             swept = sweep(b, base, sweep_spec, out, binary, args.browser)
             print(f"sweep: {swept['pairs']} ordered pairs in {swept['length']} characters, "
                   f"{len(swept['runs'])} runs, {out / 'sweep-capture.json'}", flush=True)
+        if args.only in ("labels", "all"):
+            read = label_boxes(b, dist, out, binary, args.browser, spec["text_px"])
+            drawn = ", ".join(f"{v['width']:.0f} px: {len(v['labels'])} labels"
+                              + (" with the faces blocked" if v["blocked"] else "")
+                              for v in read["views"])
+            print(f"labels: {drawn}; {out / 'labels-capture.json'}", flush=True)
     finally:
         b.close()
         server.kill()
