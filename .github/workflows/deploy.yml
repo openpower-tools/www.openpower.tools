@@ -1,10 +1,40 @@
 name: Build and deploy
 
+# Jobs, each keyed on the content it reads (.github/scripts/cache-keys.sh):
+#
+#   components ───┐                                         key: components
+#   site-checks ──┼─────────────────────────────────────┐   key: source
+#   site ─────────┴─┬─> report ──────┬─> reproducibility ┴─> deploy
+#                   └─> second-pass ─┘
+#
+#   site           trunk build -> dist, plus the machine table and comparison
+#                  bins (so no job after it needs a Rust toolchain), and the
+#                  one decision for both passes: run them or not, on a key of
+#                  everything they read, by content
+#   report         the interaction report   } run together, fresh, when the
+#   second-pass    the timed controls again } key has no agreed report
+#   reproducibility  holds the two passes to each other, and only then
+#                  caches the report under the key
+#
+# The component library and the site change on different schedules, so they
+# are checked apart: an edit to the site's pages or data reruns the site's
+# checks and build but not the component crates' checks, and not the report
+# unless it touched a page the report loads. A stage whose key has a passing
+# entry in the cache is restored instead of run. The report is keyed on the
+# built bytes rather than their sources, so an edit that builds to the same
+# bytes (a comment, a test) does not rerun it.
+# Dispatch with force to run every stage regardless.
+
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      force:
+        description: Run every stage, ignoring cached results
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,26 +47,176 @@ env:
   TRUNK_VERSION: 0.21.14
   # sha256 of trunk-x86_64-unknown-linux-gnu.tar.gz for that release
   TRUNK_SHA256: f2b4680cd239693a646a2795e4633c625328d7b2a044fbe749fa3a2fe9e7036b
+  HEADLESS_SHELL_VERSION: 152.0.7977.82
+  # The component library: the crates the elements are built from, checked
+  # and keyed apart from the site (components-self-contained.sh holds them
+  # to that).
+  COMPONENT_CRATES: op-webc op-parts op-chart op-colour op-terms
 
 jobs:
-  build:
+  # The component library: the crates the elements are built from, keyed on
+  # their own trees, so an edit to the site's pages or data leaves it alone.
+  components:
     runs-on: ubuntu-latest
-    env:
-      HEADLESS_SHELL_VERSION: 152.0.7977.82
     steps:
       - uses: actions/checkout@v7
+      - id: keys
+        run: sh .github/scripts/cache-keys.sh
+
+      # A passing run leaves a stamp under its key; the stamp is all a later
+      # run with the same inputs needs to know.
+      - id: passed
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v5
+        with:
+          path: .ci-stamp
+          key: components-${{ steps.keys.outputs.components }}
+          lookup-only: true
 
       # rustup reads rust-toolchain.toml (pinned nightly, wasm32 target,
       # rustfmt, clippy); the runner image ships rustup.
       - name: Install pinned Rust toolchain
+        if: steps.passed.outputs.cache-hit != 'true'
         run: |
           rustup toolchain install
           rustup show active-toolchain
           cargo --version
+      - if: steps.passed.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
 
-      - uses: Swatinem/rust-cache@v2
+      - id: crates
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: |
+          select=""
+          for crate in $COMPONENT_CRATES; do select="$select -p $crate"; done
+          echo "select=$select" >> "$GITHUB_OUTPUT"
+
+      - name: The component crates read nothing but themselves (what their key assumes)
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: sh .github/scripts/components-self-contained.sh
+
+      - name: Rust format check
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo fmt ${{ steps.crates.outputs.select }} --check
+
+      - name: Rust lints (wasm target)
+        # Lib and bins only: test targets carry native-only dev-dependencies
+        # (proptest, insta) and are linted by the native run below. op-colour
+        # is a build-side crate and never compiled for wasm.
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo clippy -p op-webc -p op-parts -p op-terms -p op-chart --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Rust lints (native, every target)
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo clippy ${{ steps.crates.outputs.select }} --all-targets -- -D warnings
+
+      - name: Rust tests (native)
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo test ${{ steps.crates.outputs.select }}
+
+      - if: steps.passed.outputs.cache-hit != 'true'
+        run: echo "$GITHUB_SHA" > .ci-stamp
+      - if: steps.passed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .ci-stamp
+          key: components-${{ steps.keys.outputs.components }}
+
+  # The site: every other crate (op-site, which assembles the elements into
+  # the page's wasm, and the build-side op-assets, op-pages and op-verify),
+  # which compile the pages, data and styles in, so keyed on all of them.
+  # --exclude rather than a list, so a new crate lands here by default.
+  site-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: keys
+        run: sh .github/scripts/cache-keys.sh
+
+      - id: passed
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v5
+        with:
+          path: .ci-stamp
+          key: site-checks-${{ steps.keys.outputs.source }}
+          lookup-only: true
+
+      - name: Install pinned Rust toolchain
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo --version
+      - if: steps.passed.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
+
+      - id: crates
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: |
+          exclude=""
+          for crate in $COMPONENT_CRATES; do exclude="$exclude --exclude $crate"; done
+          echo "exclude=$exclude" >> "$GITHUB_OUTPUT"
+
+      - name: Rust format check
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo fmt --all --check
+
+      - name: Rust lints (wasm target)
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo clippy -p op-site --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Rust lints (native, every target)
+        # The site's tests, benches and build tools, which the wasm run
+        # cannot compile.
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo clippy --workspace ${{ steps.crates.outputs.exclude }} --all-targets -- -D warnings
+
+      - name: Rust tests (native)
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: cargo test --workspace ${{ steps.crates.outputs.exclude }}
+
+      - if: steps.passed.outputs.cache-hit != 'true'
+        run: echo "$GITHUB_SHA" > .ci-stamp
+      - if: steps.passed.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: .ci-stamp
+          key: site-checks-${{ steps.keys.outputs.source }}
+
+  # The build, and the build-side tools the browser jobs would otherwise
+  # need a Rust toolchain for: op-webc's machine table (the report draws its
+  # diagrams from it) and op-verify's comparison bins. Both come from the same
+  # sources as dist, so they are cached with it under the one key.
+  site:
+    runs-on: ubuntu-latest
+    outputs:
+      passes: ${{ steps.gate.outputs.key }}
+      run-passes: ${{ steps.passed.outputs.cache-hit != 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: keys
+        run: sh .github/scripts/cache-keys.sh
+
+      - id: built
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            dist
+            ci-tools
+          key: site-${{ steps.keys.outputs.source }}
+
+      - name: Install pinned Rust toolchain
+        if: steps.built.outputs.cache-hit != 'true'
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+          cargo --version
+      - if: steps.built.outputs.cache-hit != 'true'
+        uses: Swatinem/rust-cache@v2
 
       - name: Install pinned Trunk (prebuilt, checksum verified)
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o trunk.tar.gz "https://github.com/trunk-rs/trunk/releases/download/v${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz"
           echo "${TRUNK_SHA256}  trunk.tar.gz" | sha256sum --check
@@ -46,63 +226,25 @@ jobs:
           trunk --version
 
       - name: Cache Trunk's downloaded tools (wasm-bindgen, wasm-opt)
+        if: steps.built.outputs.cache-hit != 'true'
         uses: actions/cache@v5
         with:
           path: ~/.cache/trunk
           key: trunk-tools-${{ hashFiles('Trunk.toml') }}
 
-      - name: Rust format check
-        run: cargo fmt --all --check
-
-      - name: Rust lints (wasm target)
-        # Lib and bins only: test targets carry native-only dev-dependencies
-        # (proptest, insta) and are linted by the native workspace run below.
-        run: cargo clippy -p op-site -p op-webc -p op-parts -p op-terms -p op-chart --target wasm32-unknown-unknown -- -D warnings
-
-      - name: Rust lints (native, every target)
-        # The workspace's tests, benches and build tools, which the wasm run
-        # cannot compile.
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Rust tests (native)
-        run: cargo test --workspace
-
       - name: Build site
+        if: steps.built.outputs.cache-hit != 'true'
         run: trunk build --release
 
-      - name: Install ffmpeg (the report encodes each film's screencast as VP9 WebM)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
-
-      - name: Cache chrome-headless-shell
-        uses: actions/cache@v5
-        with:
-          path: ~/.cache/op-headless-shell
-          key: chrome-headless-shell-${{ env.HEADLESS_SHELL_VERSION }}-linux64
-      - name: Install chrome-headless-shell (the synthetic frame clock needs the old headless engine)
-        # The Chrome the runner ships runs the new headless mode, which has no
-        # virtual time or frame control; Chrome for Testing publishes the old
-        # engine as chrome-headless-shell, pinned here so every run renders
-        # the same frames.
-        run: |
-          set -e
-          npx --yes @puppeteer/browsers install "chrome-headless-shell@${HEADLESS_SHELL_VERSION}" --path ~/.cache/op-headless-shell > /tmp/shell-install.log
-          SHELL_BIN=$(ls ~/.cache/op-headless-shell/chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell | head -n 1)
-          "$SHELL_BIN" --version
-          echo "OP_HEADLESS_SHELL=$SHELL_BIN" >> "$GITHUB_ENV"
-
-      - name: Interaction report (real-input harness over every control)
-        # Drives each control through its machine edges with CDP mouse and
-        # keyboard events on a synthetic frame clock (virtual time, one frame
-        # per step) and renders the evidence; a failing check fails the build.
-        uses: astral-sh/setup-uv@v7
-      - run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --clock synthetic --checks-json reports/interactions/checks.json --publish
-      - name: Reproducibility (a second synthetic pass decides the same, measures within a frame, and looks the same)
+      - name: Build the browser jobs' tools (machine table, comparison bins)
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
           set -e
           cargo build --release -p op-verify
-          uv run tools/interaction_report/report.py --dist dist --out /tmp/rep-again --clock synthetic --only opt-theme-toggle,opt-switch,opt-chart --checks-json /tmp/rep-again/checks.json
-          target/release/compare-checks reports/interactions/checks.json /tmp/rep-again/checks.json
-          target/release/compare-frames reports/interactions /tmp/rep-again
+          mkdir -p ci-tools
+          cargo run --quiet --release -p op-webc --bin machine_table > ci-tools/machine.json
+          cp target/release/compare-checks target/release/compare-frames ci-tools/
+
       - name: Reproducibility (the page build emits the same bytes twice)
         # The pre-rendered chart is what a reader without scripts is served,
         # and it comes out of op-pages rather than the element. Every step
@@ -111,12 +253,127 @@ jobs:
         # that path is reading a clock, an iteration order or the filesystem.
         # op-pages writes into TRUNK_STAGING_DIR and reads only index.html
         # from it, so a second emission needs nothing but that file copied.
+        # It proves a property of the build that made this dist, so it runs
+        # exactly when dist is built rather than restored.
+        if: steps.built.outputs.cache-hit != 'true'
         run: |
           set -e
           mkdir -p /tmp/pages-again
           cp dist/index.html /tmp/pages-again/
           TRUNK_STAGING_DIR=/tmp/pages-again cargo run --quiet --release -p op-pages
           target/release/compare-pages dist /tmp/pages-again
+
+      - if: steps.built.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            dist
+            ci-tools
+          key: site-${{ steps.keys.outputs.source }}
+
+      # The report's view of the site, as one digest over paths and bytes:
+      # every asset (wasm, script, styles, fonts, vendored files, source
+      # maps), plus the pages it loads, which are / (whose head and nav it
+      # also borrows for its own pages) and each page the contract sends a
+      # control to. The site's other pages (projects, can-i-use, the other
+      # component docs) are not in it, so editing them does not rerun the
+      # report.
+      - id: digest
+        run: |
+          set -e
+          export LC_ALL=C
+          served=$( {
+            jq -r '.controls[].page // empty' data/interaction-contract.json | grep -v '^/reports/' || true
+            echo /
+          } | sort -u | sed -e 's|^/||' -e 's|$|index.html|')
+          echo "pages the report loads:"; echo "$served"
+          digest=$( cd dist && {
+            find . -type f ! -name index.html -printf '%P\n'
+            echo "$served"
+          } | sort -u | tr '\n' '\0' | xargs -0 sha256sum | sha256sum | cut -c1-64)
+          echo "served=$digest" >> "$GITHUB_OUTPUT"
+          echo "served digest: $digest"
+          tools=$(cd ci-tools && find . -type f -printf '%P\n' | sort | tr '\n' '\0' | xargs -0 sha256sum | sha256sum | cut -c1-64)
+          echo "tools=$tools" >> "$GITHUB_OUTPUT"
+          echo "tools digest: $tools"
+
+      # The one decision for both passes: the key is everything they read,
+      # and an entry under it exists only if both ran on it and agreed (the
+      # reproducibility job saves it). A hit skips both; a miss runs both.
+      - id: gate
+        run: echo "key=passes-${{ steps.keys.outputs.passes }}-${{ steps.digest.outputs.served }}-${{ steps.digest.outputs.tools }}" >> "$GITHUB_OUTPUT"
+      - id: passed
+        if: ${{ !inputs.force }}
+        uses: actions/cache/restore@v5
+        with:
+          path: reports/interactions
+          key: ${{ steps.gate.outputs.key }}
+          lookup-only: true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: site
+          path: dist
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-tools
+          path: ci-tools
+          if-no-files-found: error
+
+  # The interaction report and its second synthetic pass: the same harness,
+  # run twice at once on two runners from the same dist, neither waiting on
+  # the other. The reproducibility job holds the two to each other. A second
+  # pass on another machine is the stronger test: the synthetic clock claims
+  # the results do not depend on it. Whether they run at all is the site
+  # job's one decision (run-passes); when they do not, report restores the
+  # agreed report so the site still deploys with it.
+  report:
+    needs: site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: site
+          path: dist
+
+      - if: needs.site.outputs.run-passes != 'true'
+        uses: actions/cache/restore@v5
+        with:
+          path: reports/interactions
+          key: ${{ needs.site.outputs.passes }}
+          fail-on-cache-miss: true
+      - name: Publish the agreed report into the site
+        # as --publish would have: the integrated revision under /reports/
+        if: needs.site.outputs.run-passes != 'true'
+        run: |
+          mkdir -p dist/reports
+          cp -R reports/interactions/integrated dist/reports/interactions
+
+      - if: needs.site.outputs.run-passes == 'true'
+        uses: actions/download-artifact@v7
+        with:
+          name: ci-tools
+          path: ci-tools
+      - name: Install ffmpeg (the report encodes each film's screencast as VP9 WebM)
+        if: needs.site.outputs.run-passes == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
+      - if: needs.site.outputs.run-passes == 'true'
+        uses: ./.github/actions/headless-shell
+        with:
+          version: ${{ env.HEADLESS_SHELL_VERSION }}
+      - if: needs.site.outputs.run-passes == 'true'
+        uses: astral-sh/setup-uv@v7
+        with:
+          cache-dependency-glob: tools/interaction_report/report.py
+      - name: Interaction report (real-input harness over every control)
+        # Drives each control through its machine edges with CDP mouse and
+        # keyboard events on a synthetic frame clock (virtual time, one frame
+        # per step) and renders the evidence; a failing check fails the build.
+        if: needs.site.outputs.run-passes == 'true'
+        run: uv run tools/interaction_report/report.py --dist dist --out reports/interactions --machine ci-tools/machine.json --clock synthetic --checks-json reports/interactions/checks.json --publish
+
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -134,15 +391,82 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           find dist -type f | sort | xargs sha256sum
 
-      - uses: actions/configure-pages@v6
-
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
+  second-pass:
+    needs: site
+    if: needs.site.outputs.run-passes == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: site
+          path: dist
+      - uses: actions/download-artifact@v7
+        with:
+          name: ci-tools
+          path: ci-tools
+      - uses: ./.github/actions/headless-shell
+        with:
+          version: ${{ env.HEADLESS_SHELL_VERSION }}
+      - uses: astral-sh/setup-uv@v7
+        with:
+          cache-dependency-glob: tools/interaction_report/report.py
+      - name: Second synthetic pass (the controls whose timing the report measures)
+        # No film here, so no ffmpeg and no --publish: none of these
+        # controls loads a page under /reports/.
+        run: uv run tools/interaction_report/report.py --dist dist --out second-pass --machine ci-tools/machine.json --clock synthetic --only opt-theme-toggle,opt-switch,opt-chart --checks-json second-pass/checks.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: second-pass
+          path: second-pass
+          if-no-files-found: error
+
+  reproducibility:
+    needs: [site, report, second-pass]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: interaction-report
+          path: reports/interactions
+      - uses: actions/download-artifact@v7
+        with:
+          name: second-pass
+          path: second-pass
+      - uses: actions/download-artifact@v7
+        with:
+          name: ci-tools
+          path: ci-tools
+
+      - name: Reproducibility (a second synthetic pass decides the same, measures within a frame, and looks the same)
+        run: |
+          set -e
+          chmod +x ci-tools/compare-checks ci-tools/compare-frames
+          ci-tools/compare-checks reports/interactions/checks.json second-pass/checks.json
+          ci-tools/compare-frames reports/interactions second-pass
+
+      # Only now is the report cached: an entry under the key means both
+      # passes ran on exactly these inputs and agreed.
+      - uses: actions/cache/save@v5
+        with:
+          path: reports/interactions
+          key: ${{ needs.site.outputs.passes }}
+
   deploy:
-    if: github.event_name != 'pull_request'
-    needs: build
+    # second-pass and reproducibility are skipped when the site job found
+    # an agreed report for these inputs; that skip is a pass. Otherwise they
+    # must have succeeded like everything else.
+    if: >-
+      github.event_name != 'pull_request' && !cancelled() &&
+      needs.components.result == 'success' && needs.site-checks.result == 'success' &&
+      needs.report.result == 'success' &&
+      (needs.site.outputs.run-passes != 'true' ||
+        (needs.second-pass.result == 'success' && needs.reproducibility.result == 'success'))
+    needs: [components, site-checks, site, report, second-pass, reproducibility]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -151,5 +475,6 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/configure-pages@v6
       - id: deployment
         uses: actions/deploy-pages@v5

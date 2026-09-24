@@ -1,0 +1,27 @@
+name: chrome-headless-shell
+description: >-
+  Install the pinned chrome-headless-shell and export OP_HEADLESS_SHELL. The
+  Chrome the runner ships runs the new headless mode, which has no virtual
+  time or frame control; the synthetic frame clock needs the old engine, which
+  Chrome for Testing publishes as chrome-headless-shell, pinned so every run
+  renders the same frames.
+inputs:
+  version:
+    description: Chrome for Testing version
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@v5
+      with:
+        path: ~/.cache/op-headless-shell
+        key: chrome-headless-shell-${{ inputs.version }}-linux64
+    - shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -e
+        npx --yes @puppeteer/browsers install "chrome-headless-shell@${VERSION}" --path ~/.cache/op-headless-shell > /tmp/shell-install.log
+        SHELL_BIN=$(find ~/.cache/op-headless-shell/chrome-headless-shell -path '*/chrome-headless-shell-linux64/chrome-headless-shell' -type f | sort | head -n 1)
+        "$SHELL_BIN" --version
+        echo "OP_HEADLESS_SHELL=$SHELL_BIN" >> "$GITHUB_ENV"
