@@ -1,6 +1,6 @@
-//! `<opt-starting-points heading="...">`: a titled list. The list itself is
-//! light-DOM content written in `index.html` and projected through a slot, so
-//! links can be edited without touching Rust.
+//! `<opt-starting-points heading="...">`: a list, titled when it carries a
+//! `heading`. The list itself is light-DOM content written in `index.html` and
+//! projected through a slot, so links can be edited without touching Rust.
 
 use op_webc::{CustomElement, ElementDefinition};
 use web_sys::HtmlElement;
@@ -25,13 +25,13 @@ impl StartingPoints {
         let heading = self
             .host
             .get_attribute("heading")
-            .unwrap_or_else(|| "Starting points".to_owned());
+            .map(|h| format!("<h2>{}</h2>", escape(&h)))
+            .unwrap_or_default();
         shadow_root(&self.host).set_inner_html(&format!(
             "<style>{BASE_CSS}
 ::slotted(ul) {{ margin: 0; padding-left: 1.25rem; }}
 </style>
-<h2>{}</h2><slot></slot>",
-            escape(&heading)
+{heading}<slot></slot>"
         ));
     }
 }
