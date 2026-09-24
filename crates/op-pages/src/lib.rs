@@ -273,13 +273,13 @@ pub const SECTIONS: &[Section] = &[
         href: "/can-i-use/",
         label: "Can I use",
         description: "Evidence-backed support matrix for software on POWER, with live capability probes of your own browser.",
-        in_nav: true,
+        in_nav: false,
     },
     Section {
         href: "/projects/",
         label: "Projects",
         description: "Projects under the openpower.tools umbrella; each lives at /project/{name}/.",
-        in_nav: true,
+        in_nav: false,
     },
     Section {
         href: "/components/",
@@ -309,9 +309,11 @@ pub fn nav_markup() -> String {
     format!("<opt-site-nav><ul>{items}</ul></opt-site-nav>")
 }
 
-/// The home index's section listing: a card per nav-visible section
-/// other than home itself, carrying its one-line description. Mirrored
-/// verbatim by `index.html` (a test keeps them identical).
+/// The home index's section listing: a heading and a card per
+/// nav-visible section other than home itself, carrying its one-line
+/// description; empty when there is no such section, so the home page
+/// carries no heading over an empty gallery. Mirrored verbatim by
+/// `index.html` (a test keeps them identical).
 pub fn home_sections_markup() -> String {
     let mut cards = String::new();
     for section in SECTIONS.iter().filter(|s| s.in_nav && s.href != "/") {
@@ -320,7 +322,10 @@ pub fn home_sections_markup() -> String {
             section.label, section.href, section.description
         ));
     }
-    format!("<div class=\"op-gallery\">{cards}</div>")
+    if cards.is_empty() {
+        return String::new();
+    }
+    format!("<h2>Sections</h2><div class=\"op-gallery\">{cards}</div>")
 }
 
 #[cfg(test)]
@@ -378,10 +383,18 @@ mod tests {
     #[test]
     fn home_page_lists_the_nav_visible_sections_and_only_those() {
         let home = include_str!("../../../index.html");
-        assert!(
-            home.contains(&home_sections_markup()),
-            "home index drifted from op_pages::home_sections_markup()"
-        );
+        let listing = home_sections_markup();
+        if listing.is_empty() {
+            assert!(
+                !home.contains("<h2>Sections</h2>") && !home.contains("op-gallery"),
+                "no section is nav-visible, but the home page still carries a section listing"
+            );
+        } else {
+            assert!(
+                home.contains(&listing),
+                "home index drifted from op_pages::home_sections_markup()"
+            );
+        }
         for section in SECTIONS.iter().filter(|s| !s.in_nav) {
             let link = format!("href=\"{}\"", section.href);
             assert!(
