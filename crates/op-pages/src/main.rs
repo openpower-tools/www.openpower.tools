@@ -166,7 +166,10 @@ mod tests {
                 &body,
             );
             assert!(html.contains(&format!("https://www.openpower.tools/{}/", page.slug)));
-            assert!(html.contains("opt-machine-probes"));
+            assert!(html.contains(&body));
+            if page.slug == "can-i-use" {
+                assert!(html.contains("opt-machine-probes"));
+            }
         }
     }
 }

@@ -149,7 +149,7 @@ pub fn items() -> Vec<Item> {
         .collect()
 }
 
-fn xml_escape(text: &str) -> String {
+pub(crate) fn xml_escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -260,7 +260,8 @@ request; unknown statuses and missing evidence fail the build.</p>\n",
     body
 }
 
-pub fn generated_pages() -> Vec<GeneratedPage> {
+/// The pages produced from `data/can-i-use/`.
+pub fn pages() -> Vec<GeneratedPage> {
     vec![GeneratedPage {
         slug: "can-i-use".to_owned(),
         title: "Can I use it on POWER?".to_owned(),

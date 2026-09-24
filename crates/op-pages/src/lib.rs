@@ -11,9 +11,19 @@
 //! assets from clean URLs like `/components/button/`.
 
 pub mod caniuse;
-pub use caniuse::{GeneratedPage, generated_pages};
+pub use caniuse::GeneratedPage;
 pub mod lower;
 pub use lower::{OPT_NS, lower};
+pub mod site_index;
+
+/// Every page produced from data rather than a source file: the can-i-use
+/// pages, then the site index, which lists them along with everything else.
+pub fn generated_pages() -> Vec<GeneratedPage> {
+    let mut pages = caniuse::pages();
+    let index = site_index::page(&pages);
+    pages.push(index);
+    pages
+}
 
 /// One generated page.
 pub struct Page {
