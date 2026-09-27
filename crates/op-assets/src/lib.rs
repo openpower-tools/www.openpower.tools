@@ -7,4 +7,5 @@
 
 pub mod advances;
 pub mod coverage;
+pub mod head;
 pub mod manifest;

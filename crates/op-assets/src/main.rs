@@ -12,6 +12,8 @@
 //!    plus the stylesheet link, so text renders styled with no runtime
 //!    font code at all: no wasm registration, no flash beyond a
 //!    same-metrics letterform swap in the first frames.
+//! 4. Puts Trunk's module preloads in a fixed order (see `op_assets::head`),
+//!    so the head, which every page copies, builds to the same bytes.
 //!
 //! Browsers apply `size-adjust` to override metrics as well (verified by
 //! measurement in Chromium), so every override written here is the target box
@@ -325,6 +327,7 @@ fn main() {
         html.contains("as=\"font\""),
         "no </head> in staged index.html"
     );
+    let html = op_assets::head::order_module_preloads(&html);
     std::fs::write(&index, html).expect("write staged index.html");
 
     println!(
