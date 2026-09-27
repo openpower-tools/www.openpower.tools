@@ -18,6 +18,9 @@ sha2 = "0.10"
 # organisation. Needs Rust 1.85 or newer. rustybuzz, its predecessor, is
 # archived.
 harfrust = "0.13"
+# The font table reader HarfRust already sits on. Used directly to ask a face
+# which sequences its own lookups can reach, rather than sweeping an alphabet.
+read-fonts = "0.43"
 ttf-parser = "0.25"
 wasm2map = "0.1.0"
 woff2-patched = "0.4"

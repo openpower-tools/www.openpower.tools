@@ -6,4 +6,5 @@
 //! neither can measure a face the site does not serve.
 
 pub mod advances;
+pub mod coverage;
 pub mod manifest;
