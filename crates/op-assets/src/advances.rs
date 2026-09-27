@@ -131,7 +131,7 @@ pub fn refuse_unsupported(ttf: &[u8], face: &str) -> Result<(), String> {
 
 /// The bytes of a face, decoded from the served woff2 to the TrueType
 /// `ttf-parser` reads.
-fn face_ttf(assets: &Path, drawn: &Drawn) -> Vec<u8> {
+pub(crate) fn face_ttf(assets: &Path, drawn: &Drawn) -> Vec<u8> {
     let entry = MANIFEST
         .iter()
         .find(|e| (e.family, e.weight, e.style) == (drawn.family, drawn.weight, drawn.style))
@@ -188,8 +188,8 @@ pub fn shaper_for(ttf: &[u8]) -> ShaperHandle<'_> {
 /// A shaper and the tables it borrows, kept together because the shaper
 /// borrows both and neither can outlive the other.
 pub struct ShaperHandle<'a> {
-    font: harfrust::FontRef<'a>,
-    data: harfrust::ShaperData,
+    pub(crate) font: harfrust::FontRef<'a>,
+    pub(crate) data: harfrust::ShaperData,
 }
 
 impl ShaperHandle<'_> {
@@ -330,6 +330,40 @@ pub fn assets() -> PathBuf {
 /// Where [`generate`]'s output belongs.
 pub fn generated_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(GENERATED)
+}
+
+/// The size a browser draws the chart's text at, which is the size the
+/// measurement below was taken at.
+#[cfg(test)]
+pub(crate) const TEXT_PX: f64 = 12.0;
+/// The grid Chromium snaps its layout to, and so the closest two
+/// measurements of the same text can be expected to agree.
+#[cfg(test)]
+pub(crate) const GRID: f64 = 1.0 / 64.0;
+
+/// The pairs a browser really kerned, as the sweep read them out of
+/// Chrome, one line per pair. Parsed positionally rather than by
+/// splitting on whitespace, because a pair can contain a space.
+#[cfg(test)]
+pub(crate) fn browser_kerns() -> Vec<(String, char, char, f64)> {
+    let text = include_str!("../fixtures/browser-kerns.txt");
+    let mut out = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+    {
+        let space = line.find(' ').expect("a face and a pair");
+        let (face, rest) = line.split_at(space);
+        let mut chars = rest[1..].chars();
+        let a = chars.next().expect("a first character");
+        let b = chars.next().expect("a second character");
+        let kern: f64 = rest[1 + a.len_utf8() + b.len_utf8()..]
+            .trim()
+            .parse()
+            .expect("a kern");
+        out.push((face.to_owned(), a, b, kern));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -598,37 +632,6 @@ mod tests {
             let space = table[index(' ')];
             assert!(space > 0, "{} {} space is zero", drawn.family, drawn.weight);
         }
-    }
-
-    /// The size a browser draws the chart's text at, which is the size the
-    /// measurement below was taken at.
-    const TEXT_PX: f64 = 12.0;
-    /// The grid Chromium snaps its layout to, and so the closest two
-    /// measurements of the same text can be expected to agree.
-    const GRID: f64 = 1.0 / 64.0;
-
-    /// The pairs a browser really kerned, as the sweep read them out of
-    /// Chrome, one line per pair. Parsed positionally rather than by
-    /// splitting on whitespace, because a pair can contain a space.
-    fn browser_kerns() -> Vec<(String, char, char, f64)> {
-        let text = include_str!("../fixtures/browser-kerns.txt");
-        let mut out = Vec::new();
-        for line in text
-            .lines()
-            .filter(|l| !l.starts_with('#') && !l.is_empty())
-        {
-            let space = line.find(' ').expect("a face and a pair");
-            let (face, rest) = line.split_at(space);
-            let mut chars = rest[1..].chars();
-            let a = chars.next().expect("a first character");
-            let b = chars.next().expect("a second character");
-            let kern: f64 = rest[1 + a.len_utf8() + b.len_utf8()..]
-                .trim()
-                .parse()
-                .expect("a kern");
-            out.push((face.to_owned(), a, b, kern));
-        }
-        out
     }
 
     /// The point of shaping rather than reading `hmtx`: the generator can
