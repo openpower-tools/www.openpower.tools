@@ -1,0 +1,19 @@
+# For each rule of context-face.ttf, the text that shows it and the
+# glyph it brings in, as HarfBuzz 11.3.3 shapes it with the default
+# features. Written by make_context_face.py; see there for the rules.
+#
+# Format: rule, text, glyph id, glyph name, and whether the default
+# features bring the glyph in (the dlig rule is not one of them, and
+# the order rules never fire, since what they read comes later).
+ctx1	ab	45	a1	fires
+ctx2	cd	46	d1	fires
+ctx3	ef	63	e1	fires
+chain1	xgh	47	g1	fires
+chain2	yia	48	i1	fires
+chain3	zjk	49	j1	fires
+rev	nmo	50	m1	fires
+step	spr	52	r1	fires
+liga	uvw	53	w1	fires
+dlig	qt	54	t1	idle
+order	MN	60	N1	idle
+order-ligature	OPQ	61	Q1	idle
